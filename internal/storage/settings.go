@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"time"
 
 	"github.com/ndelanhese/helio/internal/config"
@@ -25,6 +26,10 @@ type settingsEnvelope struct {
 // in one upsert. The optional flag is the same explicit public-host override
 // accepted by config.ValidateSettings.
 func (db *DB) PutSettings(ctx context.Context, settings domain.Settings, allowPublicLogger ...bool) error {
+	return putSettings(ctx, db.sql, settings, allowPublicLogger...)
+}
+
+func putSettings(ctx context.Context, db execer, settings domain.Settings, allowPublicLogger ...bool) error {
 	normalized, err := config.ValidateSettings(settings, allowPublicLogger...)
 	if err != nil {
 		return fmt.Errorf("validate settings: %w", err)
@@ -33,7 +38,7 @@ func (db *DB) PutSettings(ctx context.Context, settings domain.Settings, allowPu
 	if err != nil {
 		return fmt.Errorf("encode settings: %w", err)
 	}
-	_, err = db.sql.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO settings(key, value_json, updated_at) VALUES('system', ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`,
 		string(payload), formatTime(time.Now().UTC()))
@@ -44,7 +49,7 @@ func (db *DB) PutSettings(ctx context.Context, settings domain.Settings, allowPu
 }
 
 // GetSettings loads and strictly decodes the versioned settings document.
-func (db *DB) GetSettings(ctx context.Context) (domain.Settings, error) {
+func (db *DB) GetSettings(ctx context.Context, allowPublicLogger ...bool) (domain.Settings, error) {
 	var payload string
 	err := db.sql.QueryRowContext(ctx, `SELECT value_json FROM settings WHERE key='system'`).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -69,12 +74,12 @@ func (db *DB) GetSettings(ctx context.Context) (domain.Settings, error) {
 	if envelope.Version != settingsVersion {
 		return domain.Settings{}, fmt.Errorf("unsupported settings version %d", envelope.Version)
 	}
-	normalized, err := config.ValidateSettings(envelope.Settings, true)
+	normalized, err := config.ValidateSettings(envelope.Settings, allowPublicLogger...)
 	if err != nil {
 		return domain.Settings{}, fmt.Errorf("validate stored settings: %w", err)
 	}
-	if envelope.Settings.InstalledPowerW != normalized.InstalledPowerW {
-		return domain.Settings{}, fmt.Errorf("stored installed power does not match panel configuration")
+	if !reflect.DeepEqual(envelope.Settings, normalized) {
+		return domain.Settings{}, fmt.Errorf("stored settings are not canonical")
 	}
 	return normalized, nil
 }

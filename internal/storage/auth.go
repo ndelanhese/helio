@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/ndelanhese/helio/internal/domain"
 )
 
 var (
@@ -32,6 +34,18 @@ type Session struct {
 }
 
 func (db *DB) Bootstrap(ctx context.Context, user User, session Session) error {
+	return db.bootstrap(ctx, user, session, nil)
+}
+
+// BootstrapWithSettings creates the first user, its initial session, and the
+// normalized settings document in one transaction.
+func (db *DB) BootstrapWithSettings(ctx context.Context, user User, session Session, settings domain.Settings, allowPublicLogger ...bool) error {
+	return db.bootstrap(ctx, user, session, func(ctx context.Context, tx execer) error {
+		return putSettings(ctx, tx, settings, allowPublicLogger...)
+	})
+}
+
+func (db *DB) bootstrap(ctx context.Context, user User, session Session, put func(context.Context, execer) error) error {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin bootstrap: %w", err)
@@ -54,6 +68,11 @@ func (db *DB) Bootstrap(ctx context.Context, user User, session Session) error {
 	}
 	if err := insertSession(ctx, tx, session); err != nil {
 		return err
+	}
+	if put != nil {
+		if err := put(ctx, tx); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit bootstrap: %w", err)

@@ -51,6 +51,19 @@ func TestSettingsRetentionDefaultsTo730Days(t *testing.T) {
 	}
 }
 
+func TestSettingsConnectionDefaults(t *testing.T) {
+	in := validSettings()
+	in.LoggerPort = 0
+	in.ModbusSlave = 0
+	got, err := config.ValidateSettings(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LoggerPort != 8899 || got.ModbusSlave != 1 {
+		t.Fatalf("port=%d slave=%d", got.LoggerPort, got.ModbusSlave)
+	}
+}
+
 func TestSettingsHostPolicy(t *testing.T) {
 	for _, host := range []string{"https://192.168.1.50", "logger.local", "8.8.8.8"} {
 		t.Run(host, func(t *testing.T) {
@@ -87,9 +100,9 @@ func TestSettingsValidationMatrix(t *testing.T) {
 		{"serial nondecimal", func(s *domain.Settings) { s.LoggerSerial = "12a" }},
 		{"serial signed", func(s *domain.Settings) { s.LoggerSerial = "+123" }},
 		{"serial uint32 overflow", func(s *domain.Settings) { s.LoggerSerial = "4294967296" }},
-		{"port zero", func(s *domain.Settings) { s.LoggerPort = 0 }},
+		{"port negative", func(s *domain.Settings) { s.LoggerPort = -1 }},
 		{"port overflow", func(s *domain.Settings) { s.LoggerPort = 65536 }},
-		{"slave zero", func(s *domain.Settings) { s.ModbusSlave = 0 }},
+		{"slave negative", func(s *domain.Settings) { s.ModbusSlave = -1 }},
 		{"slave overflow", func(s *domain.Settings) { s.ModbusSlave = 248 }},
 		{"duplicate MPPT", func(s *domain.Settings) { s.ActiveMPPT = []int{1, 1} }},
 		{"unknown MPPT", func(s *domain.Settings) { s.ActiveMPPT = []int{3} }},
@@ -101,6 +114,8 @@ func TestSettingsValidationMatrix(t *testing.T) {
 		{"latitude", func(s *domain.Settings) { s.Latitude = 91 }},
 		{"longitude", func(s *domain.Settings) { s.Longitude = -181 }},
 		{"timezone", func(s *domain.Settings) { s.Timezone = "Sao Paulo" }},
+		{"timezone empty", func(s *domain.Settings) { s.Timezone = "" }},
+		{"timezone local", func(s *domain.Settings) { s.Timezone = "Local" }},
 		{"currency case", func(s *domain.Settings) { s.Currency = "brl" }},
 		{"currency unknown", func(s *domain.Settings) { s.Currency = "ZZZ" }},
 		{"tariff negative", func(s *domain.Settings) { s.TariffMinorPerKWh = -1 }},

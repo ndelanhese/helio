@@ -76,6 +76,14 @@ func ValidateSettings(in domain.Settings, allowPublicLogger ...bool) (domain.Set
 	if !allowPublic && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
 		return domain.Settings{}, fmt.Errorf("logger host must be private unless public access is explicitly enabled")
 	}
+	// Zero means unspecified in the domain normalization layer. The HTTP DTO
+	// may use pointers when it needs to distinguish omitted from explicit zero.
+	if in.LoggerPort == 0 {
+		in.LoggerPort = 8899
+	}
+	if in.ModbusSlave == 0 {
+		in.ModbusSlave = 1
+	}
 	if in.LoggerPort < 1 || in.LoggerPort > 65535 {
 		return domain.Settings{}, fmt.Errorf("logger port must be between 1 and 65535")
 	}
@@ -102,6 +110,9 @@ func ValidateSettings(in domain.Settings, allowPublicLogger ...bool) (domain.Set
 	}
 	if math.IsNaN(in.Longitude) || math.IsInf(in.Longitude, 0) || in.Longitude < -180 || in.Longitude > 180 {
 		return domain.Settings{}, fmt.Errorf("longitude must be between -180 and 180")
+	}
+	if in.Timezone == "" || in.Timezone == "Local" {
+		return domain.Settings{}, fmt.Errorf("timezone must be a named IANA location")
 	}
 	if _, err := time.LoadLocation(in.Timezone); err != nil {
 		return domain.Settings{}, fmt.Errorf("timezone must be a valid IANA location: %w", err)
