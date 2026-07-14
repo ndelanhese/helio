@@ -15,6 +15,7 @@ import (
 const (
 	maximumIntegratedGap = 90 * time.Second
 	pruneBatchSize       = 10_000
+	sqliteTimeLayout     = "2006-01-02T15:04:05.000000000Z"
 )
 
 // TelemetryRepository stores telemetry using local calendar buckets while all
@@ -38,7 +39,9 @@ func NewTelemetryRepository(db *DB, location *time.Location) *TelemetryRepositor
 }
 
 func formatTime(at time.Time) string {
-	return at.UTC().Format(time.RFC3339Nano)
+	// SQLite compares the TEXT keys lexicographically. A fixed-width UTC layout
+	// therefore preserves chronological ordering even for fractional bounds.
+	return at.UTC().Format(sqliteTimeLayout)
 }
 
 func localHour(at time.Time, loc *time.Location) time.Time {
@@ -211,7 +214,7 @@ func (r *TelemetryRepository) AggregateDay(ctx context.Context, from, to time.Ti
 	if err != nil {
 		return domain.DailySummary{}, fmt.Errorf("query hourly summaries: %w", err)
 	}
-	var coverageWeight, totalWeight float64
+	var coverageWeight float64
 	for rows.Next() {
 		var key string
 		var energy, peak, coverage float64
@@ -224,14 +227,15 @@ func (r *TelemetryRepository) AggregateDay(ctx context.Context, from, to time.Ti
 			rows.Close()
 			return domain.DailySummary{}, fmt.Errorf("parse hourly summary key: %w", err)
 		}
-		if hour.Before(to) && hour.Add(time.Hour).After(from) {
-			weight := math.Min(to.Sub(hour).Minutes(), hour.Add(time.Hour).Sub(from).Minutes())
-			weight = math.Min(weight, to.Sub(from).Minutes())
-			if weight > 0 {
-				summary.EnergyWh += energy
+		hourEnd := hour.Add(time.Hour)
+		if hour.Before(to) && hourEnd.After(from) {
+			overlapStart := laterTime(from, hour)
+			overlapEnd := earlierTime(to, hourEnd)
+			overlap := overlapEnd.Sub(overlapStart)
+			if overlap > 0 {
+				summary.EnergyWh += energy * float64(overlap) / float64(hourEnd.Sub(hour))
 				summary.PeakPowerW = math.Max(summary.PeakPowerW, peak)
-				coverageWeight += coverage * weight
-				totalWeight += weight
+				coverageWeight += coverage * overlap.Minutes()
 			}
 		}
 	}
@@ -241,8 +245,10 @@ func (r *TelemetryRepository) AggregateDay(ctx context.Context, from, to time.Ti
 	if err := rows.Err(); err != nil {
 		return domain.DailySummary{}, fmt.Errorf("iterate hourly summaries: %w", err)
 	}
-	if totalWeight > 0 {
-		summary.CoveragePct = coverageWeight / totalWeight
+	if requestedMinutes := to.Sub(from).Minutes(); requestedMinutes > 0 {
+		// Missing summary rows contribute zero over the requested real duration.
+		// For local-day bounds this naturally yields 23/25-hour DST denominators.
+		summary.CoveragePct = coverageWeight / requestedMinutes
 	}
 	if err := tx.QueryRowContext(ctx, `
 		SELECT count(*) FROM telemetry_minute
@@ -264,6 +270,20 @@ func (r *TelemetryRepository) AggregateDay(ctx context.Context, from, to time.Ti
 		return domain.DailySummary{}, fmt.Errorf("commit daily aggregate: %w", err)
 	}
 	return summary, nil
+}
+
+func earlierTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func laterTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 func (r *TelemetryRepository) AggregateMonth(ctx context.Context, inMonth time.Time) (domain.MonthlySummary, error) {

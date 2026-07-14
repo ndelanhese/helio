@@ -111,10 +111,105 @@ func TestAggregateGapCoverageAndEnergyUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeEnough(t, day.EnergyWh, 2.5)
+	closeEnough(t, day.EnergyWh, 2.5*4.0/60.0)
 	closeEnough(t, day.CoveragePct, 75)
 	if day.ProductiveMinutes != 3 {
 		t.Fatalf("productive=%d, want 3", day.ProductiveMinutes)
+	}
+}
+
+func TestAggregateDayCountsMissingHoursAsZeroCoverage(t *testing.T) {
+	ctx := context.Background()
+	db, repo := telemetryRepository(t, time.UTC)
+	start := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	if _, err := db.sql.ExecContext(ctx, `
+		INSERT INTO hourly_summary(hour, energy_wh, peak_power_w, coverage_pct)
+		VALUES (?, 60, 100, 100)`, start.Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+
+	day, err := repo.AggregateDay(ctx, start, start.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeEnough(t, day.CoveragePct, 50)
+}
+
+func TestAggregateDayCoverageUsesDSTDayDuration(t *testing.T) {
+	ctx := context.Background()
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, repo := telemetryRepository(t, loc)
+	for _, item := range []struct {
+		day   time.Time
+		hours float64
+		want  float64
+	}{
+		{time.Date(2026, 3, 8, 0, 0, 0, 0, loc), 23, 100.0 / 23},
+		{time.Date(2026, 11, 1, 0, 0, 0, 0, loc), 25, 100.0 / 25},
+	} {
+		if got := item.day.AddDate(0, 0, 1).Sub(item.day).Hours(); got != item.hours {
+			t.Fatalf("test day duration=%v, want %v", got, item.hours)
+		}
+		if _, err := db.sql.ExecContext(ctx, `
+			INSERT INTO hourly_summary(hour, energy_wh, peak_power_w, coverage_pct)
+			VALUES (?, 60, 100, 100)`, item.day.Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+		day, err := repo.AggregateDay(ctx, item.day, item.day.AddDate(0, 0, 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		closeEnough(t, day.CoveragePct, item.want)
+	}
+}
+
+func TestAggregateDayUsesTrueOverlapAndProratesHourlyEnergy(t *testing.T) {
+	ctx := context.Background()
+	db, repo := telemetryRepository(t, time.UTC)
+	base := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	for i, item := range []struct {
+		energy   float64
+		coverage float64
+	}{{60, 100}, {120, 50}, {180, 0}} {
+		if _, err := db.sql.ExecContext(ctx, `
+			INSERT INTO hourly_summary(hour, energy_wh, peak_power_w, coverage_pct)
+			VALUES (?, ?, ?, ?)`, base.Add(time.Duration(i)*time.Hour).Format(time.RFC3339), item.energy, item.energy, item.coverage); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	day, err := repo.AggregateDay(ctx, base.Add(30*time.Minute), base.Add(150*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeEnough(t, day.CoveragePct, 50) // 30m*100% + 60m*50% + 30m*0%, over 120m
+	closeEnough(t, day.EnergyWh, 240)   // 60/2 + 120 + 180/2
+}
+
+func TestTelemetryHistoryFractionalBoundariesUseChronologicalOrdering(t *testing.T) {
+	ctx := context.Background()
+	_, repo := telemetryRepository(t, time.UTC)
+	at := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	if err := repo.SaveMinute(ctx, snapshot(at, 100, 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	points, err := repo.History(ctx, at.Add(-time.Nanosecond), at.Add(time.Nanosecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 1 || !points[0].At.Equal(at) {
+		t.Fatalf("history=%v, want point at fractional [from,to) boundary", points)
+	}
+	points, err = repo.History(ctx, at.Add(time.Nanosecond), at.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 0 {
+		t.Fatalf("history=%v, minute before fractional from must be excluded", points)
 	}
 }
 
@@ -154,7 +249,7 @@ func TestAggregateLocalBucketsUpsertAndWeightedMonth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeEnough(t, updatedDay.EnergyWh, 3)
+	closeEnough(t, updatedDay.EnergyWh, 1+2*4.0/60.0)
 
 	jan, err := repo.AggregateMonth(ctx, jan31)
 	if err != nil {
