@@ -1,9 +1,9 @@
 .DS_Store
 .superpowers/
+.worktrees/
 work/
 outputs/
 data/
 *.db
 *.db-shm
 *.db-wal
-
