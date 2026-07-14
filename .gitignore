@@ -1,0 +1,9 @@
+.DS_Store
+.superpowers/
+work/
+outputs/
+data/
+*.db
+*.db-shm
+*.db-wal
+
