@@ -61,6 +61,26 @@ func TestOpenConfiguresConnectionPragmas(t *testing.T) {
 	}
 }
 
+func TestSynchronousNormalSurvivesPhysicalConnectionRecycling(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// With no idle slots, each completed operation closes its physical
+	// connection. The following query therefore runs on a fresh connection.
+	db.sql.SetMaxIdleConns(0)
+	var got int
+	if err := db.sql.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != 1 {
+		t.Fatalf("synchronous=%d after physical connection recycling, want NORMAL (1)", got)
+	}
+}
+
 func TestReadyReflectsConnectionState(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "helio.db"))

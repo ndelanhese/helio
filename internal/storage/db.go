@@ -27,7 +27,7 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	}
 
 	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absPath)}).String()
-	dsn := uri + "?_pragma=busy_timeout%285000%29&_pragma=foreign_keys%281%29"
+	dsn := uri + "?_pragma=busy_timeout%285000%29&_pragma=foreign_keys%281%29&_pragma=synchronous%28NORMAL%29"
 	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
@@ -47,13 +47,9 @@ func Open(ctx context.Context, path string) (*DB, error) {
 }
 
 func (db *DB) configure(ctx context.Context) error {
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-	} {
-		if _, err := db.sql.ExecContext(ctx, pragma); err != nil {
-			return fmt.Errorf("configure sqlite (%s): %w", pragma, err)
-		}
+	const pragma = "PRAGMA journal_mode=WAL"
+	if _, err := db.sql.ExecContext(ctx, pragma); err != nil {
+		return fmt.Errorf("configure sqlite (%s): %w", pragma, err)
 	}
 	return nil
 }
