@@ -101,6 +101,51 @@ func TestClientUsesTimeoutAndNonzeroSequences(t *testing.T) {
 	}
 }
 
+func TestClientTimeoutIncludesWaitingForSerialization(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	client := NewClient(Config{Serial: 123456789, Timeout: 50 * time.Millisecond}, func(context.Context) (RoundTripper, error) {
+		return roundTripFunc(func(_ context.Context, request []byte) ([]byte, error) {
+			once.Do(func() { close(entered) })
+			<-release
+			return responseForRequest(request), nil
+		}), nil
+	})
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := client.ReadHoldingRegisters(context.Background(), 1, 0, 1)
+		firstDone <- err
+	}()
+	<-entered
+
+	started := time.Now()
+	queuedDone := make(chan error, 1)
+	go func() {
+		_, err := client.ReadHoldingRegisters(context.Background(), 1, 0, 1)
+		queuedDone <- err
+	}()
+	select {
+	case err := <-queuedDone:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("queued error = %v, want context.DeadlineExceeded", err)
+		}
+		if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+			t.Fatalf("queued call returned after %v, want prompt timeout", elapsed)
+		}
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		<-firstDone
+		t.Fatal("queued call did not time out while waiting for serialization")
+	}
+
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+}
+
 func TestClientRetryClassification(t *testing.T) {
 	tests := []struct {
 		name      string

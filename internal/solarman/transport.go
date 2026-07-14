@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 )
 
 const maxFrameSize = 512
@@ -27,14 +28,30 @@ func (t *tcpRoundTripper) RoundTrip(ctx context.Context, request []byte) ([]byte
 		t.close()
 		return nil, fmt.Errorf("set TCP deadline: %w", err)
 	}
+	cancelDone := make(chan struct{})
+	stopCancellation := context.AfterFunc(ctx, func() {
+		_ = t.conn.SetDeadline(time.Now())
+		close(cancelDone)
+	})
+	defer func() {
+		if !stopCancellation() {
+			<-cancelDone
+		}
+	}()
 	if err := writeFull(t.conn, request); err != nil {
 		t.close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("write Solarman request: %w", err)
 	}
 
 	header := make([]byte, v5HeaderSize)
 	if _, err := io.ReadFull(t.conn, header); err != nil {
 		t.close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("read Solarman header: %w", err)
 	}
 	payloadSize := int(binary.LittleEndian.Uint16(header[1:3]))
@@ -48,6 +65,9 @@ func (t *tcpRoundTripper) RoundTrip(ctx context.Context, request []byte) ([]byte
 	copy(frame, header)
 	if _, err := io.ReadFull(t.conn, frame[v5HeaderSize:]); err != nil {
 		t.close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("read Solarman payload: %w", err)
 	}
 	return frame, nil

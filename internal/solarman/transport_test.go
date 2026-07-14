@@ -15,16 +15,23 @@ type scriptedConn struct {
 	reader       io.Reader
 	written      bytes.Buffer
 	deadline     time.Time
+	deadlineSet  chan time.Time
 	closed       bool
 	setDeadlineE error
 }
 
-func (c *scriptedConn) Read(p []byte) (int, error)       { return c.reader.Read(p) }
-func (c *scriptedConn) Write(p []byte) (int, error)      { return c.written.Write(p) }
-func (c *scriptedConn) Close() error                     { c.closed = true; return nil }
-func (c *scriptedConn) LocalAddr() net.Addr              { return stubAddr("local") }
-func (c *scriptedConn) RemoteAddr() net.Addr             { return stubAddr("remote") }
-func (c *scriptedConn) SetDeadline(t time.Time) error    { c.deadline = t; return c.setDeadlineE }
+func (c *scriptedConn) Read(p []byte) (int, error)  { return c.reader.Read(p) }
+func (c *scriptedConn) Write(p []byte) (int, error) { return c.written.Write(p) }
+func (c *scriptedConn) Close() error                { c.closed = true; return nil }
+func (c *scriptedConn) LocalAddr() net.Addr         { return stubAddr("local") }
+func (c *scriptedConn) RemoteAddr() net.Addr        { return stubAddr("remote") }
+func (c *scriptedConn) SetDeadline(t time.Time) error {
+	c.deadline = t
+	if c.deadlineSet != nil {
+		c.deadlineSet <- t
+	}
+	return c.setDeadlineE
+}
 func (c *scriptedConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *scriptedConn) SetWriteDeadline(time.Time) error { return nil }
 
@@ -94,6 +101,50 @@ func TestTCPRoundTripRequiresContextDeadline(t *testing.T) {
 	_, err := newTCPRoundTripper(conn).RoundTrip(context.Background(), []byte{1})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestTCPRoundTripCancellationInterruptsBlockedRead(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	readStarted := make(chan struct{})
+	go func() {
+		var request [1]byte
+		_, _ = io.ReadFull(serverConn, request[:])
+		close(readStarted)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	done := make(chan error, 1)
+	go func() {
+		_, err := newTCPRoundTripper(clientConn).RoundTrip(ctx, []byte{1})
+		done <- err
+	}()
+	<-readStarted
+
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RoundTrip did not return promptly after cancellation")
+	}
+}
+
+func TestTCPRoundTripStopsCancellationCallbackAfterSuccess(t *testing.T) {
+	response := fixture(t, "read_holding_response.hex")
+	conn := &scriptedConn{reader: bytes.NewReader(response), deadlineSet: make(chan time.Time, 2)}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	if _, err := newTCPRoundTripper(conn).RoundTrip(ctx, []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	<-conn.deadlineSet
+	cancel()
+	select {
+	case deadline := <-conn.deadlineSet:
+		t.Fatalf("late cancellation changed completed operation deadline to %v", deadline)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

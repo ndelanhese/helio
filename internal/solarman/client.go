@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -26,7 +25,7 @@ type Config struct {
 }
 
 type Client struct {
-	mu       sync.Mutex
+	gate     chan struct{}
 	config   Config
 	dialer   Dialer
 	sequence uint16
@@ -43,15 +42,21 @@ func NewClient(config Config, dialer Dialer) *Client {
 			return newTCPRoundTripper(conn), nil
 		}
 	}
-	return &Client{config: config, dialer: dialer}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	return &Client{gate: gate, config: config, dialer: dialer}
 }
 
 func (c *Client) ReadHoldingRegisters(ctx context.Context, slave byte, start, count uint16) ([]uint16, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	requestCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 	defer cancel()
+	select {
+	case <-c.gate:
+		defer func() { c.gate <- struct{}{} }()
+	case <-requestCtx.Done():
+		return nil, requestCtx.Err()
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := requestCtx.Err(); err != nil {
