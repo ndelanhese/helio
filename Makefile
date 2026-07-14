@@ -7,5 +7,4 @@ test:
 	go test ./...
 
 web:
-	npm --prefix web ci
 	npm --prefix web run build
