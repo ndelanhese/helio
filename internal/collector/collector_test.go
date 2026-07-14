@@ -267,6 +267,130 @@ func TestCollectorMarksStateStaleThirtySecondsAfterLastSuccess(t *testing.T) {
 	<-done
 }
 
+func TestCollectorStaleBoundaryIsThirtySecondsExactly(t *testing.T) {
+	base := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	clock := newFakeClock(base)
+	reader := &fakeReader{results: []readResult{
+		{snapshot: domain.TelemetrySnapshot{ObservedAt: base, Status: "normal"}},
+		{err: errors.New("offline")},
+	}}
+	collector := New(testConfig(clock), reader, &fakeStore{}, NewHub())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- collector.Run(ctx) }()
+	eventually(t, func() bool { return reader.count() == 1 })
+
+	clock.Advance(29*time.Second + 999*time.Millisecond)
+	if collector.Latest().Stale {
+		t.Fatal("state became stale before the 30-second boundary")
+	}
+	clock.Advance(time.Millisecond)
+	eventually(t, func() bool { return collector.Latest().Stale })
+	cancel()
+	<-done
+}
+
+func TestCollectorStaleTransitionDoesNotMovePendingRetryDeadline(t *testing.T) {
+	base := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	clock := newFakeClock(base)
+	results := []readResult{{snapshot: domain.TelemetrySnapshot{ObservedAt: base, Status: "normal"}}}
+	for range 6 {
+		results = append(results, readResult{err: errors.New("offline")})
+	}
+	reader := &fakeReader{results: results}
+	collector := New(testConfig(clock), reader, &fakeStore{}, NewHub())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- collector.Run(ctx) }()
+	eventually(t, func() bool { return reader.count() == 1 })
+
+	for call, delay := range []time.Duration{10 * time.Second, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second} {
+		clock.Advance(delay)
+		eventually(t, func() bool { return reader.count() == call+2 })
+	}
+	// The next 16-second retry was scheduled at t+25, hence is due at t+41.
+	clock.Advance(5 * time.Second)
+	eventually(t, func() bool { return collector.Latest().Stale })
+	clock.Advance(10*time.Second + 999*time.Millisecond)
+	if got := reader.count(); got != 6 {
+		t.Fatalf("reader calls before retry deadline=%d, want 6", got)
+	}
+	clock.Advance(time.Millisecond)
+	eventually(t, func() bool { return reader.count() == 7 })
+	cancel()
+	<-done
+}
+
+type blockingEventStore struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingEventStore) SaveMinute(context.Context, domain.TelemetrySnapshot) error {
+	return nil
+}
+
+func (s *blockingEventStore) SaveEvent(ctx context.Context, _ time.Time, _ string, _ any) error {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestCollectorPublishesStaleWhileStorageIsBlockedAndRecoversOnSuccess(t *testing.T) {
+	base := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	clock := newFakeClock(base)
+	reader := &fakeReader{results: []readResult{
+		{snapshot: domain.TelemetrySnapshot{ObservedAt: base, Status: "normal"}},
+		{snapshot: domain.TelemetrySnapshot{ObservedAt: base.Add(10 * time.Second), Status: "fault"}},
+	}}
+	store := &blockingEventStore{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	hub := NewHub()
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+	collector := New(testConfig(clock), reader, store, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- collector.Run(ctx) }()
+	eventually(t, func() bool { return reader.count() == 1 })
+	<-events
+	clock.Advance(10 * time.Second)
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		t.Fatal("collector did not enter blocking storage call")
+	}
+
+	clock.Advance(19*time.Second + 999*time.Millisecond)
+	if collector.Latest().Stale {
+		t.Fatal("state became stale before storage crossed the freshness threshold")
+	}
+	clock.Advance(time.Millisecond)
+	eventually(t, func() bool { return collector.Latest().Stale })
+	select {
+	case event := <-events:
+		if event.Kind != "state" || !event.State.Stale {
+			t.Fatalf("event while storage blocked=%+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stale event was not published while storage was blocked")
+	}
+
+	close(store.release)
+	eventually(t, func() bool {
+		state := collector.Latest()
+		return !state.Stale && state.Snapshot != nil && state.Snapshot.Status == "fault" && state.LastSuccess.Equal(clock.Now())
+	})
+	cancel()
+	<-done
+}
+
 func TestCollectorReadTimeoutAndCancellationDoNotLeakOwner(t *testing.T) {
 	clock := newFakeClock(time.Now())
 	reader := &fakeReader{}

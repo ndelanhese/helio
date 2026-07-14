@@ -94,6 +94,10 @@ func (c *Collector) Run(ctx context.Context) error {
 		return err
 	}
 	defer c.endRun()
+	freshnessUpdates := make(chan time.Time, 1)
+	freshnessDone := make(chan struct{})
+	go c.monitorFreshness(ctx, freshnessUpdates, freshnessDone)
+	defer func() { <-freshnessDone }()
 
 	var pending *domain.TelemetrySnapshot
 	var previous *domain.TelemetrySnapshot
@@ -102,14 +106,10 @@ func (c *Collector) Run(ctx context.Context) error {
 	for {
 		if delay > 0 {
 			poll := c.config.Clock.After(delay)
-			stale := c.staleTimer()
 			select {
 			case <-ctx.Done():
 				c.flushPending(pending)
 				return ctx.Err()
-			case <-stale:
-				c.markStale()
-				continue
 			case <-poll:
 			}
 		}
@@ -153,7 +153,8 @@ func (c *Collector) Run(ctx context.Context) error {
 			}
 		}
 		previous = cloneSnapshot(copy)
-		c.recordSuccess(copy, errors.Join(storageErrors...))
+		lastSuccess := c.recordSuccess(copy, errors.Join(storageErrors...))
+		signalLatestTime(freshnessUpdates, lastSuccess)
 		c.backoff.Reset()
 		delay = c.config.PollInterval
 	}
@@ -192,21 +193,7 @@ func (c *Collector) read(ctx context.Context) (domain.TelemetrySnapshot, error) 
 	return c.reader.ReadSnapshot(readContext)
 }
 
-func (c *Collector) staleTimer() <-chan time.Time {
-	c.mu.RLock()
-	lastSuccess, stale := c.state.LastSuccess, c.state.Stale
-	c.mu.RUnlock()
-	if lastSuccess.IsZero() || stale {
-		return nil
-	}
-	delay := lastSuccess.Add(c.config.StaleAfter).Sub(c.config.Clock.Now())
-	if delay < 0 {
-		delay = 0
-	}
-	return c.config.Clock.After(delay)
-}
-
-func (c *Collector) recordSuccess(snapshot *domain.TelemetrySnapshot, storageError error) {
+func (c *Collector) recordSuccess(snapshot *domain.TelemetrySnapshot, storageError error) time.Time {
 	state := State{Snapshot: cloneSnapshot(snapshot), LastSuccess: c.config.Clock.Now()}
 	if storageError != nil {
 		state.LastError = storageError.Error()
@@ -215,6 +202,7 @@ func (c *Collector) recordSuccess(snapshot *domain.TelemetrySnapshot, storageErr
 	c.state = state
 	c.mu.Unlock()
 	c.hub.Publish(Event{Kind: "snapshot", Snapshot: snapshot, State: state})
+	return state.LastSuccess
 }
 
 func (c *Collector) recordError(err error) {
@@ -235,6 +223,53 @@ func (c *Collector) markStale() {
 	state := cloneState(c.state)
 	c.mu.Unlock()
 	c.hub.Publish(Event{Kind: "state", State: state})
+}
+
+// monitorFreshness is independent of synchronous reader and storage work. It
+// only observes successful-read timestamps; polling remains owned by Run.
+func (c *Collector) monitorFreshness(ctx context.Context, updates <-chan time.Time, done chan<- struct{}) {
+	defer close(done)
+	var deadline time.Time
+	for {
+		if deadline.IsZero() {
+			select {
+			case <-ctx.Done():
+				return
+			case lastSuccess := <-updates:
+				deadline = lastSuccess.Add(c.config.StaleAfter)
+			}
+			continue
+		}
+
+		delay := deadline.Sub(c.config.Clock.Now())
+		if delay <= 0 {
+			c.markStale()
+			deadline = time.Time{}
+			continue
+		}
+		timer := c.config.Clock.After(delay)
+		select {
+		case <-ctx.Done():
+			return
+		case lastSuccess := <-updates:
+			deadline = lastSuccess.Add(c.config.StaleAfter)
+		case <-timer:
+			c.markStale()
+			deadline = time.Time{}
+		}
+	}
+}
+
+func signalLatestTime(updates chan time.Time, value time.Time) {
+	select {
+	case updates <- value:
+	default:
+		select {
+		case <-updates:
+		default:
+		}
+		updates <- value
+	}
 }
 
 func (c *Collector) flushPending(pending *domain.TelemetrySnapshot) {
