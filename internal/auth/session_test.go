@@ -125,20 +125,20 @@ func TestLimiterSuccessfulLoginResetsAndSixthAttemptLimited(t *testing.T) {
 	if _, err := m.Bootstrap(context.Background(), "Admin", "correct horse battery staple"); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 4; i++ {
 		if _, err := m.Login(context.Background(), "203.0.113.8:4000", "Admin", "wrong password value"); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("failure %d: %v", i+1, err)
 		}
 	}
-	if _, err := m.Login(context.Background(), "203.0.113.8:5000", "admin", "wrong password value"); RetryAfter(err) != 15*time.Minute {
-		t.Fatalf("sixth login: %v", err)
-	}
-
-	m.limiter.Reset("203.0.113.8", "admin")
 	if _, err := m.Login(context.Background(), "203.0.113.8", "ADMIN", "correct horse battery staple"); err != nil {
 		t.Fatal(err)
 	}
-	if allowed, _ := m.limiter.Allow("203.0.113.8", "admin"); !allowed {
-		t.Fatal("successful login did not clear limiter")
+	for i := 0; i < 5; i++ {
+		if _, err := m.Login(context.Background(), "203.0.113.8:4000", "Admin", "wrong password value"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("post-success failure %d: %v", i+1, err)
+		}
+	}
+	if _, err := m.Login(context.Background(), "203.0.113.8:5000", "admin", "wrong password value"); RetryAfter(err) != 15*time.Minute {
+		t.Fatalf("sixth login: %v", err)
 	}
 }

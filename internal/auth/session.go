@@ -124,34 +124,39 @@ func (m *Manager) Bootstrap(ctx context.Context, username, password string) (*Cr
 }
 
 func (m *Manager) Login(ctx context.Context, remoteAddr, username, password string) (*Credentials, error) {
-	if allowed, retry := m.limiter.Allow(remoteAddr, username); !allowed {
+	attempt, retry := m.limiter.Admit(remoteAddr, username)
+	if attempt == nil {
 		return nil, rateLimitError{retryAfter: retry}
 	}
 	user, err := m.store.FindUserByUsername(ctx, username)
 	if err != nil {
-		m.limiter.RecordFailure(remoteAddr, username)
 		if errors.Is(err, storage.ErrNotFound) {
+			attempt.Failure()
 			return nil, ErrInvalidCredentials
 		}
+		attempt.Cancel()
 		return nil, fmt.Errorf("login lookup: %w", err)
 	}
 	valid, err := VerifyPassword(user.PasswordHash, password)
-	if err != nil && !errors.Is(err, ErrPasswordLength) {
+	if err != nil && !errors.Is(err, ErrPasswordLength) && !errors.Is(err, ErrPasswordEncoding) {
+		attempt.Cancel()
 		return nil, fmt.Errorf("verify credentials: %w", err)
 	}
 	if !valid {
-		m.limiter.RecordFailure(remoteAddr, username)
+		attempt.Failure()
 		return nil, ErrInvalidCredentials
 	}
 	now := m.now().UTC()
 	creds, session, err := m.newSession(user.ID, user.Username, now)
 	if err != nil {
+		attempt.Cancel()
 		return nil, err
 	}
 	if err := m.store.CreateSession(ctx, session); err != nil {
+		attempt.Cancel()
 		return nil, fmt.Errorf("create login session: %w", err)
 	}
-	m.limiter.Reset(remoteAddr, username)
+	attempt.Success()
 	return creds, nil
 }
 

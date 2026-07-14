@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -20,7 +21,10 @@ const (
 	argonKeyBytes    = 32
 )
 
-var ErrPasswordLength = errors.New("password must be between 12 characters and 128 bytes")
+var (
+	ErrPasswordLength   = errors.New("password must be between 12 characters and 128 bytes")
+	ErrPasswordEncoding = errors.New("password must be valid UTF-8")
+)
 
 func HashPassword(password string) (string, error) { return hashPassword(password, rand.Reader) }
 
@@ -50,6 +54,9 @@ func VerifyPassword(encoded, password string) (bool, error) {
 }
 
 func validatePassword(password string) error {
+	if !utf8.ValidString(password) {
+		return ErrPasswordEncoding
+	}
 	if len([]rune(password)) < 12 || len(password) > 128 {
 		return ErrPasswordLength
 	}
@@ -75,18 +82,18 @@ func parsePasswordHash(encoded string) (argonParams, []byte, []byte, error) {
 		return argonParams{}, nil, nil, errors.New("invalid password hash parameters")
 	}
 	// Bound every attacker-controlled work factor before decoding or allocating.
-	if memory < 8*1024 || memory > argonMemory || iterations < 1 || iterations > argonIterations || parallelism < 1 || parallelism > argonParallelism {
+	if memory != argonMemory || iterations != argonIterations || parallelism != argonParallelism {
 		return argonParams{}, nil, nil, errors.New("password hash parameters out of bounds")
 	}
 	if len(parts[4]) < 22 || len(parts[4]) > 86 || len(parts[5]) < 22 || len(parts[5]) > 86 {
 		return argonParams{}, nil, nil, errors.New("password hash fields out of bounds")
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil || len(salt) < 16 || len(salt) > 64 {
+	if err != nil || len(salt) != argonSaltBytes {
 		return argonParams{}, nil, nil, errors.New("invalid password hash salt")
 	}
 	key, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(key) < 16 || len(key) > 64 {
+	if err != nil || len(key) != argonKeyBytes {
 		return argonParams{}, nil, nil, errors.New("invalid password hash key")
 	}
 	return argonParams{memory: memory, iterations: iterations, parallelism: parallelism}, salt, key, nil
