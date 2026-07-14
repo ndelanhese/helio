@@ -38,7 +38,7 @@ Use the approved “Solar editorial” direction:
 
 ### Authentication
 
-Every screen requires login. First-run onboarding creates the administrator password. Passwords use Argon2id hashing. Sessions use server-side records and `HttpOnly`, `SameSite=Strict` cookies. Login is rate-limited; state-changing requests require CSRF protection.
+Every screen requires login after bootstrap. When no user exists, only the first-run bootstrap route is available; it creates the administrator password and closes permanently after successful setup. Passwords use Argon2id hashing. Sessions use server-side records and `HttpOnly`, `SameSite=Strict` cookies. Login is rate-limited; state-changing requests require CSRF protection.
 
 Local HTTP authentication does not encrypt traffic. Users must not reuse an important password. Remote access is out of MVP scope and must later use HTTPS or Tailscale.
 
@@ -173,7 +173,7 @@ Runtime contract:
 - Restart policy `unless-stopped` in supplied Compose example
 - Environment variables reserved for bootstrap/runtime overrides and future secrets
 
-Container networking must reach the logger’s LAN address. Docker Desktop starts at login and restarts the container; later Linux/Raspberry Pi deployment uses the same image and volume contract.
+Container networking must reach the logger’s LAN address. When Docker Desktop is configured to start at login, its restart policy restores the container; later Linux/Raspberry Pi deployment uses the same image and volume contract.
 
 ## Persistence
 
@@ -202,12 +202,12 @@ Default retention keeps minute samples for two years and aggregates indefinitely
 - Mark telemetry stale after a configured threshold.
 - Preserve gaps instead of fabricating measurements.
 - Shut down gracefully, completing or cancelling in-flight work before closing SQLite.
-- Expose `/health/live` for process liveness and `/health/ready` for application readiness.
+- Expose `/health/live` for process liveness, `/health/ready` for HTTP/database readiness, and `/health/components` for logger and weather status. Docker healthchecks must not restart Helio merely because the inverter or weather provider is offline.
 
 ## Security Boundaries
 
 - MVP exposes no Modbus writes.
-- All UI and API routes except health endpoints require authentication.
+- All UI and API routes except health endpoints and the one-time pre-user bootstrap route require authentication.
 - Validate and normalize all configuration and API inputs.
 - Use CSRF protection for mutations and login rate limiting.
 - Do not persist future Telegram or remote-access tokens as plaintext settings; use Docker secrets or protected environment injection.
