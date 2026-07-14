@@ -1,0 +1,16 @@
+CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE sessions (token_hash BLOB PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, csrf_hash BLOB NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE telemetry_minute (observed_at TEXT PRIMARY KEY, ac_power_w REAL NOT NULL, energy_today_wh REAL NOT NULL, energy_lifetime_wh REAL NOT NULL, pv1_voltage_v REAL NOT NULL, pv1_current_a REAL NOT NULL, pv1_power_w REAL NOT NULL, pv2_active INTEGER NOT NULL CHECK(pv2_active IN (0,1)), pv2_voltage_v REAL NOT NULL, pv2_current_a REAL NOT NULL, pv2_power_w REAL NOT NULL, grid_voltage_v REAL NOT NULL, grid_frequency_hz REAL NOT NULL, status TEXT NOT NULL, fault_codes_json TEXT NOT NULL);
+CREATE TABLE telemetry_events (id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at TEXT NOT NULL, kind TEXT NOT NULL, payload_json TEXT NOT NULL);
+CREATE TABLE weather_hourly (hour TEXT PRIMARY KEY, cloud_cover_pct REAL, irradiance_wm2 REAL, source TEXT NOT NULL, fetched_at TEXT NOT NULL);
+CREATE TABLE hourly_summary (hour TEXT PRIMARY KEY, energy_wh REAL NOT NULL, peak_power_w REAL NOT NULL, coverage_pct REAL NOT NULL);
+CREATE TABLE daily_summary (day TEXT PRIMARY KEY, energy_wh REAL NOT NULL, peak_power_w REAL NOT NULL, productive_minutes INTEGER NOT NULL, coverage_pct REAL NOT NULL, expected_wh REAL, confidence REAL, value_minor INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE monthly_summary (month TEXT PRIMARY KEY, energy_wh REAL NOT NULL, peak_power_w REAL NOT NULL, productive_minutes INTEGER NOT NULL, coverage_pct REAL NOT NULL);
+CREATE TABLE alerts (id TEXT PRIMARY KEY, rule TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('open','resolved')), severity TEXT NOT NULL, opened_at TEXT NOT NULL, resolved_at TEXT, evidence_json TEXT NOT NULL);
+CREATE TABLE recommendations (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, dismissed_at TEXT, evidence_json TEXT NOT NULL);
+CREATE TABLE action_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL, actor_user_id TEXT REFERENCES users(id), action TEXT NOT NULL, detail_json TEXT NOT NULL);
+CREATE INDEX telemetry_minute_day ON telemetry_minute(observed_at);
+CREATE INDEX telemetry_events_time ON telemetry_events(observed_at);
+CREATE INDEX sessions_expiry ON sessions(expires_at);
+CREATE UNIQUE INDEX alerts_one_open_rule ON alerts(rule) WHERE state='open';
