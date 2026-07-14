@@ -1,0 +1,37 @@
+name: Feature request
+description: Propose focused product or hardware support
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe user need, not only proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: input
+    id: hardware
+    attributes:
+      label: Relevant hardware
+      description: Omit serial numbers and private identifiers.
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Project fit
+      options:
+        - label: This preserves local-first operation.
+          required: true
+        - label: I disclosed any inverter-write or electrical-safety impact.
+          required: true
+

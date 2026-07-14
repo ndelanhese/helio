@@ -6,10 +6,10 @@ Date: 2026-07-14
 
 Helio replaces the poor local monitoring experience offered by the Solarman app. It reads a SOFAR inverter directly over the home network, stores an independent history, presents a polished responsive dashboard, detects abnormal production, and creates actionable recommendations.
 
-Initial hardware:
+Initial validation hardware:
 
 - Inverter: SOFAR 6KTLM-G3, 6 kW, Modbus slave ID 1
-- Solarman logger: serial LOGGER_SERIAL at `LOGGER_IP:8899`
+- Solarman V5 logger reachable on the local network at TCP port 8899; device IP and serial remain deployment configuration
 - Array: seven 610 W panels, 4.27 kWp total
 - Wiring: all panels on PV1; PV2 intentionally unused
 - Available measurements: solar generation and inverter/grid telemetry; no household consumption meter
@@ -52,7 +52,7 @@ First run collects and validates:
 - Electricity tariff for estimated financial value
 - Theme and data-retention preferences
 
-Defaults for this installation prefill known logger, inverter, array, and PV1/PV2 values, but every value remains editable.
+Onboarding may discover or prefill safe hardware defaults, but every deployment-specific value remains editable and outside source control.
 
 ## MVP Scope
 
@@ -223,7 +223,7 @@ Default retention keeps minute samples for two years and aggregates indefinitely
 - Frontend tests with Vitest, Testing Library, and MSW
 - Playwright end-to-end tests for onboarding, login, dashboard, history, theme persistence, and settings
 - Docker smoke test covering image build, healthcheck, LAN configuration, restart, and volume persistence
-- Explicit read-only hardware test against `LOGGER_IP:8899`
+- Explicit read-only hardware test against an environment-configured logger
 
 ## Success Criteria
 

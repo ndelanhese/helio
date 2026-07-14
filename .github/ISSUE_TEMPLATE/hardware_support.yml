@@ -1,0 +1,35 @@
+name: Hardware support
+description: Request or document support for an inverter or logger
+title: "[Hardware]: "
+labels: ["hardware", "needs-triage"]
+body:
+  - type: input
+    id: inverter
+    attributes:
+      label: Inverter manufacturer and model
+    validations:
+      required: true
+  - type: input
+    id: logger
+    attributes:
+      label: Logger model and protocol
+      placeholder: Solarman V5, TCP 8899
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Public protocol or register documentation
+      description: Link authoritative public sources. Do not upload confidential documents.
+  - type: textarea
+    id: validation
+    attributes:
+      label: Read-only validation performed
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed serial numbers, credentials, public IPs, and private energy data.
+          required: true
+
