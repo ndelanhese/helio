@@ -76,13 +76,13 @@ func ParseReadResponse(frame []byte, expectedSerial uint32, expectedSequence uin
 		return nil, fmt.Errorf("%w: invalid response metadata", ErrMalformedFrame)
 	}
 	modbus := payload[responseMetadataSize:]
+	if err := validateModbusCRC(modbus); err != nil {
+		return nil, err
+	}
 	function := modbus[1]
-	if function&0x80 != 0 {
+	if function == readHoldingFunction|0x80 {
 		if len(modbus) != 5 {
 			return nil, fmt.Errorf("%w: invalid exception length", ErrMalformedFrame)
-		}
-		if err := validateModbusCRC(modbus); err != nil {
-			return nil, err
 		}
 		return nil, fmt.Errorf("%w: function 0x%02x code 0x%02x", ErrModbusException, function&^0x80, modbus[2])
 	}
@@ -96,9 +96,6 @@ func ParseReadResponse(frame []byte, expectedSerial uint32, expectedSequence uin
 	}
 	if len(modbus) != 3+byteCount+2 {
 		return nil, fmt.Errorf("%w: Modbus response length mismatch", ErrMalformedFrame)
-	}
-	if err := validateModbusCRC(modbus); err != nil {
-		return nil, err
 	}
 
 	registers := make([]uint16, byteCount/2)

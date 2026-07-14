@@ -81,10 +81,7 @@ func TestParseRejectsMalformedEnvelope(t *testing.T) {
 		},
 		"checksum": func(frame []byte) []byte { frame[len(frame)-2]++; return frame },
 		"trailing bytes": func(frame []byte) []byte {
-			frame = append(frame[:len(frame)-2], 0, 0, 0x15)
-			binary.LittleEndian.PutUint16(frame[1:3], binary.LittleEndian.Uint16(frame[1:3])+1)
-			refreshFrameChecksum(frame)
-			return frame
+			return responseFrame([]byte{1, 3, 2, 0x12, 0x34, 0})
 		},
 	}
 	for name, mutate := range tests {
@@ -112,11 +109,36 @@ func TestParseRejectsBadModbusCRC(t *testing.T) {
 	}
 }
 
-func TestParseRejectsModbusException(t *testing.T) {
-	frame := responseFrame([]byte{1, 0x83, 2})
-	if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrModbusException) {
-		t.Fatalf("got %v, want ErrModbusException", err)
+func TestParseChecksCRCBeforeFunctionAndByteCount(t *testing.T) {
+	tests := map[string]func([]byte){
+		"function":   func(frame []byte) { frame[len(frame)-8] = 0x06 },
+		"byte count": func(frame []byte) { frame[len(frame)-7] = 1 },
 	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			frame := fixture(t, "read_holding_response.hex")
+			mutate(frame)
+			refreshFrameChecksum(frame)
+			if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrCRC) {
+				t.Fatalf("got %v, want ErrCRC", err)
+			}
+		})
+	}
+}
+
+func TestParseRejectsModbusException(t *testing.T) {
+	t.Run("read holding exception", func(t *testing.T) {
+		frame := responseFrame([]byte{1, 0x83, 2})
+		if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrModbusException) {
+			t.Fatalf("got %v, want ErrModbusException", err)
+		}
+	})
+	t.Run("write exception", func(t *testing.T) {
+		frame := responseFrame([]byte{1, 0x86, 2})
+		if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrUnsupportedFunction) {
+			t.Fatalf("got %v, want ErrUnsupportedFunction", err)
+		}
+	})
 }
 
 func TestParseRejectsOddByteCount(t *testing.T) {
