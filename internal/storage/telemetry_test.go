@@ -84,6 +84,49 @@ func TestTelemetryMinuteConsolidationAndHistoryGaps(t *testing.T) {
 	}
 }
 
+func TestTelemetryMinuteKeepsLatestSourceObservationOutOfOrder(t *testing.T) {
+	ctx := context.Background()
+	db, repo := telemetryRepository(t, time.UTC)
+	minute := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	newer := snapshot(minute.Add(45*time.Second), 200, 1000)
+	older := snapshot(minute.Add(5*time.Second), 100, 1100)
+	if err := repo.SaveMinute(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveMinute(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+
+	var source string
+	var power, lifetime float64
+	if err := db.sql.QueryRowContext(ctx, `
+		SELECT observed_at_utc, ac_power_w, energy_lifetime_wh
+		FROM telemetry_minute WHERE observed_at=?`, formatTime(minute)).Scan(&source, &power, &lifetime); err != nil {
+		t.Fatal(err)
+	}
+	if source != formatTime(newer.ObservedAt) || power != 200 || lifetime != 1100 {
+		t.Fatalf("after older source=%q power=%v lifetime=%v", source, power, lifetime)
+	}
+
+	latest := snapshot(minute.Add(55*time.Second), 300, 900)
+	if err := repo.SaveMinute(ctx, latest); err != nil {
+		t.Fatal(err)
+	}
+	// Equal source timestamps are deterministic: the first payload wins.
+	tie := snapshot(latest.ObservedAt, 999, 1200)
+	if err := repo.SaveMinute(ctx, tie); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.sql.QueryRowContext(ctx, `
+		SELECT observed_at_utc, ac_power_w, energy_lifetime_wh
+		FROM telemetry_minute WHERE observed_at=?`, formatTime(minute)).Scan(&source, &power, &lifetime); err != nil {
+		t.Fatal(err)
+	}
+	if source != formatTime(latest.ObservedAt) || power != 300 || lifetime != 1200 {
+		t.Fatalf("after newer/tie source=%q power=%v lifetime=%v", source, power, lifetime)
+	}
+}
+
 func TestAggregateGapCoverageAndEnergyUnits(t *testing.T) {
 	ctx := context.Background()
 	_, repo := telemetryRepository(t, time.UTC)
@@ -237,7 +280,7 @@ func TestAggregateLocalBucketsUpsertAndWeightedMonth(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Re-run after changing raw data: deterministic upsert, not duplicate/ignore.
-	if err := repo.SaveMinute(ctx, snapshot(jan31.Add(time.Minute), 180, 2)); err != nil {
+	if err := repo.SaveMinute(ctx, snapshot(jan31.Add(time.Minute+30*time.Second), 180, 2)); err != nil {
 		t.Fatal(err)
 	}
 	updated, err := repo.AggregateHour(ctx, jan31, jan31.Add(4*time.Minute))
