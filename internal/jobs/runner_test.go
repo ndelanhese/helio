@@ -37,17 +37,18 @@ func (c *fakeClock) firstWait(t *testing.T) time.Duration {
 }
 
 type fakeRepository struct {
-	mu         sync.Mutex
-	hours      [][2]time.Time
-	days       [][2]time.Time
-	months     []time.Time
-	cutoffs    []time.Time
-	entered    chan struct{}
-	release    chan struct{}
-	failDay    int
-	active     int
-	closed     bool
-	afterClose int
+	mu          sync.Mutex
+	hours       [][2]time.Time
+	days        [][2]time.Time
+	months      []time.Time
+	cutoffs     []time.Time
+	entered     chan struct{}
+	release     chan struct{}
+	failDay     int
+	dailyResult domain.DailySummary
+	active      int
+	closed      bool
+	afterClose  int
 }
 
 func (r *fakeRepository) recordCall() {
@@ -111,7 +112,7 @@ func (r *fakeRepository) AggregateDay(ctx context.Context, from, to time.Time) (
 	}
 	r.days = append(r.days, [2]time.Time{from, to})
 	r.mu.Unlock()
-	return domain.DailySummary{}, nil
+	return r.dailyResult, nil
 }
 func (r *fakeRepository) AggregateMonth(_ context.Context, at time.Time) (domain.MonthlySummary, error) {
 	r.mu.Lock()

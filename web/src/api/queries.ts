@@ -1,13 +1,16 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { api, authMemory } from './client'
-import type { AuthCredentials, BootstrapPayload, BootstrapStatus, LiveState, LoginPayload, Session, Settings } from './types'
+import { ApiClient, api, authMemory } from './client'
+import type { AlertsResponse, AlertState, AuthCredentials, BootstrapPayload, BootstrapStatus, ComponentHealth, InsightsResponse, LiveState, LoginPayload, Session, Settings } from './types'
+
+const rootApi = new ApiClient('')
 
 export const queryKeys = {
   bootstrap: ['bootstrap'] as const,
   health: ['health'] as const,
   history: (range?: string) => ['history', range] as const,
-  insights: ['insights'] as const,
+  insights: (day?: string) => ['insights', day] as const,
+  alerts: (state: AlertState) => ['alerts', state] as const,
   live: ['live'] as const,
   session: ['auth', 'session'] as const,
   settings: ['settings'] as const,
@@ -35,6 +38,27 @@ export const liveQuery = queryOptions({
 export const settingsQuery = queryOptions({
   queryKey: queryKeys.settings,
   queryFn: ({ signal }) => api.request<Settings>('/settings', { signal }),
+})
+
+export function insightsQuery(day: string) {
+  return queryOptions({
+    enabled: day.length > 0,
+    queryKey: queryKeys.insights(day),
+    queryFn: ({ signal }) => api.request<InsightsResponse>(`/insights?day=${encodeURIComponent(day)}`, { signal }),
+  })
+}
+
+export function alertsQuery(state: AlertState) {
+  return queryOptions({
+    queryKey: queryKeys.alerts(state),
+    queryFn: ({ signal }) => api.request<AlertsResponse>(`/alerts?state=${state}`, { signal }),
+  })
+}
+
+export const componentHealthQuery = queryOptions({
+  queryKey: queryKeys.health,
+  queryFn: ({ signal }) => rootApi.request<ComponentHealth>('/health/components', { signal }),
+  refetchInterval: 60_000,
 })
 
 export function login(payload: LoginPayload) {

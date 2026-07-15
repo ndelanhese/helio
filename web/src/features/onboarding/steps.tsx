@@ -92,7 +92,7 @@ export function PanelsStep({ errors, update, values, toggleMPPT }: SharedProps &
 
 export function LocationStep(props: SharedProps) {
   return (
-    <StepHeading eyebrow="Contexto" title="Local e tarifa" text="O local define o ciclo solar. A tarifa permite estimar o valor da energia gerada — não a economia da conta.">
+    <StepHeading eyebrow="Contexto" title="Local e tarifa" text="O local define o ciclo solar. A tarifa permite estimar somente o valor da energia gerada.">
       <div className="form-pair">
         <DecimalField field="latitude" label="Latitude" min="-90" max="90" {...props} />
         <DecimalField field="longitude" label="Longitude" min="-180" max="180" {...props} />

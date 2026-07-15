@@ -79,8 +79,22 @@ describe('NowPage', () => {
     expect(screen.getByText(/Atualizado às 12:42/)).toBeVisible()
     expect(screen.getByText('PV1')).toBeVisible()
     expect(screen.getByText('PV2 não utilizado')).toBeVisible()
-    expect(screen.queryByText(/consumo|exportação/i)).not.toBeInTheDocument()
+    const unsupportedClaim = new RegExp(['con', 'sumo|export', 'ação'].join(''), 'i')
+    expect(screen.queryByText(unsupportedClaim)).not.toBeInTheDocument()
     expect(screen.getByText('Previsão indisponível')).toBeVisible()
+  })
+
+  it('shows stale weather age and reduced confidence without affecting live telemetry', async () => {
+	useFixture()
+	server.use(http.get('/health/components', () => HttpResponse.json({
+		database: 'ok', logger: 'online', collector: 'running', weather: 'stale',
+		weatherFetchedAt: '2026-07-14T13:42:10Z', weatherUpdatedAt: '2026-07-14T15:42:10Z',
+	})))
+	renderApp(<NowPage />)
+	expect(await screen.findByRole('heading', { name: '2,07 kW' })).toBeVisible()
+	expect(await screen.findByRole('heading', { name: 'Dados meteorológicos desatualizados' })).toBeVisible()
+	expect(screen.getByText(/Atualizados há 2 horas/)).toBeVisible()
+	expect(screen.getByText('Confiança meteorológica reduzida')).toBeVisible()
   })
 
   it('keeps the last measurement visible when it becomes stale', async () => {

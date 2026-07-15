@@ -12,6 +12,7 @@ import (
 	"github.com/ndelanhese/helio/internal/auth"
 	"github.com/ndelanhese/helio/internal/collector"
 	"github.com/ndelanhese/helio/internal/domain"
+	"github.com/ndelanhese/helio/internal/storage"
 )
 
 type Store interface {
@@ -24,10 +25,25 @@ type HistoryStore interface {
 	History(context.Context, time.Time, time.Time) ([]domain.HistoryPoint, error)
 }
 
+type InsightsStore interface {
+	Load(context.Context, string) (domain.DailyAnalysis, bool, error)
+}
+
+type AlertStore interface {
+	List(context.Context, string) ([]storage.AlertRecord, error)
+}
+
+type SummaryStore interface {
+	DailyHistory(context.Context, time.Time, time.Time) ([]domain.AggregatePoint, error)
+}
+
 type Dependencies struct {
 	Auth              *auth.Manager
 	Store             Store
 	History           HistoryStore
+	Insights          InsightsStore
+	Alerts            AlertStore
+	Summaries         SummaryStore
 	Latest            func() collector.State
 	Hub               *collector.Hub
 	Reconfigure       func(context.Context, domain.Settings) error
@@ -74,6 +90,8 @@ func New(d Dependencies) http.Handler {
 		private.Get("/live/events", a.events)
 		private.Get("/history", a.history)
 		private.Get("/history.csv", a.csv)
+		private.Get("/insights", a.insights)
+		private.Get("/alerts", a.alerts)
 		private.Get("/settings", a.getSettings)
 		private.With(auth.RequireCSRF).Put("/settings", a.putSettings)
 		private.Get("/data/backup", a.backup)

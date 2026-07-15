@@ -103,3 +103,61 @@ export interface HistoryResponse {
 export type LiveEvent =
   | { kind: 'state'; state: LiveState }
   | { kind: 'snapshot'; snapshot: LiveSnapshot; state: LiveState }
+
+export type Confidence = 'low' | 'medium' | 'high'
+export type TrendDirection = 'up' | 'down' | 'stable' | 'insufficient'
+export type AlertState = 'open' | 'resolved'
+export type AlertKind = 'logger_offline' | 'telemetry_stale' | 'inverter_fault' | 'zero_sunny_generation' | 'persistent_underproduction' | 'grid_voltage' | 'grid_frequency'
+
+export interface EvidenceDTO {
+  code: string
+  label: string
+  unit: string
+  value: number
+}
+
+export interface TrendDTO {
+  changePct: number
+  direction: TrendDirection
+  windowDays: number
+}
+
+export interface InsightsResponse {
+  actualWh: number
+  confidence: Confidence
+  day: string
+  evidence: EvidenceDTO[]
+  expectedWh: number
+  generatedEnergyValue: { currency: string; estimate: true; label: string; minor: number }
+  observationWindow: { minimumDays: number; qualifyingDays: number }
+  qualifying: boolean
+  ratio: number
+  trends: { peakPower: TrendDTO; productiveMinutes: TrendDTO }
+  version: 'v1'
+}
+
+export interface AlertDTO {
+  evidence: Array<Omit<EvidenceDTO, 'code'>>
+  kind: AlertKind
+  openedAt: string
+  resolvedAt: string | null
+  severity: 'warning' | 'critical'
+  state: AlertState
+  summary: string
+  title: string
+}
+
+export interface AlertsResponse {
+  alerts: AlertDTO[]
+  state: AlertState
+  version: 'v1'
+}
+
+export interface ComponentHealth {
+  collector: string
+  database: string
+  logger: string
+  weather: 'available' | 'stale' | 'unavailable'
+  weatherFetchedAt?: string
+  weatherUpdatedAt?: string
+}

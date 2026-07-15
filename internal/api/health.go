@@ -19,6 +19,7 @@ type ComponentStatus struct {
 	JobsUpdatedAt      string `json:"jobsUpdatedAt,omitempty"`
 	DatabaseUpdatedAt  string `json:"databaseUpdatedAt,omitempty"`
 	WeatherUpdatedAt   string `json:"weatherUpdatedAt,omitempty"`
+	WeatherFetchedAt   string `json:"weatherFetchedAt,omitempty"`
 	DatabaseError      string `json:"databaseErrorClass,omitempty"`
 	LoggerError        string `json:"loggerErrorClass,omitempty"`
 	WeatherError       string `json:"weatherErrorClass,omitempty"`
@@ -27,7 +28,7 @@ type ComponentStatus struct {
 }
 
 func (a *API) componentHealth(w http.ResponseWriter, r *http.Request) {
-	status := ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle", Weather: "unconfigured"}
+	status := ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle", Weather: "unavailable"}
 	if a.dependencies.Components != nil {
 		status = a.dependencies.Components(r.Context())
 	} else {
@@ -35,7 +36,7 @@ func (a *API) componentHealth(w http.ResponseWriter, r *http.Request) {
 		status = componentStatusFromState(status, state)
 	}
 	if status.Weather == "" {
-		status.Weather = "unconfigured"
+		status.Weather = "unavailable"
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if status.DatabaseUpdatedAt == "" {

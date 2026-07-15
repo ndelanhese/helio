@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ndelanhese/helio/internal/alerts"
 	"github.com/ndelanhese/helio/internal/api"
 	"github.com/ndelanhese/helio/internal/auth"
 	"github.com/ndelanhese/helio/internal/collector"
@@ -19,6 +20,7 @@ import (
 	"github.com/ndelanhese/helio/internal/jobs"
 	"github.com/ndelanhese/helio/internal/sofar"
 	"github.com/ndelanhese/helio/internal/storage"
+	"github.com/ndelanhese/helio/internal/weather"
 )
 
 type App struct {
@@ -55,6 +57,8 @@ type jobRuntime interface {
 	Status() jobs.Status
 }
 
+type weatherJobRuntime interface{ WeatherStatus() jobs.WeatherStatus }
+
 func New(cfg config.Config) *App {
 	if cfg.HTTPAddr == "" {
 		cfg.HTTPAddr = ":8080"
@@ -73,9 +77,23 @@ func New(cfg config.Config) *App {
 	shutdownContext, shutdownCancel := context.WithCancel(context.Background())
 	a := &App{db: db, runtime: runtime, settingsRuntime: runtime, shutdownContext: shutdownContext, shutdownCancel: shutdownCancel, allowPublicLogger: cfg.AllowPublicLogger, repository: repository,
 		settings: func(ctx context.Context) (domain.Settings, error) { return db.GetSettings(ctx, cfg.AllowPublicLogger) }}
-	a.jobRunner = jobs.New(repository, a.settings)
+	weatherRepository := storage.NewWeatherRepository(db)
+	weatherProvider := weather.NewOpenMeteo("https://api.open-meteo.com/v1/forecast", nil, time.Now)
+	weatherService := weather.NewService(weatherRepository, weatherProvider, time.Now)
+	analysisRepository := storage.NewAnalysisRepository(db)
+	alertRepository := storage.NewAlertRepository(db)
+	alertEngine, alertErr := alerts.NewEngine(alertRepository, alerts.DefaultConfig())
+	if alertErr != nil {
+		_ = db.Close()
+		return &App{initErr: alertErr}
+	}
+	a.jobRunner = jobs.New(repository, a.settings, jobs.WithIntegration(jobs.Integration{
+		AnalysisData: repository, AnalysisWriter: analysisRepository, Weather: weatherService,
+		Alerts: alertEngine, Events: hub,
+	}))
 	apiHandler := api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repository, Hub: hub,
+		Insights: analysisRepository, Alerts: alertRepository, Summaries: repository,
 		Latest: runtime.latest, Reconfigure: runtime.reconfigure,
 		ApplySettings: a.applySettings, ShutdownContext: shutdownContext,
 		AllowPublicLogger: cfg.AllowPublicLogger,
@@ -87,6 +105,19 @@ func New(cfg config.Config) *App {
 				status.Jobs, status.JobsError = jobStatus.State, jobStatus.ErrorClass
 				if !jobStatus.UpdatedAt.IsZero() {
 					status.JobsUpdatedAt = jobStatus.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+			}
+			if weatherRuntime, ok := a.jobRunner.(weatherJobRuntime); ok {
+				weatherStatus := weatherRuntime.WeatherStatus()
+				status.Weather, status.WeatherError = weatherStatus.State, weatherStatus.ErrorClass
+				if status.Weather == "" {
+					status.Weather = "unavailable"
+				}
+				if !weatherStatus.UpdatedAt.IsZero() {
+					status.WeatherUpdatedAt = weatherStatus.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+				if !weatherStatus.FetchedAt.IsZero() {
+					status.WeatherFetchedAt = weatherStatus.FetchedAt.UTC().Format(time.RFC3339)
 				}
 			}
 			if err := db.Ready(ctx); err != nil {
@@ -424,7 +455,7 @@ func (r *collectorRuntime) activeConfiguration() domain.Settings {
 
 func (r *collectorRuntime) components() api.ComponentStatus {
 	state := r.latest()
-	status := api.ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle", Weather: "unconfigured"}
+	status := api.ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle", Weather: "unavailable"}
 	r.mu.RLock()
 	status.Collector = r.state
 	status.CollectorError = r.errorClass

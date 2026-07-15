@@ -138,14 +138,18 @@ func TestAuthTopologyCSRFAndRequestMetadata(t *testing.T) {
 	session := request(t, f.handler, http.MethodGet, "/api/v1/auth/session", "", cookie, "")
 	var sessionBody struct {
 		CSRFToken string `json:"csrfToken"`
-		Username string `json:"username"`
+		Username  string `json:"username"`
 	}
-	if err := json.Unmarshal(session.Body.Bytes(), &sessionBody); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(session.Body.Bytes(), &sessionBody); err != nil {
+		t.Fatal(err)
+	}
 	if session.Code != http.StatusOK || sessionBody.Username != "Admin" || sessionBody.CSRFToken == "" || sessionBody.CSRFToken == csrf || session.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("session: %d %s", session.Code, session.Body.String())
 	}
 	stale := request(t, f.handler, http.MethodPost, "/api/v1/auth/logout", "", cookie, csrf)
-	if stale.Code != http.StatusForbidden { t.Fatalf("stale csrf remained valid: %d", stale.Code) }
+	if stale.Code != http.StatusForbidden {
+		t.Fatalf("stale csrf remained valid: %d", stale.Code)
+	}
 	logout := request(t, f.handler, http.MethodPost, "/api/v1/auth/logout", "", cookie, sessionBody.CSRFToken)
 	if logout.Code != http.StatusNoContent {
 		t.Fatalf("logout: %d %s", logout.Code, logout.Body.String())
@@ -303,8 +307,21 @@ func TestSummaryHistoryUsesRepositoryCalendarSnapshotWithoutSeparateSettingsRead
 func TestComponentHealthIncludesExplicitWeatherState(t *testing.T) {
 	f := newFixture(t)
 	rec := request(t, f.handler, http.MethodGet, "/health/components", "", nil, "")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"weather":"unconfigured"`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"weather":"unavailable"`) {
 		t.Fatalf("components: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComponentHealthWeatherUsesOnlyPublicAvailabilityEnum(t *testing.T) {
+	fetched := "2026-07-14T13:00:00Z"
+	for _, state := range []string{"available", "stale", "unavailable"} {
+		handler := api.New(api.Dependencies{Components: func(context.Context) api.ComponentStatus {
+			return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: state, WeatherFetchedAt: fetched}
+		}})
+		rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"weather":"`+state+`"`) || !strings.Contains(rec.Body.String(), `"weatherFetchedAt":"`+fetched+`"`) {
+			t.Fatalf("weather %s: %d %s", state, rec.Code, rec.Body.String())
+		}
 	}
 }
 
