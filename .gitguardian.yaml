@@ -1,0 +1,10 @@
+version: 2
+exit_zero: false
+secret:
+  show_secrets: false
+  ignore_known_secrets: false
+  ignored_matches:
+    # SHA-256 of the public, deterministic browser-only credential shared by
+    # internal/fakeapp and web/e2e. No path or detector is excluded.
+    - name: internal/fakeapp and browser fixture credential
+      match: 7791bf656e4a4c51d7e51759812db80c9d5d57b8c77c115495c2a83a9274c587

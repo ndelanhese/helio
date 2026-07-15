@@ -76,6 +76,7 @@ class WorkflowContractTest < Minitest::Test
 
     assert_includes backend, "go test -race ./..."
     assert_includes backend, "go vet ./..."
+    assert_includes backend, "ruby scripts/gitguardian_config_test.rb"
     assert_includes backend, "ruby scripts/workflow_contract_test.rb"
     assert_includes backend, "ruby scripts/release_preflight_test.rb"
     assert_includes backend, "ruby scripts/finalize_release_aliases_test.rb"

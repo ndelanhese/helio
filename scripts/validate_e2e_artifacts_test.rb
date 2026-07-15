@@ -22,9 +22,10 @@ class ValidateE2EArtifactsTest < Minitest::Test
     payload = entries.map { |name, content| [name, Base64.strict_encode64(content)] }
     python = <<~PY
       import base64, json, stat, sys, zipfile
-      path, payload, symlink = sys.argv[1:]
+      path, symlink = sys.argv[1:]
+      payload = json.loads(base64.b64decode(sys.stdin.buffer.read()))
       with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-          for name, content in json.loads(base64.b64decode(payload)):
+          for name, content in payload:
               archive.writestr(name, base64.b64decode(content))
           if symlink:
               info = zipfile.ZipInfo(symlink)
@@ -33,7 +34,10 @@ class ValidateE2EArtifactsTest < Minitest::Test
               archive.writestr(info, "trace.trace")
     PY
     encoded = Base64.strict_encode64(JSON.generate(payload))
-    _stdout, stderr, status = Open3.capture3("python3", "-c", python, path, encoded, symlink.to_s)
+    if entries.length > 5000
+      assert_operator encoded.bytesize, :>, 131_072, "fixture must exceed Linux's common per-argument limit"
+    end
+    _stdout, stderr, status = Open3.capture3("python3", "-c", python, path, symlink.to_s, stdin_data: encoded)
     assert status.success?, stderr
     path
   end
@@ -122,6 +126,24 @@ class ValidateE2EArtifactsTest < Minitest::Test
       _stdout, stderr, status = run_validator(directory)
       refute status.success?
       assert_match(/outer|forbidden|trace\.zip/i, stderr)
+    end
+  end
+
+  def test_playwright_last_run_metadata_is_validated_but_not_treated_as_an_artifact
+    Dir.mktmpdir("helio-e2e-artifacts") do |directory|
+      File.write(File.join(directory, ".last-run.json"), JSON.generate({ status: "failed", failedTests: ["0123456789abcdef-test-id"] }))
+      stdout, stderr, status = run_validator(directory)
+      assert status.success?, stderr
+      assert_includes stdout, "has_artifacts=false"
+    end
+  end
+
+  def test_malformed_playwright_last_run_metadata_is_rejected
+    Dir.mktmpdir("helio-e2e-artifacts") do |directory|
+      File.write(File.join(directory, ".last-run.json"), JSON.generate({ status: "failed", failedTests: ["password=not-safe"] }))
+      _stdout, stderr, status = run_validator(directory)
+      refute status.success?
+      assert_match(/metadata|invalid|reject/i, stderr)
     end
   end
 end

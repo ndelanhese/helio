@@ -51,6 +51,12 @@ func TestFakeappPasswordConfirmationMatchesSensitiveSettingsContract(t *testing.
 	if loginRec.Code != http.StatusOK || len(cookies) != 1 {
 		t.Fatalf("login=%d cookies=%v", loginRec.Code, cookies)
 	}
+	if cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("loopback fixture cookie flags=%+v", cookies[0])
+	}
+	if cookies[0].MaxAge <= 0 || !cookies[0].Expires.IsZero() {
+		t.Fatalf("fixture cookie must use relative lifetime, got MaxAge=%d Expires=%v", cookies[0].MaxAge, cookies[0].Expires)
+	}
 
 	put := func(host string) *httptest.ResponseRecorder {
 		body := strings.Replace(settingsRequestJSON(), `"loggerHost":"192.0.2.44"`, `"loggerHost":"`+host+`"`, 1)
@@ -100,6 +106,38 @@ func TestFakeappPasswordConfirmationMatchesSensitiveSettingsContract(t *testing.
 	}
 	if rec := put("192.0.2.66"); rec.Code != http.StatusForbidden {
 		t.Fatalf("confirmation was reusable=%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFakeappLogoutCookiePreservesSecurityAttributes(t *testing.T) {
+	server := newFixtureServer()
+	server.bootstrapOpen = false
+	server.sessions["synthetic-session"] = fakeSession{CSRF: "synthetic-csrf", Username: testAdmin}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	request.Host = "helio.test"
+	request.Header.Set("Origin", "http://helio.test")
+	request.Header.Set("X-CSRF-Token", "synthetic-csrf")
+	request.AddCookie(&http.Cookie{Name: "helio_session", Value: "synthetic-session"})
+	recorder := httptest.NewRecorder()
+
+	server.handler().ServeHTTP(recorder, request)
+
+	cookies := recorder.Result().Cookies()
+	if recorder.Code != http.StatusNoContent || len(cookies) != 1 {
+		t.Fatalf("logout=%d cookies=%v", recorder.Code, cookies)
+	}
+	if cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("logout cookie flags=%+v", cookies[0])
+	}
+}
+
+func TestFixtureCookieHeaderRefusesNonLoopbackServers(t *testing.T) {
+	cookie := &http.Cookie{Name: "helio_session", Value: "synthetic", HttpOnly: true}
+	if _, err := fixtureCookieHeader("0.0.0.0:4173", cookie); err == nil {
+		t.Fatal("fixture cookie accepted a public bind address")
+	}
+	if header, err := fixtureCookieHeader("127.0.0.1:4173", cookie); err != nil || !strings.Contains(header, "HttpOnly") {
+		t.Fatalf("loopback fixture cookie header=%q err=%v", header, err)
 	}
 }
 

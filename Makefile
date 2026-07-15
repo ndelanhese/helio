@@ -41,6 +41,7 @@ web:
 	npm --prefix web run build
 
 workflow-contract:
+	ruby scripts/gitguardian_config_test.rb
 	ruby scripts/workflow_contract_test.rb
 	ruby scripts/release_preflight_test.rb
 	ruby scripts/finalize_release_aliases_test.rb

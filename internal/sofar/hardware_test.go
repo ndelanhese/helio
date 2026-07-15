@@ -39,6 +39,18 @@ func TestHardwareConfigFromEnv(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts the maximum Modbus slave without truncation", func(t *testing.T) {
+		env := cloneEnv(valid)
+		env["HELIO_MODBUS_SLAVE"] = "247"
+		cfg, err := HardwareConfigFromLookup(mapLookup(env))
+		if err != nil {
+			t.Fatalf("HardwareConfigFromLookup: %v", err)
+		}
+		if cfg.SlaveID != 247 {
+			t.Fatalf("SlaveID = %d, want 247", cfg.SlaveID)
+		}
+	})
+
 	tests := []struct {
 		name  string
 		key   string

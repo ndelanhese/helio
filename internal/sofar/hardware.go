@@ -48,7 +48,7 @@ func HardwareConfigFromLookup(lookup func(string) string) (HardwareConfig, error
 	if err != nil {
 		return HardwareConfig{}, errors.New("HELIO_LOGGER_SERIAL must be a uint32")
 	}
-	slave, err := parseBoundedUint(lookup("HELIO_MODBUS_SLAVE"), 1, 247, "HELIO_MODBUS_SLAVE")
+	slave, err := parseModbusSlave(lookup("HELIO_MODBUS_SLAVE"))
 	if err != nil {
 		return HardwareConfig{}, err
 	}
@@ -64,8 +64,21 @@ func HardwareConfigFromLookup(lookup func(string) string) (HardwareConfig, error
 	return HardwareConfig{
 		Address: net.JoinHostPort(ip.String(), strconv.FormatUint(port, 10)),
 		Serial:  uint32(serial),
-		SlaveID: byte(slave),
+		SlaveID: slave,
 	}, nil
+}
+
+func parseModbusSlave(value string) (byte, error) {
+	parsed, err := strconv.ParseUint(value, 10, 8)
+	if err != nil || parsed < 1 || parsed > 247 {
+		return 0, errors.New("HELIO_MODBUS_SLAVE must be between 1 and 247")
+	}
+	// Keep the conversion guard adjacent so static analysis and readers can prove
+	// this narrowing conversion cannot truncate, independent of the protocol bound.
+	if parsed > uint64(^byte(0)) {
+		return 0, errors.New("HELIO_MODBUS_SLAVE must fit in one byte")
+	}
+	return byte(parsed), nil
 }
 
 func parseBoundedUint(value string, minimum, maximum uint64, name string) (uint64, error) {

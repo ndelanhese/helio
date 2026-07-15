@@ -17,6 +17,7 @@ fi
 
 trace_count="$(python3 - "$results" <<'PY'
 import ipaddress
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -74,6 +75,23 @@ for current, directories, files in os.walk(root, followlinks=False):
         path = Path(current) / filename
         if path.is_symlink() or not path.is_file():
             reject("outer symlinks and special files are forbidden")
+        if path.parent == root and filename == ".last-run.json":
+            if path.stat().st_size > 64 * 1024:
+                reject("Playwright last-run metadata exceeds size bound")
+            try:
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                reject(f"invalid Playwright last-run metadata: {error}")
+            if not isinstance(metadata, dict) or set(metadata) != {"status", "failedTests"}:
+                reject("invalid Playwright last-run metadata shape")
+            if metadata["status"] not in {"passed", "failed", "timedout", "interrupted"}:
+                reject("invalid Playwright last-run metadata status")
+            failed_tests = metadata["failedTests"]
+            if not isinstance(failed_tests, list) or len(failed_tests) > 10_000:
+                reject("invalid Playwright last-run metadata test list")
+            if any(not isinstance(test_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,200}", test_id) for test_id in failed_tests):
+                reject("invalid Playwright last-run metadata test identifier")
+            continue
         if filename != "trace.zip":
             reject(f"outer file is not an allowlisted trace.zip: {path.relative_to(root)}")
         size = path.stat().st_size

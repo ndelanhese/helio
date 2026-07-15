@@ -4,10 +4,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -27,6 +29,7 @@ const (
 	fixedRecoveryAt          = "2026-07-14T15:43:00Z"
 	testAdmin                = "TEST_ADMIN"
 	testPassword             = "Helio-TEST-2026!"
+	fakeSessionLifetime      = 24 * time.Hour
 	fakeConfirmationLifetime = 5 * time.Minute
 )
 
@@ -299,7 +302,7 @@ func (s *fixtureServer) issueSessionLocked(w http.ResponseWriter, username strin
 	token := fmt.Sprintf("TEST-OPAQUE-%06d", s.sessionSerial)
 	csrf := fmt.Sprintf("TEST-CSRF-%06d", s.sessionSerial)
 	s.sessions[token] = fakeSession{CSRF: csrf, Username: username}
-	http.SetCookie(w, &http.Cookie{Name: "helio_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Expires: time.Date(2026, 7, 15, 15, 43, 0, 0, time.UTC)})
+	setFixtureCookie(w, &http.Cookie{Name: "helio_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: int(fakeSessionLifetime.Seconds())})
 	return map[string]any{"csrfToken": csrf, "expiresAt": "2026-07-15T15:43:00Z", "userId": "TEST-USER", "username": username}
 }
 
@@ -346,8 +349,36 @@ func (s *fixtureServer) logout(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	delete(s.sessions, cookie.Value)
 	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "helio_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	setFixtureCookie(w, &http.Cookie{Name: "helio_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// The fake acceptance server deliberately uses HTTP because it is reachable
+// only through its compile-time loopback bind. Its opaque, deterministic test
+// cookie must remain usable by Playwright APIRequestContext, which correctly
+// refuses Secure cookies over HTTP. Production cookies do not use this helper.
+func setFixtureCookie(w http.ResponseWriter, cookie *http.Cookie) {
+	header, err := fixtureCookieHeader(addr, cookie)
+	if err != nil {
+		panic("fakeapp cookie attempted outside loopback")
+	}
+	w.Header().Add("Set-Cookie", header)
+}
+
+func fixtureCookieHeader(bindAddress string, cookie *http.Cookie) (string, error) {
+	host, _, err := net.SplitHostPort(bindAddress)
+	if err != nil {
+		return "", errors.New("fakeapp bind address is invalid")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return "", errors.New("fakeapp cookies require a loopback bind")
+	}
+	header := cookie.String()
+	if header == "" {
+		return "", errors.New("fakeapp cookie is invalid")
+	}
+	return header, nil
 }
 
 func (s *fixtureServer) confirmPassword(w http.ResponseWriter, r *http.Request) {
