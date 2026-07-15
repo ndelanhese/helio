@@ -46,6 +46,14 @@ function rangeTitle(range: HistoryRange, timezone: string) {
 export function HistoryPage({ timezone: timezoneOverride }: { timezone?: string }) {
   const settings = useQuery({ ...settingsQuery, enabled: timezoneOverride === undefined })
   const timezone = timezoneOverride ?? settings.data?.timezone
+  if (!timezoneOverride && settings.isError) return (
+    <section className="history-state">
+      <p className="eyebrow">Configuração indisponível</p>
+      <h1>Não foi possível carregar o fuso horário.</h1>
+      <p>O histórico precisa do fuso configurado para respeitar dias e meses locais.</p>
+      <button className="secondary-action" onClick={() => { void settings.refetch() }} type="button"><RotateCw aria-hidden="true" />Tentar carregar configurações</button>
+    </section>
+  )
   if (!timezone) return <section aria-busy="true" className="history-loading">Preparando o calendário local…</section>
   return <HistoryContent timezone={timezone} />
 }
@@ -66,8 +74,12 @@ function HistoryContent({ timezone }: { timezone: string }) {
     if (window.location.search.slice(1) !== next) window.history.replaceState(window.history.state, '', `/history?${next}`)
   }, [range])
 
-  const current = useMemo(() => currentQuery.data ? buildHistoryView(currentQuery.data.points as HistoryPoint[], range.resolution) : undefined, [currentQuery.data, range.resolution])
-  const previous = useMemo(() => previousQuery.data ? buildHistoryView(previousQuery.data.points as HistoryPoint[], range.resolution) : undefined, [previousQuery.data, range.resolution])
+  const current = useMemo(() => currentQuery.data ? buildHistoryView(currentQuery.data.points as HistoryPoint[], range.resolution, {
+    from: range.from, timezone, to: range.to,
+  }) : undefined, [currentQuery.data, range, timezone])
+  const previous = useMemo(() => previousQuery.data ? buildHistoryView(previousQuery.data.points as HistoryPoint[], range.resolution, {
+    from: range.previousFrom, timezone, to: range.previousTo,
+  }) : undefined, [previousQuery.data, range, timezone])
 
   const changePeriod = (period: HistoryPeriod) => {
     const next = getPeriodRange(period, new Date(), timezone)
@@ -106,10 +118,14 @@ function HistoryContent({ timezone }: { timezone: string }) {
       <PeriodPicker onChange={changePeriod} value={range.period} />
       <SummaryCards current={current.summary} previous={previous?.summary} />
       {current.hasLowCoverage && current.summary.coveragePct !== null && (
-        <p className="coverage-warning" role="status">Cobertura de {Math.round(current.summary.coveragePct)}%, abaixo de 95%. Totais e comparação podem estar incompletos.</p>
+        <p className="coverage-warning" role="status">Cobertura de {formatCoverage(current.summary.coveragePct)}, abaixo de 95%. Totais e comparação podem estar incompletos.</p>
       )}
       <ProductionChart current={current} previous={previous} range={range} timezone={timezone} />
       <AccessibleHistoryTable points={currentQuery.data.points as HistoryPoint[]} timezone={timezone} />
     </article>
   )
+}
+
+function formatCoverage(value: number) {
+  return `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(value)}%`
 }

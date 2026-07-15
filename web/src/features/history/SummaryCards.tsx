@@ -1,6 +1,7 @@
 import type { HistorySummary } from './history-model'
 
 const number = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+const coverageNumber = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })
 
 export function formatEnergy(wh: number) {
   return wh >= 1000 ? `${number.format(wh / 1000)} kWh` : `${number.format(wh)} Wh`
@@ -25,7 +26,7 @@ export function SummaryCards({ current, previous }: { current: HistorySummary; p
     : null
   const previousCoverage = previous?.coveragePct
   const coverageDiffers = current.coveragePct !== null && previousCoverage !== undefined && previousCoverage !== null
-    && Math.abs(current.coveragePct - previousCoverage) >= 1
+    && current.coveragePct !== previousCoverage
 
   return (
     <section aria-label="Resumo do período" className="history-summary">
@@ -33,7 +34,7 @@ export function SummaryCards({ current, previous }: { current: HistorySummary; p
         <div className="summary-energy"><dt>Energia observada</dt><dd>{formatEnergy(current.energyWh)}</dd></div>
         <div><dt>Pico observado</dt><dd>{formatPower(current.peakPowerW)}</dd></div>
         <div><dt>Tempo produtivo</dt><dd>{formatDuration(current.productiveMinutes)}</dd></div>
-        <div><dt>Cobertura</dt><dd>{current.coveragePct === null ? 'Indisponível' : `${Math.round(current.coveragePct)}%`}</dd></div>
+        <div><dt>Cobertura</dt><dd>{current.coveragePct === null ? 'Indisponível' : `${coverageNumber.format(current.coveragePct)}%`}</dd></div>
       </dl>
       <p className="comparison-copy">
         {comparison === null

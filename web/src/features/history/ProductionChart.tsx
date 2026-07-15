@@ -1,4 +1,5 @@
 import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { useState } from 'react'
 
 import { buildChartRows, type ChartRow, type HistoryRange, type HistoryView } from './history-model'
 import { formatPower } from './SummaryCards'
@@ -27,21 +28,46 @@ export function ProductionChart({ current, previous, range, timezone }: { curren
             <YAxis tickFormatter={(value) => value >= 1000 ? `${numberCompact(value / 1000)}k` : String(value)} width={42} />
             <Tooltip content={<ChartTooltip timezone={timezone} />} filterNull={false} />
             {current.gaps.map((gap) => <ReferenceArea fill="var(--surface)" fillOpacity={0.72} key={`${gap.from}-${gap.to}`} stroke="var(--muted)" strokeDasharray="6 5" x1={Date.parse(gap.from)} x2={Date.parse(gap.to)} />)}
-            {current.segments.map((segment, index) => <Line activeDot={{ r: 5 }} animationDuration={0} dataKey={`current${index}`} dot={false} isAnimationActive={false} key={`current-${segment[0]?.at}`} stroke="var(--accent)" strokeWidth={3} type="linear" />)}
-            {previous?.segments.map((segment, index) => <Line animationDuration={0} dataKey={`previous${index}`} dot={false} isAnimationActive={false} key={`previous-${segment[0]?.at}`} stroke="var(--muted)" strokeDasharray="4 5" strokeWidth={1.5} type="linear" />)}
+            {current.segments.map((segment, index) => <Line activeDot={{ r: 5 }} animationDuration={0} dataKey={`current${index}`} dot={segment.length === 1 ? { fill: 'var(--accent)', r: 5, stroke: 'var(--canvas)', strokeWidth: 2 } : false} isAnimationActive={false} key={`current-${segment[0]?.at}`} stroke="var(--accent)" strokeWidth={3} type="linear" />)}
+            {previous?.segments.map((segment, index) => <Line animationDuration={0} dataKey={`previous${index}`} dot={segment.length === 1 ? { fill: 'var(--canvas)', r: 4, stroke: 'var(--muted)', strokeWidth: 2 } : false} isAnimationActive={false} key={`previous-${segment[0]?.at}`} stroke="var(--muted)" strokeDasharray="4 5" strokeWidth={1.5} type="linear" />)}
           </LineChart>
         </ResponsiveContainer>
       </div>
       <div className="chart-legend"><span><i className="current-line" />Período atual</span><span><i className="previous-line" />Período anterior</span></div>
-      {current.gaps.length > 0 && <ul className="gap-list">
-        {current.gaps.map((gap) => {
-          const format = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', hour12: false, minute: '2-digit', timeZone: timezone })
-          const label = `Sem dados entre ${format.format(new Date(gap.from))} e ${format.format(new Date(gap.to))}`
-          return <li key={`${gap.from}-${gap.to}`}><svg aria-label={label} height="12" role="img" strokeDasharray="6 5" width="30"><title>Intervalo sem leituras</title><rect fill="none" height="10" stroke="currentColor" strokeDasharray="6 5" width="28" x="1" y="1" /></svg>{label}</li>
-        })}
-      </ul>}
+      <SingletonMarks current={current} previous={previous} timezone={timezone} />
+      <GapList gaps={current.gaps} timezone={timezone} />
     </section>
   )
+}
+
+function GapList({ gaps, timezone }: { gaps: HistoryView['gaps']; timezone: string }) {
+  const [activeGap, setActiveGap] = useState<string>()
+  if (gaps.length === 0) return null
+  const format = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', hour12: false, minute: '2-digit', timeZone: timezone })
+  return <ul className="gap-list">{gaps.map((gap) => {
+    const key = `${gap.from}-${gap.to}`
+    const label = `Sem dados entre ${format.format(new Date(gap.from))} e ${format.format(new Date(gap.to))}`
+    const tooltipId = `gap-${Date.parse(gap.from)}-${Date.parse(gap.to)}`
+    return <li key={key}>
+      <button aria-describedby={activeGap === key ? tooltipId : undefined} onBlur={() => setActiveGap(undefined)} onFocus={() => setActiveGap(key)} onMouseEnter={() => setActiveGap(key)} onMouseLeave={() => setActiveGap(undefined)} type="button">
+        <svg aria-hidden="true" height="12" strokeDasharray="6 5" width="30"><rect fill="none" height="10" stroke="currentColor" strokeDasharray="6 5" width="28" x="1" y="1" /></svg>{label}
+      </button>
+      {activeGap === key && <div className="chart-tooltip gap-tooltip" id={tooltipId} role="tooltip"><strong>Sem dados neste intervalo</strong><span>{label}</span></div>}
+    </li>
+  })}</ul>
+}
+
+function SingletonMarks({ current, previous, timezone }: { current: HistoryView; previous?: HistoryView; timezone: string }) {
+  const formatter = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', hour12: false, minute: '2-digit', timeZone: timezone })
+  const marks = [
+    ...current.segments.filter((segment) => segment.length === 1).map((segment) => ({ point: segment[0], series: 'atual' as const })),
+    ...(previous?.segments.filter((segment) => segment.length === 1).map((segment) => ({ point: segment[0], series: 'anterior' as const })) ?? []),
+  ]
+  if (marks.length === 0) return null
+  return <ul className="singleton-list">{marks.map(({ point, series }) => {
+    const label = `Leitura isolada do período ${series}, ${formatter.format(new Date(point.at))}, ${formatPower(point.powerW)}`
+    return <li aria-label={label} key={`${series}-${point.at}`}><i className={`singleton-mark is-${series}`} />{label}</li>
+  })}</ul>
 }
 
 function numberCompact(value: number) {

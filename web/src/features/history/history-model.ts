@@ -37,6 +37,12 @@ export interface HistorySummary {
   productiveMinutes: number
 }
 
+export interface SummaryWindow {
+  from: string
+  timezone: string
+  to: string
+}
+
 export interface HistoryView {
   chartPoints: ChartPoint[]
   gaps: Array<{ from: string; to: string }>
@@ -144,12 +150,7 @@ export function parseHistorySearch(search: URLSearchParams, anchor: Date, timezo
   const toMs = Date.parse(to)
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) return fallback
   if (PERIOD_RESOLUTION[period] === 'minute' && toMs - fromMs > 366 * 24 * 60 * 60_000) return fallback
-  const start = periodStart(period, new Date(fromMs + 12 * 60 * 60_000), timezone)
-  return {
-    from: iso(new Date(fromMs)), period,
-    previousFrom: iso(zonedCalendarToDate(shiftCalendar(start, period, -1), timezone)),
-    previousTo: iso(new Date(fromMs)), resolution: PERIOD_RESOLUTION[period], to: iso(new Date(toMs)),
-  }
+  return getPeriodRange(period, new Date(fromMs + (toMs - fromMs) / 2), timezone)
 }
 
 export function serializeHistoryRange(range: HistoryRange) {
@@ -190,24 +191,46 @@ function summarizeMinute(points: MinuteHistoryPoint[]): HistorySummary {
   return { coveragePct: null, energyWh, peakPowerW: Math.max(0, ...points.map((point) => point.powerW)), productiveMinutes }
 }
 
-function summarizeAggregate(points: AggregateHistoryPoint[]): HistorySummary {
-  if (points.length === 0) return { coveragePct: null, energyWh: 0, peakPowerW: 0, productiveMinutes: 0 }
+function bucketEnd(at: string, resolution: Exclude<HistoryResolution, 'minute'>, timezone: string) {
+  const start = new Date(at)
+  if (resolution === 'hour') return new Date(start.getTime() + 60 * 60_000)
+  const local = calendarParts(start, timezone)
+  return zonedCalendarToDate(shiftCalendar({ ...local, hour: 0, minute: 0, second: 0 }, resolution === 'day' ? 'day' : 'month', 1), timezone)
+}
+
+function summarizeAggregate(points: AggregateHistoryPoint[], resolution: Exclude<HistoryResolution, 'minute'>, window?: SummaryWindow): HistorySummary {
+  if (points.length === 0) return { coveragePct: window ? 0 : null, energyWh: 0, peakPowerW: 0, productiveMinutes: 0 }
+  let coveragePct: number | null = null
+  if (window) {
+    const fromMs = Date.parse(window.from)
+    const toMs = Date.parse(window.to)
+    const durationMs = toMs - fromMs
+    if (durationMs > 0) {
+      const coverageWeight = points.reduce((total, point) => {
+        const bucketStart = Date.parse(point.at)
+        const bucketFinish = bucketEnd(point.at, resolution, window.timezone).getTime()
+        const overlapMs = Math.max(0, Math.min(toMs, bucketFinish) - Math.max(fromMs, bucketStart))
+        return total + Math.min(100, Math.max(0, point.coveragePct)) * overlapMs
+      }, 0)
+      coveragePct = coverageWeight / durationMs
+    }
+  }
   return {
-    coveragePct: points.reduce((total, point) => total + point.coveragePct, 0) / points.length,
+    coveragePct,
     energyWh: points.reduce((total, point) => total + point.energyWh, 0),
     peakPowerW: Math.max(0, ...points.map((point) => point.peakPowerW)),
     productiveMinutes: points.reduce((total, point) => total + (point.productiveMinutes ?? 0), 0),
   }
 }
 
-export function buildHistoryView(points: HistoryPoint[], resolution: HistoryResolution): HistoryView {
+export function buildHistoryView(points: HistoryPoint[], resolution: HistoryResolution, window?: SummaryWindow): HistoryView {
   const ordered = [...points].sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
   const chartPoints = ordered.map(toChartPoint)
   const segments = toChartSegments(chartPoints, RESOLUTION_GAP_MS[resolution])
   const gaps = segments.slice(0, -1).map((segment, index) => ({ from: segment.at(-1)?.at ?? '', to: segments[index + 1][0]?.at ?? '' }))
   const summary = ordered.every(isMinutePoint)
     ? summarizeMinute(ordered)
-    : summarizeAggregate(ordered.filter((point): point is AggregateHistoryPoint => !isMinutePoint(point)))
+    : summarizeAggregate(ordered.filter((point): point is AggregateHistoryPoint => !isMinutePoint(point)), resolution as Exclude<HistoryResolution, 'minute'>, window)
   return { chartPoints, gaps, hasLowCoverage: summary.coveragePct !== null && summary.coveragePct < 95, segments, summary }
 }
 

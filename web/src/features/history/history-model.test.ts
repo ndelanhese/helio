@@ -45,6 +45,20 @@ describe('history model', () => {
     expect(fallback.from).toBe('2026-07-14T03:00:00.000Z')
   })
 
+  it('canonicalizes a valid Tuesday-to-Tuesday week before deriving its comparison bounds', () => {
+    const range = parseHistorySearch(new URLSearchParams({
+      period: 'week',
+      from: '2026-07-14T03:00:00.000Z',
+      to: '2026-07-21T03:00:00.000Z',
+    }), anchor, 'America/Sao_Paulo')
+    expect(range).toMatchObject({
+      from: '2026-07-13T03:00:00.000Z',
+      to: '2026-07-20T03:00:00.000Z',
+      previousFrom: '2026-07-06T03:00:00.000Z',
+      previousTo: '2026-07-13T03:00:00.000Z',
+    })
+  })
+
   it('splits gaps over 90 seconds without inserting a synthetic zero', () => {
     const points: MinuteHistoryPoint[] = [
       { at: '2026-07-14T12:00:00Z', powerW: 800 },
@@ -85,8 +99,39 @@ describe('history model', () => {
       { at: '2026-07-14T03:00:00Z', energyWh: 2500, peakPowerW: 3200, productiveMinutes: 240, coveragePct: 92 },
       { at: '2026-07-15T03:00:00Z', energyWh: 3000, peakPowerW: 4100, productiveMinutes: 300, coveragePct: 96 },
     ]
-    const view = buildHistoryView(points, 'day')
+    const view = buildHistoryView(points, 'day', {
+      from: '2026-07-14T03:00:00Z', to: '2026-07-16T03:00:00Z', timezone: 'America/Sao_Paulo',
+    })
     expect(view.summary).toEqual({ energyWh: 5500, peakPowerW: 4100, productiveMinutes: 540, coveragePct: 94 })
     expect(view.hasLowCoverage).toBe(true)
+  })
+
+  it('weights aggregate coverage over the whole requested duration so missing buckets count as zero', () => {
+    const points: AggregateHistoryPoint[] = [
+      { at: '2026-07-13T03:00:00Z', energyWh: 100, peakPowerW: 200, coveragePct: 100 },
+      { at: '2026-07-13T05:00:00Z', energyWh: 100, peakPowerW: 200, coveragePct: 50 },
+    ]
+    const view = buildHistoryView(points, 'hour', {
+      from: '2026-07-13T03:00:00Z', to: '2026-07-13T06:00:00Z', timezone: 'America/Sao_Paulo',
+    })
+    expect(view.summary.coveragePct).toBe(50)
+  })
+
+  it('weights unequal DST day and calendar-month durations instead of counting returned rows', () => {
+    const dstDays: AggregateHistoryPoint[] = [
+      { at: '2026-03-07T05:00:00Z', energyWh: 100, peakPowerW: 200, coveragePct: 100 },
+      { at: '2026-03-08T05:00:00Z', energyWh: 100, peakPowerW: 200, coveragePct: 50 },
+    ]
+    expect(buildHistoryView(dstDays, 'day', {
+      from: '2026-03-07T05:00:00Z', to: '2026-03-10T04:00:00Z', timezone: 'America/New_York',
+    }).summary.coveragePct).toBe(50)
+
+    const months: AggregateHistoryPoint[] = [
+      { at: '2026-01-01T00:00:00Z', energyWh: 100, peakPowerW: 200, coveragePct: 100 },
+      { at: '2026-02-01T00:00:00Z', energyWh: 100, peakPowerW: 200, coveragePct: 50 },
+    ]
+    expect(buildHistoryView(months, 'month', {
+      from: '2026-01-01T00:00:00Z', to: '2026-04-01T00:00:00Z', timezone: 'UTC',
+    }).summary.coveragePct).toBe(50)
   })
 })

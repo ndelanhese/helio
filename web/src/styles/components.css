@@ -307,8 +307,14 @@
 .chart-legend i { display: inline-block; width: 28px; border-top: 3px solid var(--accent); }
 .chart-legend .previous-line { border-color: var(--muted); border-top-style: dashed; border-top-width: 2px; }
 .gap-list { display: grid; margin: var(--space-4) 0 0; padding: 0; gap: var(--space-2); color: var(--muted); font-size: .72rem; list-style: none; }
-.gap-list li { display: flex; align-items: center; gap: var(--space-2); }
+.gap-list li { position: relative; display: flex; align-items: center; gap: var(--space-2); }
+.gap-list button { display: inline-flex; min-height: 44px; align-items: center; gap: var(--space-2); padding: 0; border: 0; background: transparent; color: inherit; cursor: help; font-size: inherit; }
 .gap-list svg { flex: 0 0 auto; overflow: visible; }
+.gap-tooltip { position: absolute; z-index: 2; top: 100%; left: 0; min-width: 220px; }
+.singleton-list { display: grid; margin: var(--space-4) 0 0; padding: 0; gap: var(--space-2); color: var(--muted); font-size: .72rem; list-style: none; }
+.singleton-list li { display: flex; align-items: center; gap: var(--space-2); }
+.singleton-mark { display: inline-block; width: 10px; height: 10px; flex: 0 0 auto; border: 2px solid var(--canvas); border-radius: 50%; background: var(--accent); outline: 1px solid var(--accent); }
+.singleton-mark.is-anterior { background: var(--canvas); outline-color: var(--muted); }
 .history-table-disclosure { border-block: 1px solid var(--text); }
 .history-table-disclosure summary { display: flex; min-height: 52px; align-items: center; cursor: pointer; font-size: .82rem; font-weight: 750; }
 .history-table-scroll { overflow-x: auto; }

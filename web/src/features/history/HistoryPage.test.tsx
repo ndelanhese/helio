@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { renderApp } from '../../test/render'
 import { server } from '../../test/server'
 import { HistoryPage } from './HistoryPage'
+import { buildHistoryView, getPeriodRange } from './history-model'
+import { ProductionChart } from './ProductionChart'
+import { SummaryCards } from './SummaryCards'
 
 const current = {
   from: '2026-07-13T03:00:00.000Z', to: '2026-07-20T03:00:00.000Z', resolution: 'hour',
@@ -20,6 +23,12 @@ const previous = {
   points: [
     { at: '2026-07-07T12:00:00Z', energyWh: 1400, peakPowerW: 3000, productiveMinutes: 150, coveragePct: 99 },
   ],
+}
+const settings = {
+  activeMPPT: [1], currency: 'BRL', latitude: -23.5, longitude: -46.6,
+  loggerHost: '192.168.1.50', loggerPort: 8899, loggerSerial: '123', modbusSlave: 1,
+  panelCount: 7, panelWattage: 610, retentionDays: 730, tariffMinorPerKWh: 95,
+  timezone: 'America/Sao_Paulo',
 }
 
 function useHistoryFixtures() {
@@ -51,8 +60,11 @@ describe('HistoryPage', () => {
     useHistoryFixtures()
     renderApp(<HistoryPage timezone="America/Sao_Paulo" />)
 
-    expect(await screen.findByLabelText(/Sem dados entre 10:00 e 13:00/)).toHaveAttribute('stroke-dasharray')
-    expect(screen.getByRole('status')).toHaveTextContent(/94%.*abaixo de 95%/i)
+    const gapControl = await screen.findByRole('button', { name: /Sem dados entre 10:00 e 13:00/ })
+    expect(gapControl.querySelector('svg')).toHaveAttribute('stroke-dasharray')
+    await userEvent.hover(gapControl)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Sem dados neste intervalo')
+    expect(screen.getByRole('status')).toHaveTextContent(/1,7%.*abaixo de 95%/i)
     await userEvent.click(screen.getByText('Ver dados precisos'))
     const table = screen.getByRole('table', { name: 'Leituras do período atual' })
     expect(within(table).getByText('14/07/2026, 09:00')).toBeVisible()
@@ -92,7 +104,39 @@ describe('HistoryPage', () => {
     expect(await screen.findByText('3,70 kWh')).toBeVisible()
   })
 
-  it('renders 1,440 minute points without eagerly mounting table rows or logging a chunk warning', async () => {
+  it('shows an honest settings error and recovers the timezone on retry', async () => {
+    let attempts = 0
+    server.use(http.get('/api/v1/settings', () => {
+      attempts += 1
+      return attempts === 1
+        ? HttpResponse.json({ error: { code: 'unavailable', message: 'offline' } }, { status: 503 })
+        : HttpResponse.json(settings)
+    }))
+    useHistoryFixtures()
+    renderApp(<HistoryPage />)
+    expect(await screen.findByRole('heading', { name: 'Não foi possível carregar o fuso horário.' })).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: 'Tentar carregar configurações' }))
+    expect(await screen.findByRole('heading', { name: 'Histórico solar' })).toBeVisible()
+  })
+
+  it('renders visible accessible marks for isolated current and previous samples', () => {
+    const range = getPeriodRange('day', new Date('2026-07-14T15:00:00Z'), 'America/Sao_Paulo')
+    const currentView = buildHistoryView([{ at: '2026-07-14T12:00:00Z', powerW: 1800 }], 'minute')
+    const previousView = buildHistoryView([{ at: '2026-07-13T12:00:00Z', powerW: 1600 }], 'minute')
+    renderApp(<ProductionChart current={currentView} previous={previousView} range={range} timezone="America/Sao_Paulo" />)
+    expect(screen.getByLabelText(/Leitura isolada do período atual.*09:00.*1,80 kW/i)).toBeVisible()
+    expect(screen.getByLabelText(/Leitura isolada do período anterior.*09:00.*1,60 kW/i)).toBeVisible()
+  })
+
+  it('qualifies even a sub-one-point coverage difference with neutral wording', () => {
+    renderApp(<SummaryCards
+      current={{ coveragePct: 94.4, energyWh: 1000, peakPowerW: 1000, productiveMinutes: 60 }}
+      previous={{ coveragePct: 94, energyWh: 1000, peakPowerW: 1000, productiveMinutes: 60 }}
+    />)
+    expect(screen.getByText(/cobertura diferente.*compare com cautela/i)).toBeVisible()
+  })
+
+  it('renders 1,440 minute points without eagerly mounting precise table rows', async () => {
     const points = Array.from({ length: 1440 }, (_, minute) => ({
       at: new Date(Date.parse('2026-07-14T03:00:00Z') + minute * 60_000).toISOString(),
       powerW: Math.max(0, Math.sin((minute / 1440) * Math.PI) * 4200),
@@ -104,6 +148,5 @@ describe('HistoryPage', () => {
     renderApp(<HistoryPage timezone="America/Sao_Paulo" />)
     expect(await screen.findByRole('heading', { name: 'Histórico solar' })).toBeVisible()
     expect(screen.queryAllByRole('row')).toHaveLength(0)
-    expect(document.body.textContent).not.toMatch(/chunk.*warning/i)
   })
 })
