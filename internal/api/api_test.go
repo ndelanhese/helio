@@ -301,6 +301,21 @@ func TestComponentHealthIncludesExplicitWeatherState(t *testing.T) {
 	}
 }
 
+func TestComponentHealthExposesSanitizedFailureClassAndTimestamp(t *testing.T) {
+	at := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	handler := api.New(api.Dependencies{Latest: func() collector.State {
+		return collector.State{LastError: "dial 192.168.1.50 raw-frame", LastErrorAt: at, ErrorClass: "communication"}
+	}})
+	rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"loggerErrorClass":"communication"`) || !strings.Contains(body, `"loggerUpdatedAt":"2026-07-14T12:00:00Z"`) {
+		t.Fatalf("health=%d %s", rec.Code, body)
+	}
+	if strings.Contains(body, "192.168.1.50") || strings.Contains(body, "raw-frame") {
+		t.Fatalf("health leaked private error: %s", body)
+	}
+}
+
 func TestExportsDoNotCommitResponseWhenRequiredAuditFails(t *testing.T) {
 	f := newFixture(t)
 	cookie, _ := bootstrap(t, f)

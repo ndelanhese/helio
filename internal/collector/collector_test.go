@@ -236,6 +236,22 @@ func TestCollectorRetriesWithCappedBackoffAndResetsAfterSuccess(t *testing.T) {
 	<-done
 }
 
+func TestCollectorFailureMetadataIsClassifiedTimestampedAndClearedOnRecovery(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	clock := newFakeClock(now)
+	collector := New(testConfig(clock), &fakeReader{}, &fakeStore{}, NewHub())
+	collector.recordError(errors.New("dial 192.168.1.50 secret-frame"))
+	state := collector.Latest()
+	if state.ErrorClass != "communication" || !state.LastErrorAt.Equal(now) {
+		t.Fatalf("failure metadata=%+v", state)
+	}
+	collector.recordSuccess(&domain.TelemetrySnapshot{ObservedAt: now}, nil)
+	state = collector.Latest()
+	if state.ErrorClass != "" || !state.LastErrorAt.IsZero() || state.LastError != "" {
+		t.Fatalf("failure metadata survived recovery=%+v", state)
+	}
+}
+
 func TestCollectorMarksStateStaleThirtySecondsAfterLastSuccess(t *testing.T) {
 	base := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
 	clock := newFakeClock(base)

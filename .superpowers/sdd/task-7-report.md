@@ -32,3 +32,23 @@ go vet ./...         -> No issues found
 ```
 
 No hardware or network calls were used by the new tests.
+
+## Fix Review
+
+Reviewer critical/important findings were resolved in a follow-up TDD wave:
+
+- The 10-second jobs deadline is now a grace period: after it expires the operation context is cancelled and the worker is joined before `Runner.Run` returns. An instrumented repository asserts zero active or post-owner-close calls.
+- Collector stop/reconfigure timeouts publish `stop_timeout` but continue waiting for the context-aware collector/final minute flush before returning DB ownership.
+- Settings updates pause and join the jobs runner before the settings/calendar transaction, then restart after commit or rollback. Barrier tests prevent old-calendar bounds from interleaving with `ApplyLocation`, and assert no duplicate runner.
+- Restarting jobs immediately recomputes effective timezone and retention scheduling.
+- Failed aggregation/retention does not advance the completed day and retries after an injected one-minute delay. Transient settings reads degrade and recover instead of terminating the scheduler.
+- Unexpected jobs termination clears the app runtime slot so a later start is possible.
+- Shutdown explicitly closes the listener, cancels and joins services, drains HTTP, and only then returns to the deferred DB close. An ordered test verifies listener stop → service cancellation → workers joined.
+- Logger failures now carry timestamps and sanitized classes; success clears failure metadata. Database, jobs, collector, and weather component observations expose timestamps/classes without raw private error content.
+
+Follow-up verification:
+
+```text
+go test -race ./...  -> 233 passed in 14 packages
+go vet ./...         -> No issues found
+```

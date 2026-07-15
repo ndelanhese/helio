@@ -11,6 +11,8 @@ type State struct {
 	Snapshot    *domain.TelemetrySnapshot `json:"snapshot,omitempty"`
 	LastSuccess time.Time                 `json:"lastSuccess,omitempty"`
 	LastError   string                    `json:"lastError,omitempty"`
+	LastErrorAt time.Time                 `json:"lastErrorAt,omitempty"`
+	ErrorClass  string                    `json:"errorClass,omitempty"`
 	Stale       bool                      `json:"stale"`
 }
 

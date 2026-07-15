@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -36,13 +37,23 @@ func (c *fakeClock) firstWait(t *testing.T) time.Duration {
 }
 
 type fakeRepository struct {
-	mu      sync.Mutex
-	hours   [][2]time.Time
-	days    [][2]time.Time
-	months  []time.Time
-	cutoffs []time.Time
-	entered chan struct{}
-	release chan struct{}
+	mu         sync.Mutex
+	hours      [][2]time.Time
+	days       [][2]time.Time
+	months     []time.Time
+	cutoffs    []time.Time
+	entered    chan struct{}
+	release    chan struct{}
+	failDay    int
+	active     int
+	closed     bool
+	afterClose int
+}
+
+func (r *fakeRepository) recordCall() {
+	if r.closed {
+		r.afterClose++
+	}
 }
 
 func TestRunnerInitialStatusHasTimestamp(t *testing.T) {
@@ -58,31 +69,60 @@ func TestRunnerInitialStatusHasTimestamp(t *testing.T) {
 
 func (r *fakeRepository) AggregateHour(_ context.Context, from, to time.Time) (domain.HourlySummary, error) {
 	r.mu.Lock()
+	r.recordCall()
 	r.hours = append(r.hours, [2]time.Time{from, to})
 	r.mu.Unlock()
 	return domain.HourlySummary{}, nil
 }
-func (r *fakeRepository) AggregateDay(_ context.Context, from, to time.Time) (domain.DailySummary, error) {
+func (r *fakeRepository) AggregateDay(ctx context.Context, from, to time.Time) (domain.DailySummary, error) {
 	if r.entered != nil {
+		r.mu.Lock()
+		r.recordCall()
+		r.active++
+		r.mu.Unlock()
 		select {
 		case r.entered <- struct{}{}:
 		default:
 		}
-		<-r.release
+		if r.release != nil {
+			select {
+			case <-r.release:
+			case <-ctx.Done():
+			}
+		} else {
+			<-ctx.Done()
+		}
+		r.mu.Lock()
+		r.active--
+		cancelled := ctx.Err()
+		r.mu.Unlock()
+		if cancelled != nil {
+			return domain.DailySummary{}, cancelled
+		}
 	}
 	r.mu.Lock()
+	if r.entered == nil {
+		r.recordCall()
+	}
+	if r.failDay > 0 {
+		r.failDay--
+		r.mu.Unlock()
+		return domain.DailySummary{}, errors.New("temporary")
+	}
 	r.days = append(r.days, [2]time.Time{from, to})
 	r.mu.Unlock()
 	return domain.DailySummary{}, nil
 }
 func (r *fakeRepository) AggregateMonth(_ context.Context, at time.Time) (domain.MonthlySummary, error) {
 	r.mu.Lock()
+	r.recordCall()
 	r.months = append(r.months, at)
 	r.mu.Unlock()
 	return domain.MonthlySummary{}, nil
 }
 func (r *fakeRepository) PruneBefore(_ context.Context, cutoff time.Time) (int64, error) {
 	r.mu.Lock()
+	r.recordCall()
 	r.cutoffs = append(r.cutoffs, cutoff)
 	r.mu.Unlock()
 	return 0, nil
@@ -175,7 +215,7 @@ func TestRunnerCancellationWaitsForCurrentWork(t *testing.T) {
 func TestRunnerCancellationCapsTransactionWait(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	clock := newFakeClock(now)
-	repository := &fakeRepository{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	repository := &fakeRepository{entered: make(chan struct{}, 1)}
 	runner := New(repository, func(context.Context) (domain.Settings, error) {
 		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
 	}, WithClock(clock))
@@ -192,10 +232,83 @@ func TestRunnerCancellationCapsTransactionWait(t *testing.T) {
 	clock.wake <- now.Add(10 * time.Second)
 	select {
 	case <-done:
+		repository.mu.Lock()
+		active := repository.active
+		repository.closed = true
+		repository.mu.Unlock()
+		if active != 0 {
+			t.Fatalf("runner returned with %d active workers", active)
+		}
+		time.Sleep(20 * time.Millisecond)
+		repository.mu.Lock()
+		afterClose := repository.afterClose
+		repository.mu.Unlock()
+		if afterClose != 0 {
+			t.Fatalf("%d repository calls occurred after owner close", afterClose)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("runner exceeded shutdown cap")
 	}
-	close(repository.release)
+}
+
+func TestRunnerRetriesFailedDayBeforeAdvancingCatchup(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	clock := newFakeClock(now)
+	repository := &fakeRepository{failDay: 1}
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
+	}, WithClock(clock))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	eventually(t, func() bool {
+		clock.mu.Lock()
+		defer clock.mu.Unlock()
+		return len(clock.waits) > 0 && clock.waits[len(clock.waits)-1] == time.Minute
+	})
+	repository.mu.Lock()
+	firstAttempts := repository.failDay
+	repository.mu.Unlock()
+	if firstAttempts != 0 {
+		t.Fatal("first failed attempt did not run")
+	}
+	clock.advance(now.Add(time.Minute))
+	eventually(t, func() bool {
+		repository.mu.Lock()
+		defer repository.mu.Unlock()
+		return len(repository.days) == 1 && len(repository.cutoffs) == 1
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunnerRecoversFromTransientSettingsRead(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	clock := newFakeClock(now)
+	repository := &fakeRepository{}
+	reads := 0
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		reads++
+		if reads == 1 {
+			return domain.Settings{}, errors.New("temporary")
+		}
+		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
+	}, WithClock(clock))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	eventually(t, func() bool { return runner.Status().ErrorClass == "settings" })
+	clock.advance(now.Add(time.Minute))
+	eventually(t, func() bool { repository.mu.Lock(); defer repository.mu.Unlock(); return len(repository.days) == 1 })
+	if status := runner.Status(); status.ErrorClass != "" || status.State != "running" {
+		t.Fatalf("status did not recover: %#v", status)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func eventually(t *testing.T, condition func() bool) {

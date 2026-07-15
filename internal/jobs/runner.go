@@ -13,6 +13,7 @@ import (
 const (
 	defaultRetentionDays = 730
 	shutdownLimit        = 10 * time.Second
+	retryDelay           = time.Minute
 )
 
 type Repository interface {
@@ -77,25 +78,38 @@ func (r *Runner) Status() Status {
 
 func (r *Runner) Run(ctx context.Context) error {
 	if r.repository == nil || r.settings == nil || r.clock == nil {
+		r.setStatus("degraded", time.Now(), "configuration")
 		return errors.New("jobs: repository, settings, and clock are required")
 	}
 	r.setStatus("running", r.clock.Now(), "")
-	defer r.markStopped()
 
 	var lastDay string
 	for {
 		settings, location, err := r.loadSettings(ctx)
 		if err != nil {
 			r.setStatus("degraded", r.clock.Now(), "settings")
-			return err
+			if !r.wait(ctx, retryDelay) {
+				r.markStopped()
+				return nil
+			}
+			continue
 		}
+		r.setStatus("running", r.clock.Now(), "")
 		now := r.clock.Now().In(location)
 		scheduled := scheduleFor(now)
 		if !now.Before(scheduled) {
 			day := now.AddDate(0, 0, -1).Format("2006-01-02")
 			if day != lastDay {
-				if !r.runCurrent(ctx, now, settings, location) {
+				runErr, stopped := r.runCurrent(ctx, now, settings, location)
+				if stopped {
 					return nil
+				}
+				if runErr != nil {
+					if !r.wait(ctx, retryDelay) {
+						r.markStopped()
+						return nil
+					}
+					continue
 				}
 				lastDay = day
 			}
@@ -108,13 +122,14 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			r.markStopped()
 			return nil
 		case <-r.clock.After(next.Sub(now)):
 		}
 	}
 }
 
-func (r *Runner) runCurrent(ctx context.Context, now time.Time, settings domain.Settings, location *time.Location) bool {
+func (r *Runner) runCurrent(ctx context.Context, now time.Time, settings domain.Settings, location *time.Location) (error, bool) {
 	jobContext, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- r.runOnce(jobContext, now, settings, location) }()
@@ -122,17 +137,28 @@ func (r *Runner) runCurrent(ctx context.Context, now time.Time, settings domain.
 	case err := <-done:
 		cancel()
 		r.recordResult(now, err)
-		return true
+		return err, false
 	case <-ctx.Done():
 		select {
 		case err := <-done:
 			cancel()
 			r.recordResult(now, err)
+			return err, true
 		case <-r.clock.After(shutdownLimit):
 			cancel()
+			err := <-done
 			r.setStatus("stopped", r.clock.Now(), "shutdown_timeout")
+			return err, true
 		}
+	}
+}
+
+func (r *Runner) wait(ctx context.Context, duration time.Duration) bool {
+	select {
+	case <-ctx.Done():
 		return false
+	case <-r.clock.After(duration):
+		return true
 	}
 }
 

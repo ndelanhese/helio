@@ -197,6 +197,8 @@ func (c *Collector) recordSuccess(snapshot *domain.TelemetrySnapshot, storageErr
 	state := State{Snapshot: cloneSnapshot(snapshot), LastSuccess: c.config.Clock.Now()}
 	if storageError != nil {
 		state.LastError = storageError.Error()
+		state.LastErrorAt = state.LastSuccess
+		state.ErrorClass = "storage"
 	}
 	c.mu.Lock()
 	c.state = state
@@ -208,6 +210,8 @@ func (c *Collector) recordSuccess(snapshot *domain.TelemetrySnapshot, storageErr
 func (c *Collector) recordError(err error) {
 	c.mu.Lock()
 	c.state.LastError = err.Error()
+	c.state.LastErrorAt = c.config.Clock.Now()
+	c.state.ErrorClass = "communication"
 	state := cloneState(c.state)
 	c.mu.Unlock()
 	c.hub.Publish(Event{Kind: "state", State: state})
@@ -220,6 +224,10 @@ func (c *Collector) markStale() {
 		return
 	}
 	c.state.Stale = true
+	if c.state.ErrorClass == "" {
+		c.state.ErrorClass = "stale"
+		c.state.LastErrorAt = c.config.Clock.Now()
+	}
 	state := cloneState(c.state)
 	c.mu.Unlock()
 	c.hub.Publish(Event{Kind: "state", State: state})

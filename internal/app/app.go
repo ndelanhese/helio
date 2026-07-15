@@ -37,6 +37,7 @@ type App struct {
 	jobRunner         jobRuntime
 	jobsMu            sync.Mutex
 	jobsCancel        context.CancelFunc
+	jobsDone          chan struct{}
 	jobsWG            sync.WaitGroup
 	stopping          bool
 }
@@ -80,6 +81,7 @@ func New(cfg config.Config) *App {
 		AllowPublicLogger: cfg.AllowPublicLogger,
 		Components: func(ctx context.Context) api.ComponentStatus {
 			status := runtime.components()
+			status.DatabaseUpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			if a.jobRunner != nil {
 				jobStatus := a.jobRunner.Status()
 				status.Jobs, status.JobsError = jobStatus.State, jobStatus.ErrorClass
@@ -89,6 +91,7 @@ func New(cfg config.Config) *App {
 			}
 			if err := db.Ready(ctx); err != nil {
 				status.Database = "offline"
+				status.DatabaseError = "storage"
 			}
 			return status
 		},
@@ -108,12 +111,18 @@ func (a *App) applySettings(ctx context.Context, settings domain.Settings, actor
 	if a.settingsRuntime == nil || a.db == nil {
 		return errors.New("settings runtime is unavailable")
 	}
+	var runContext context.Context
+	if a.runtime != nil {
+		runContext = a.runtime.context()
+	}
+	wasRunning := a.pauseJobs()
 	if err := a.settingsRuntime.Apply(ctx, settings, func() error { return a.db.ApplySettings(ctx, settings, actorUserID, a.allowPublicLogger) }); err != nil {
+		if wasRunning {
+			a.startJobs(runContext)
+		}
 		return err
 	}
-	if a.runtime != nil {
-		a.startJobs(a.runtime.context())
-	}
+	a.startJobs(runContext)
 	return nil
 }
 
@@ -144,11 +153,18 @@ func (a *App) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		shutdownDone := make(chan error, 1)
-		go func() { shutdownDone <- a.server.Shutdown(shutdown) }()
-		a.stopServices()
-		return <-shutdownDone
+		return shutdownHTTP(shutdown, a.server, listener, a.stopServices)
 	}
+}
+
+func shutdownHTTP(ctx context.Context, server *http.Server, listener net.Listener, stopServices func()) error {
+	if listener != nil {
+		_ = listener.Close()
+	}
+	if stopServices != nil {
+		stopServices()
+	}
+	return server.Shutdown(ctx)
 }
 
 func (a *App) initializeRuntime(ctx context.Context) error {
@@ -172,14 +188,24 @@ func (a *App) stopServices() {
 		a.jobsMu.Lock()
 		a.stopping = true
 		jobsCancel := a.jobsCancel
+		jobsDone := a.jobsDone
+		a.jobsCancel, a.jobsDone = nil, nil
 		a.jobsMu.Unlock()
 		if jobsCancel != nil {
 			jobsCancel()
 		}
+		var collectorDone chan struct{}
 		if a.runtime != nil {
-			a.runtime.stop()
+			collectorDone = make(chan struct{})
+			go func() { a.runtime.stop(); close(collectorDone) }()
+		}
+		if jobsDone != nil {
+			<-jobsDone
 		}
 		a.jobsWG.Wait()
+		if collectorDone != nil {
+			<-collectorDone
+		}
 	})
 }
 
@@ -193,9 +219,36 @@ func (a *App) startJobs(ctx context.Context) {
 		return
 	}
 	jobContext, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	a.jobsCancel = cancel
+	a.jobsDone = done
 	a.jobsWG.Add(1)
-	go func() { defer a.jobsWG.Done(); _ = a.jobRunner.Run(jobContext) }()
+	go func() {
+		defer a.jobsWG.Done()
+		_ = a.jobRunner.Run(jobContext)
+		close(done)
+		a.jobsMu.Lock()
+		if a.jobsDone == done {
+			a.jobsCancel, a.jobsDone = nil, nil
+		}
+		a.jobsMu.Unlock()
+	}()
+}
+
+func (a *App) pauseJobs() bool {
+	a.jobsMu.Lock()
+	cancel, done := a.jobsCancel, a.jobsDone
+	if cancel == nil {
+		a.jobsMu.Unlock()
+		return false
+	}
+	a.jobsCancel, a.jobsDone = nil, nil
+	a.jobsMu.Unlock()
+	cancel()
+	if done != nil {
+		<-done
+	}
+	return true
 }
 
 type collectorRuntime struct {
@@ -230,8 +283,8 @@ func (r *collectorRuntime) stop() {
 	defer r.configureMu.Unlock()
 	r.mu.Lock()
 	cancel, done := r.cancel, r.done
-	r.ctx, r.cancel, r.done, r.current = nil, nil, nil, nil
-	r.state, r.stateAt, r.errorClass = "stopped", time.Now().UTC(), ""
+	r.ctx = nil
+	r.state, r.stateAt = "stopping", time.Now().UTC()
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -240,8 +293,16 @@ func (r *collectorRuntime) stop() {
 		select {
 		case <-done:
 		case <-time.After(r.stopWait()):
+			r.mu.Lock()
+			r.state, r.stateAt, r.errorClass = "degraded", time.Now().UTC(), "stop_timeout"
+			r.mu.Unlock()
+			<-done
 		}
 	}
+	r.mu.Lock()
+	r.ctx, r.cancel, r.done, r.current = nil, nil, nil, nil
+	r.state, r.stateAt = "stopped", time.Now().UTC()
+	r.mu.Unlock()
 }
 
 func (r *collectorRuntime) stopWait() time.Duration {
@@ -292,10 +353,12 @@ func (r *collectorRuntime) Apply(_ context.Context, settings domain.Settings, pe
 		case <-oldDone:
 		case <-time.After(r.stopWait()):
 			r.mu.Lock()
-			if r.done == oldDone {
-				r.current, r.cancel, r.done, r.active = nil, nil, nil, domain.Settings{}
-				r.state, r.stateAt, r.errorClass = "degraded", time.Now().UTC(), "stop_timeout"
-			}
+			r.state, r.stateAt, r.errorClass = "degraded", time.Now().UTC(), "stop_timeout"
+			r.mu.Unlock()
+			<-oldDone
+			r.mu.Lock()
+			r.current, r.cancel, r.done, r.active = nil, nil, nil, domain.Settings{}
+			r.state, r.stateAt, r.errorClass = "degraded", time.Now().UTC(), "stop_timeout"
 			r.mu.Unlock()
 			return errors.New("previous collector did not stop")
 		}
@@ -377,10 +440,19 @@ func (r *collectorRuntime) components() api.ComponentStatus {
 	}
 	if state.Stale || state.LastError != "" {
 		status.Logger = "offline"
+		status.LoggerError = state.ErrorClass
+		if status.LoggerError == "" {
+			status.LoggerError = "communication"
+		}
+		if !state.LastErrorAt.IsZero() {
+			status.LoggerUpdatedAt = state.LastErrorAt.UTC().Format(time.RFC3339)
+		}
 	}
 	if !state.LastSuccess.IsZero() {
 		status.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
-		status.LoggerUpdatedAt = status.LastSuccess
+		if status.LoggerUpdatedAt == "" {
+			status.LoggerUpdatedAt = status.LastSuccess
+		}
 	}
 	return status
 }
