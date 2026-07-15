@@ -11,6 +11,7 @@ import (
 	"github.com/ndelanhese/helio/internal/collector"
 	"github.com/ndelanhese/helio/internal/config"
 	"github.com/ndelanhese/helio/internal/domain"
+	"github.com/ndelanhese/helio/internal/jobs"
 	"github.com/ndelanhese/helio/internal/storage"
 )
 
@@ -19,6 +20,57 @@ type recordingSettingsRuntime struct {
 	active     domain.Settings
 	inflight   int
 	concurrent bool
+}
+
+type recordingJobRuntime struct {
+	started chan struct{}
+	stopped chan struct{}
+}
+
+func (r *recordingJobRuntime) Run(ctx context.Context) error {
+	close(r.started)
+	<-ctx.Done()
+	close(r.stopped)
+	return nil
+}
+func (*recordingJobRuntime) Status() jobs.Status { return jobs.Status{State: "running"} }
+
+func TestRuntimeStartsJobsOnlyAfterPersistedSettingsLoadAndStopsThem(t *testing.T) {
+	job := &recordingJobRuntime{started: make(chan struct{}), stopped: make(chan struct{})}
+	runtime := &collectorRuntime{hub: collector.NewHub(), store: &discardCollectorStore{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &App{
+		runtime:   runtime,
+		settings:  func(context.Context) (domain.Settings, error) { return testSettings(7), nil },
+		jobRunner: job,
+	}
+	if err := a.initializeRuntime(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-job.started:
+	case <-time.After(time.Second):
+		t.Fatal("jobs did not start after settings load")
+	}
+	cancel()
+	a.stopServices()
+	select {
+	case <-job.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("jobs did not stop")
+	}
+}
+
+func TestJobsCannotStartAfterShutdownBegins(t *testing.T) {
+	job := &recordingJobRuntime{started: make(chan struct{}), stopped: make(chan struct{})}
+	a := &App{jobRunner: job}
+	a.stopServices()
+	a.startJobs(context.Background())
+	select {
+	case <-job.started:
+		t.Fatal("jobs started after shutdown")
+	case <-time.After(20 * time.Millisecond):
+	}
 }
 
 func (r *recordingSettingsRuntime) Apply(_ context.Context, settings domain.Settings, persist func() error) error {
@@ -102,6 +154,42 @@ func TestCollectorRuntimeRestoresPreviousConfigurationWhenAtomicPersistFails(t *
 	}
 	if repository.Location().String() != "America/Sao_Paulo" {
 		t.Fatalf("location changed on rollback: %s", repository.Location())
+	}
+}
+
+func TestCollectorRuntimeStopDoesNotReportCollectorAsRunning(t *testing.T) {
+	runtime := &collectorRuntime{hub: collector.NewHub(), store: &discardCollectorStore{}}
+	runtime.start(context.Background())
+	runtime.mu.Lock()
+	runtime.current = collector.New(collector.Config{}, nil, nil, runtime.hub)
+	runtime.done = make(chan struct{})
+	close(runtime.done)
+	runtime.mu.Unlock()
+	runtime.stop()
+	status := runtime.components()
+	if status.Collector != "stopped" {
+		t.Fatalf("collector status = %q, want stopped", status.Collector)
+	}
+	if status.CollectorUpdatedAt == "" {
+		t.Fatal("collector status has no timestamp")
+	}
+}
+
+func TestCollectorReconfigureTimeoutDoesNotReportCancelledCollectorAsRunning(t *testing.T) {
+	runtime := &collectorRuntime{hub: collector.NewHub(), store: &discardCollectorStore{}, waitTimeout: time.Millisecond}
+	runtime.start(context.Background())
+	runtime.mu.Lock()
+	runtime.current = collector.New(collector.Config{}, nil, nil, runtime.hub)
+	runtime.cancel = func() {}
+	runtime.done = make(chan struct{})
+	runtime.state = "running"
+	runtime.mu.Unlock()
+	if err := runtime.Apply(context.Background(), testSettings(7), func() error { return nil }); err == nil {
+		t.Fatal("reconfiguration unexpectedly succeeded")
+	}
+	status := runtime.components()
+	if status.Collector != "degraded" || status.CollectorError != "stop_timeout" {
+		t.Fatalf("collector status after timeout = %#v", status)
 	}
 }
 

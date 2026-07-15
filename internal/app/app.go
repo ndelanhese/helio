@@ -16,6 +16,7 @@ import (
 	"github.com/ndelanhese/helio/internal/config"
 	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/httpserver"
+	"github.com/ndelanhese/helio/internal/jobs"
 	"github.com/ndelanhese/helio/internal/sofar"
 	"github.com/ndelanhese/helio/internal/storage"
 )
@@ -33,6 +34,11 @@ type App struct {
 	stopOnce          sync.Once
 	allowPublicLogger bool
 	repository        *storage.TelemetryRepository
+	jobRunner         jobRuntime
+	jobsMu            sync.Mutex
+	jobsCancel        context.CancelFunc
+	jobsWG            sync.WaitGroup
+	stopping          bool
 }
 
 type settingsRuntime interface {
@@ -41,6 +47,11 @@ type settingsRuntime interface {
 
 type calendarRuntime interface {
 	ApplyLocation(*time.Location, func() error) error
+}
+
+type jobRuntime interface {
+	Run(context.Context) error
+	Status() jobs.Status
 }
 
 func New(cfg config.Config) *App {
@@ -61,6 +72,7 @@ func New(cfg config.Config) *App {
 	shutdownContext, shutdownCancel := context.WithCancel(context.Background())
 	a := &App{db: db, runtime: runtime, settingsRuntime: runtime, shutdownContext: shutdownContext, shutdownCancel: shutdownCancel, allowPublicLogger: cfg.AllowPublicLogger, repository: repository,
 		settings: func(ctx context.Context) (domain.Settings, error) { return db.GetSettings(ctx, cfg.AllowPublicLogger) }}
+	a.jobRunner = jobs.New(repository, a.settings)
 	apiHandler := api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repository, Hub: hub,
 		Latest: runtime.latest, Reconfigure: runtime.reconfigure,
@@ -68,6 +80,13 @@ func New(cfg config.Config) *App {
 		AllowPublicLogger: cfg.AllowPublicLogger,
 		Components: func(ctx context.Context) api.ComponentStatus {
 			status := runtime.components()
+			if a.jobRunner != nil {
+				jobStatus := a.jobRunner.Status()
+				status.Jobs, status.JobsError = jobStatus.State, jobStatus.ErrorClass
+				if !jobStatus.UpdatedAt.IsZero() {
+					status.JobsUpdatedAt = jobStatus.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+			}
 			if err := db.Ready(ctx); err != nil {
 				status.Database = "offline"
 			}
@@ -89,20 +108,32 @@ func (a *App) applySettings(ctx context.Context, settings domain.Settings, actor
 	if a.settingsRuntime == nil || a.db == nil {
 		return errors.New("settings runtime is unavailable")
 	}
-	return a.settingsRuntime.Apply(ctx, settings, func() error { return a.db.ApplySettings(ctx, settings, actorUserID, a.allowPublicLogger) })
+	if err := a.settingsRuntime.Apply(ctx, settings, func() error { return a.db.ApplySettings(ctx, settings, actorUserID, a.allowPublicLogger) }); err != nil {
+		return err
+	}
+	if a.runtime != nil {
+		a.startJobs(a.runtime.context())
+	}
+	return nil
 }
 
 func (a *App) Run(ctx context.Context) error {
 	if a.initErr != nil {
 		return a.initErr
 	}
-	defer a.stopServices()
 	defer a.db.Close()
-	if err := a.initializeRuntime(ctx); err != nil {
+	listener, err := net.Listen("tcp", a.server.Addr)
+	if err != nil {
 		return err
 	}
 	errC := make(chan error, 1)
-	go func() { errC <- a.server.ListenAndServe() }()
+	go func() { errC <- a.server.Serve(listener) }()
+	if err := a.initializeRuntime(ctx); err != nil {
+		_ = a.server.Close()
+		a.stopServices()
+		return err
+	}
+	defer a.stopServices()
 	select {
 	case err := <-errC:
 		a.stopServices()
@@ -111,10 +142,12 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		return err
 	case <-ctx.Done():
-		a.stopServices()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return a.server.Shutdown(shutdown)
+		shutdownDone := make(chan error, 1)
+		go func() { shutdownDone <- a.server.Shutdown(shutdown) }()
+		a.stopServices()
+		return <-shutdownDone
 	}
 }
 
@@ -124,6 +157,7 @@ func (a *App) initializeRuntime(ctx context.Context) error {
 		if err := a.runtime.reconfigure(ctx, settings); err != nil {
 			return fmt.Errorf("start collector: %w", err)
 		}
+		a.startJobs(ctx)
 	} else if open, openErr := a.db.BootstrapOpen(ctx); openErr != nil || !open {
 		return fmt.Errorf("load settings: %w", err)
 	}
@@ -135,10 +169,33 @@ func (a *App) stopServices() {
 		if a.shutdownCancel != nil {
 			a.shutdownCancel()
 		}
+		a.jobsMu.Lock()
+		a.stopping = true
+		jobsCancel := a.jobsCancel
+		a.jobsMu.Unlock()
+		if jobsCancel != nil {
+			jobsCancel()
+		}
 		if a.runtime != nil {
 			a.runtime.stop()
 		}
+		a.jobsWG.Wait()
 	})
+}
+
+func (a *App) startJobs(ctx context.Context) {
+	if ctx == nil || a.jobRunner == nil {
+		return
+	}
+	a.jobsMu.Lock()
+	defer a.jobsMu.Unlock()
+	if a.stopping || a.jobsCancel != nil {
+		return
+	}
+	jobContext, cancel := context.WithCancel(ctx)
+	a.jobsCancel = cancel
+	a.jobsWG.Add(1)
+	go func() { defer a.jobsWG.Done(); _ = a.jobRunner.Run(jobContext) }()
 }
 
 type collectorRuntime struct {
@@ -152,15 +209,29 @@ type collectorRuntime struct {
 	hub         *collector.Hub
 	store       collector.Store
 	calendar    calendarRuntime
+	state       string
+	stateAt     time.Time
+	errorClass  string
+	waitTimeout time.Duration
 }
 
-func (r *collectorRuntime) start(ctx context.Context) { r.mu.Lock(); r.ctx = ctx; r.mu.Unlock() }
+func (r *collectorRuntime) start(ctx context.Context) {
+	r.mu.Lock()
+	r.ctx, r.state, r.stateAt, r.errorClass = ctx, "idle", time.Now().UTC(), ""
+	r.mu.Unlock()
+}
+func (r *collectorRuntime) context() context.Context {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.ctx
+}
 func (r *collectorRuntime) stop() {
 	r.configureMu.Lock()
 	defer r.configureMu.Unlock()
 	r.mu.Lock()
 	cancel, done := r.cancel, r.done
-	r.ctx, r.cancel, r.done = nil, nil, nil
+	r.ctx, r.cancel, r.done, r.current = nil, nil, nil, nil
+	r.state, r.stateAt, r.errorClass = "stopped", time.Now().UTC(), ""
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -168,9 +239,16 @@ func (r *collectorRuntime) stop() {
 	if done != nil {
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(r.stopWait()):
 		}
 	}
+}
+
+func (r *collectorRuntime) stopWait() time.Duration {
+	if r.waitTimeout > 0 {
+		return r.waitTimeout
+	}
+	return 5 * time.Second
 }
 func (r *collectorRuntime) latest() collector.State {
 	r.mu.RLock()
@@ -212,7 +290,13 @@ func (r *collectorRuntime) Apply(_ context.Context, settings domain.Settings, pe
 	if oldDone != nil {
 		select {
 		case <-oldDone:
-		case <-time.After(5 * time.Second):
+		case <-time.After(r.stopWait()):
+			r.mu.Lock()
+			if r.done == oldDone {
+				r.current, r.cancel, r.done, r.active = nil, nil, nil, domain.Settings{}
+				r.state, r.stateAt, r.errorClass = "degraded", time.Now().UTC(), "stop_timeout"
+			}
+			r.mu.Unlock()
 			return errors.New("previous collector did not stop")
 		}
 	}
@@ -250,8 +334,21 @@ func (r *collectorRuntime) startCollectorLocked(next *collector.Collector, setti
 	runCtx, cancel := context.WithCancel(r.ctx)
 	done := make(chan struct{})
 	r.current, r.cancel, r.done, r.active = next, cancel, done, settings
+	r.state, r.stateAt, r.errorClass = "running", time.Now().UTC(), ""
 	r.mu.Unlock()
-	go func() { defer close(done); _ = next.Run(runCtx) }()
+	go func() {
+		err := next.Run(runCtx)
+		close(done)
+		r.mu.Lock()
+		if r.done == done {
+			r.current, r.cancel, r.done = nil, nil, nil
+			r.state, r.stateAt = "stopped", time.Now().UTC()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				r.state, r.errorClass = "degraded", "runtime"
+			}
+		}
+		r.mu.Unlock()
+	}()
 }
 
 func (r *collectorRuntime) activeConfiguration() domain.Settings {
@@ -266,10 +363,14 @@ func (r *collectorRuntime) components() api.ComponentStatus {
 	state := r.latest()
 	status := api.ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle", Weather: "unconfigured"}
 	r.mu.RLock()
-	running := r.current != nil
+	status.Collector = r.state
+	status.CollectorError = r.errorClass
+	if !r.stateAt.IsZero() {
+		status.CollectorUpdatedAt = r.stateAt.UTC().Format(time.RFC3339)
+	}
 	r.mu.RUnlock()
-	if running {
-		status.Collector = "running"
+	if status.Collector == "" {
+		status.Collector = "idle"
 	}
 	if state.Snapshot != nil && !state.Stale {
 		status.Logger = "online"
@@ -279,6 +380,7 @@ func (r *collectorRuntime) components() api.ComponentStatus {
 	}
 	if !state.LastSuccess.IsZero() {
 		status.LastSuccess = state.LastSuccess.UTC().Format(time.RFC3339)
+		status.LoggerUpdatedAt = status.LastSuccess
 	}
 	return status
 }

@@ -1,0 +1,210 @@
+package jobs
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ndelanhese/helio/internal/domain"
+)
+
+type fakeClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	waits []time.Duration
+	wake  chan time.Time
+}
+
+func newFakeClock(now time.Time) *fakeClock {
+	return &fakeClock{now: now, wake: make(chan time.Time, 8)}
+}
+func (c *fakeClock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *fakeClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.waits = append(c.waits, d)
+	c.mu.Unlock()
+	return c.wake
+}
+func (c *fakeClock) advance(to time.Time) { c.mu.Lock(); c.now = to; c.mu.Unlock(); c.wake <- to }
+func (c *fakeClock) firstWait(t *testing.T) time.Duration {
+	t.Helper()
+	eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return len(c.waits) > 0 })
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.waits[0]
+}
+
+type fakeRepository struct {
+	mu      sync.Mutex
+	hours   [][2]time.Time
+	days    [][2]time.Time
+	months  []time.Time
+	cutoffs []time.Time
+	entered chan struct{}
+	release chan struct{}
+}
+
+func TestRunnerInitialStatusHasTimestamp(t *testing.T) {
+	now := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC"}, nil
+	}, WithClock(newFakeClock(now)))
+	status := runner.Status()
+	if status.State != "idle" || !status.UpdatedAt.Equal(now) {
+		t.Fatalf("initial status = %#v", status)
+	}
+}
+
+func (r *fakeRepository) AggregateHour(_ context.Context, from, to time.Time) (domain.HourlySummary, error) {
+	r.mu.Lock()
+	r.hours = append(r.hours, [2]time.Time{from, to})
+	r.mu.Unlock()
+	return domain.HourlySummary{}, nil
+}
+func (r *fakeRepository) AggregateDay(_ context.Context, from, to time.Time) (domain.DailySummary, error) {
+	if r.entered != nil {
+		select {
+		case r.entered <- struct{}{}:
+		default:
+		}
+		<-r.release
+	}
+	r.mu.Lock()
+	r.days = append(r.days, [2]time.Time{from, to})
+	r.mu.Unlock()
+	return domain.DailySummary{}, nil
+}
+func (r *fakeRepository) AggregateMonth(_ context.Context, at time.Time) (domain.MonthlySummary, error) {
+	r.mu.Lock()
+	r.months = append(r.months, at)
+	r.mu.Unlock()
+	return domain.MonthlySummary{}, nil
+}
+func (r *fakeRepository) PruneBefore(_ context.Context, cutoff time.Time) (int64, error) {
+	r.mu.Lock()
+	r.cutoffs = append(r.cutoffs, cutoff)
+	r.mu.Unlock()
+	return 0, nil
+}
+
+func TestRunnerWaitsUntilLocalMidnightPlusFiveMinutes(t *testing.T) {
+	location, _ := time.LoadLocation("America/Sao_Paulo")
+	now := time.Date(2026, 7, 14, 0, 4, 0, 0, location)
+	clock := newFakeClock(now)
+	repository := &fakeRepository{}
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: location.String(), RetentionDays: 30}, nil
+	}, WithClock(clock))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	if got, want := clock.firstWait(t), time.Minute; got != want {
+		t.Fatalf("first wait = %s, want %s", got, want)
+	}
+	clock.advance(now.Add(time.Minute))
+	eventually(t, func() bool { repository.mu.Lock(); defer repository.mu.Unlock(); return len(repository.days) == 1 })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if len(repository.cutoffs) != 1 {
+		t.Fatalf("retention runs = %d, want 1", len(repository.cutoffs))
+	}
+	if got := repository.days[0][0].In(location).Format("2006-01-02"); got != "2026-07-13" {
+		t.Fatalf("aggregated day = %s", got)
+	}
+}
+
+func TestRunnerExecutesOneMissedRunOnStartupAndThenOnceDaily(t *testing.T) {
+	location, _ := time.LoadLocation("America/Sao_Paulo")
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, location)
+	clock := newFakeClock(now)
+	repository := &fakeRepository{}
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: location.String()}, nil
+	}, WithClock(clock))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	eventually(t, func() bool { repository.mu.Lock(); defer repository.mu.Unlock(); return len(repository.days) == 1 })
+	clock.advance(time.Date(2026, 7, 15, 0, 5, 0, 0, location))
+	eventually(t, func() bool { repository.mu.Lock(); defer repository.mu.Unlock(); return len(repository.days) == 2 })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if len(repository.cutoffs) != 2 {
+		t.Fatalf("retention runs = %d, want 2", len(repository.cutoffs))
+	}
+	if got := repository.cutoffs[0].In(location).Format("2006-01-02"); got != "2024-07-14" {
+		t.Fatalf("default retention cutoff = %s, want 2024-07-14", got)
+	}
+}
+
+func TestRunnerCancellationWaitsForCurrentWork(t *testing.T) {
+	repository := &fakeRepository{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	<-repository.entered
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("runner returned before current transaction finished")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(repository.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not finish")
+	}
+}
+
+func TestRunnerCancellationCapsTransactionWait(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	clock := newFakeClock(now)
+	repository := &fakeRepository{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
+	}, WithClock(clock))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	<-repository.entered
+	cancel()
+	eventually(t, func() bool {
+		clock.mu.Lock()
+		defer clock.mu.Unlock()
+		return len(clock.waits) > 0 && clock.waits[len(clock.waits)-1] == 10*time.Second
+	})
+	clock.wake <- now.Add(10 * time.Second)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runner exceeded shutdown cap")
+	}
+	close(repository.release)
+}
+
+func eventually(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not met")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

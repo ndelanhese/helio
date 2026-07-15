@@ -20,13 +20,7 @@ func New(d Dependencies) http.Handler {
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
-		if d.Ready != nil && d.Ready() != nil {
-			jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
-			return
-		}
-		jsonResponse(w, http.StatusOK, map[string]string{"status": "ready"})
-	})
+	mux.HandleFunc("GET /health/ready", readinessHandler(d.Ready))
 	if d.API != nil {
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 			mux.Handle(method+" /api/", d.API)

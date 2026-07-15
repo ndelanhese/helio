@@ -7,11 +7,17 @@ import (
 )
 
 type ComponentStatus struct {
-	Database    string `json:"database"`
-	Logger      string `json:"logger"`
-	Collector   string `json:"collector"`
-	Weather     string `json:"weather"`
-	LastSuccess string `json:"lastSuccess,omitempty"`
+	Database           string `json:"database"`
+	Logger             string `json:"logger"`
+	Collector          string `json:"collector"`
+	Jobs               string `json:"jobs,omitempty"`
+	Weather            string `json:"weather"`
+	LastSuccess        string `json:"lastSuccess,omitempty"`
+	LoggerUpdatedAt    string `json:"loggerUpdatedAt,omitempty"`
+	CollectorUpdatedAt string `json:"collectorUpdatedAt,omitempty"`
+	JobsUpdatedAt      string `json:"jobsUpdatedAt,omitempty"`
+	CollectorError     string `json:"collectorErrorClass,omitempty"`
+	JobsError          string `json:"jobsErrorClass,omitempty"`
 }
 
 func (a *API) componentHealth(w http.ResponseWriter, r *http.Request) {

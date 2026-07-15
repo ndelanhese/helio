@@ -53,3 +53,15 @@ func TestAPIMountAndReadinessOnlyTracksDatabase(t *testing.T) {
 		t.Fatalf("api not mounted: %d %s", api.Code, api.Body.String())
 	}
 }
+
+func TestLoggerDegradationDoesNotFailReadiness(t *testing.T) {
+	apiHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"logger":"offline","collector":"degraded"}`))
+	})
+	handler := httpserver.New(httpserver.Dependencies{API: apiHandler, Ready: func() error { return nil }})
+	ready := httptest.NewRecorder()
+	handler.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+	if ready.Code != http.StatusOK {
+		t.Fatalf("logger degradation changed readiness: %d", ready.Code)
+	}
+}
