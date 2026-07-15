@@ -128,6 +128,7 @@ func New(cfg config.Config) *App {
 				status.WeatherCode = weatherStatus.WeatherCode
 				status.CloudCoverPct = weatherStatus.CloudCoverPct
 				status.WindSpeedKMH = weatherStatus.WindSpeedKMH
+				status.IrradianceWM2 = weatherStatus.IrradianceWM2
 			}
 			if integrationRuntime, ok := a.jobRunner.(integrationJobRuntime); ok {
 				integrationStatus := integrationRuntime.IntegrationStatus()

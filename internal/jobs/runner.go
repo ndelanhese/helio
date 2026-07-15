@@ -140,6 +140,7 @@ type WeatherStatus struct {
 	WeatherCode     *int
 	CloudCoverPct   *float64
 	WindSpeedKMH    *float64
+	IrradianceWM2   *float64
 	ErrorClass      string
 }
 
@@ -655,6 +656,7 @@ func (r *Runner) setWeatherResult(result weather.Result, at time.Time) {
 		status.WeatherCode = &current.WeatherCode
 		status.CloudCoverPct = &current.CloudCoverPct
 		status.WindSpeedKMH = &current.WindSpeedKMH
+		status.IrradianceWM2 = &current.IrradianceWM2
 	}
 	r.weatherStatus = status
 	r.mu.Unlock()

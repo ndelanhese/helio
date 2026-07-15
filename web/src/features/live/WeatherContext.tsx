@@ -20,6 +20,7 @@ export function WeatherContext() {
 	const precipitation = health.data?.precipitationMM
 	const weatherCode = health.data?.weatherCode
 	const windSpeed = health.data?.windSpeedKMH
+	const irradiance = health.data?.irradianceWM2
 	const updatedAt = status === 'available' ? (health.data?.weatherUpdatedAt ?? health.data?.weatherFetchedAt) : health.data?.weatherFetchedAt
 	const age = updatedAt ? Math.max(0, Date.now() - new Date(updatedAt).getTime()) : null
 	const ageCopy = age === null ? null : age >= 3_600_000
@@ -35,6 +36,7 @@ export function WeatherContext() {
 			<div><dt>Chuva</dt><dd>{precipitation === undefined ? '—' : `${format(precipitation)} mm`}</dd></div>
 			<div><dt>Vento</dt><dd>{windSpeed === undefined ? '—' : `${format(windSpeed)} km/h`}</dd></div>
 			<div><dt>Nuvens</dt><dd>{cloudCover === undefined ? '—' : `${Math.round(cloudCover)}%`}</dd></div>
+			<div><dt>Radiação solar</dt><dd>{irradiance === undefined ? 'Sem leitura' : `${Math.round(irradiance)} W/m²`}</dd></div>
 		</dl></>}
 		{ageCopy && <p className="weather-age tabular-nums">{ageCopy}</p>}
 		<p>{status === 'available' ? 'Condições atuais para sua localização.' : status === 'stale' ? 'Confiança meteorológica reduzida' : 'A geração ao vivo continua independente do serviço meteorológico.'}</p>

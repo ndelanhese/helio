@@ -97,11 +97,11 @@ describe('NowPage', () => {
 	expect(screen.getByText('Confiança meteorológica reduzida')).toBeVisible()
   })
 
-	it('shows current weather conditions instead of forecast radiation', async () => {
+	it('shows current weather conditions with live solar radiation', async () => {
 		useFixture()
 		server.use(http.get('/health/components', () => HttpResponse.json({
 			database: 'ok', logger: 'online', collector: 'running', weather: 'available',
-			temperatureC: 22.4, precipitationMM: 0.3, weatherCode: 61, cloudCoverPct: 78, windSpeedKMH: 14.2, weatherFetchedAt: '2026-07-14T13:40:00Z', weatherUpdatedAt: '2026-07-14T15:40:00Z',
+			temperatureC: 22.4, precipitationMM: 0.3, weatherCode: 61, cloudCoverPct: 78, windSpeedKMH: 14.2, irradianceWM2: 645.8, weatherFetchedAt: '2026-07-14T13:40:00Z', weatherUpdatedAt: '2026-07-14T15:40:00Z',
 		})))
 		renderApp(<NowPage />)
 		expect(await screen.findByRole('heading', { name: '22,4 °C' })).toBeVisible()
@@ -111,6 +111,8 @@ describe('NowPage', () => {
 		expect(screen.getByText('14,2 km/h')).toBeVisible()
 		expect(screen.getByText('Nuvens')).toBeVisible()
 		expect(screen.getByText('78%')).toBeVisible()
+		expect(screen.getByText('Radiação solar')).toBeVisible()
+		expect(screen.getByText('646 W/m²')).toBeVisible()
 		expect(screen.getByText('Chuva moderada')).toBeVisible()
 		expect(screen.getByText('Atualizados há 2 minutos.')).toBeVisible()
 	})

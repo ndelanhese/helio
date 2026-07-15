@@ -50,7 +50,7 @@ func (p *OpenMeteo) Current(ctx context.Context, request Request) (Current, erro
 	query := url.Values{}
 	query.Set("latitude", strconv.FormatFloat(request.Latitude, 'f', -1, 64))
 	query.Set("longitude", strconv.FormatFloat(request.Longitude, 'f', -1, 64))
-	query.Set("current", "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m")
+	query.Set("current", "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,shortwave_radiation")
 	query.Set("timezone", "UTC")
 
 	timedCtx, cancel := context.WithTimeout(ctx, openMeteoTimeout)
@@ -93,10 +93,10 @@ func (p *OpenMeteo) Current(ctx context.Context, request Request) (Current, erro
 		return Current{}, errors.New("weather provider returned missing current conditions")
 	}
 	at, err := time.Parse("2006-01-02T15:04", payload.Current.Time)
-	if err != nil || !finiteInRange(payload.Current.TemperatureC, -100, 100) || !finiteInRange(payload.Current.PrecipitationMM, 0, 1_000) || payload.Current.WeatherCode < 0 || payload.Current.WeatherCode > 99 || !finiteInRange(payload.Current.CloudCoverPct, 0, 100) || !finiteInRange(payload.Current.WindSpeedKMH, 0, 500) {
+	if err != nil || !finiteInRange(payload.Current.TemperatureC, -100, 100) || !finiteInRange(payload.Current.PrecipitationMM, 0, 1_000) || payload.Current.WeatherCode < 0 || payload.Current.WeatherCode > 99 || !finiteInRange(payload.Current.CloudCoverPct, 0, 100) || !finiteInRange(payload.Current.WindSpeedKMH, 0, 500) || !finiteInRange(payload.Current.IrradianceWM2, 0, maxIrradianceWM2) {
 		return Current{}, errors.New("weather provider returned invalid current conditions")
 	}
-	return Current{At: at.UTC(), TemperatureC: payload.Current.TemperatureC, PrecipitationMM: payload.Current.PrecipitationMM, WeatherCode: payload.Current.WeatherCode, CloudCoverPct: payload.Current.CloudCoverPct, WindSpeedKMH: payload.Current.WindSpeedKMH}, nil
+	return Current{At: at.UTC(), TemperatureC: payload.Current.TemperatureC, PrecipitationMM: payload.Current.PrecipitationMM, WeatherCode: payload.Current.WeatherCode, CloudCoverPct: payload.Current.CloudCoverPct, WindSpeedKMH: payload.Current.WindSpeedKMH, IrradianceWM2: payload.Current.IrradianceWM2}, nil
 }
 
 func (p *OpenMeteo) Hourly(ctx context.Context, request Request) ([]Hour, error) {
@@ -224,6 +224,7 @@ type openMeteoCurrentUnits struct {
 	WeatherCode     string `json:"weather_code"`
 	CloudCoverPct   string `json:"cloud_cover"`
 	WindSpeedKMH    string `json:"wind_speed_10m"`
+	IrradianceWM2   string `json:"shortwave_radiation"`
 }
 type openMeteoCurrent struct {
 	Time            string  `json:"time"`
@@ -233,6 +234,7 @@ type openMeteoCurrent struct {
 	WeatherCode     int     `json:"weather_code"`
 	CloudCoverPct   float64 `json:"cloud_cover"`
 	WindSpeedKMH    float64 `json:"wind_speed_10m"`
+	IrradianceWM2   float64 `json:"shortwave_radiation"`
 }
 type openMeteoHourlyUnits struct {
 	Time               string `json:"time"`

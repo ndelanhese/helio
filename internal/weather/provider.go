@@ -28,6 +28,7 @@ type Current struct {
 	WeatherCode     int
 	CloudCoverPct   float64
 	WindSpeedKMH    float64
+	IrradianceWM2   float64
 }
 
 type Provider interface {

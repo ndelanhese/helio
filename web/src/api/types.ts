@@ -174,6 +174,7 @@ export interface ComponentHealth {
 	temperatureC?: number
 	weatherCode?: number
 	windSpeedKMH?: number
+	irradianceWM2?: number
   weatherFetchedAt?: string
   weatherUpdatedAt?: string
 }
