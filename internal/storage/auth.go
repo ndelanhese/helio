@@ -164,6 +164,23 @@ func (db *DB) TouchSession(ctx context.Context, tokenHash []byte, seenAt time.Ti
 	return nil
 }
 
+// RotateSessionCSRF atomically replaces the single valid CSRF digest for a session.
+// The previous digest becomes invalid as soon as this update commits.
+func (db *DB) RotateSessionCSRF(ctx context.Context, tokenHash, csrfHash []byte) error {
+	result, err := db.sql.ExecContext(ctx, `UPDATE sessions SET csrf_hash = ? WHERE token_hash = ?`, csrfHash, tokenHash)
+	if err != nil {
+		return fmt.Errorf("rotate session csrf: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect session csrf rotation: %w", err)
+	}
+	if updated != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (db *DB) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	if _, err := db.sql.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash); err != nil {
 		return fmt.Errorf("delete session: %w", err)

@@ -54,7 +54,17 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"userId": principal.UserID, "username": principal.Username, "expiresAt": principal.ExpiresAt.UTC()})
+	cookie, err := r.Cookie("helio_session")
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	csrf, err := a.dependencies.Auth.RotateCSRF(r.Context(), cookie.Value)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "session could not be refreshed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"userId": principal.UserID, "username": principal.Username, "expiresAt": principal.ExpiresAt.UTC(), "csrfToken": csrf})
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {

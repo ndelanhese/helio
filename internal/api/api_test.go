@@ -136,10 +136,17 @@ func TestAuthTopologyCSRFAndRequestMetadata(t *testing.T) {
 		t.Fatalf("missing csrf: %d", missing.Code)
 	}
 	session := request(t, f.handler, http.MethodGet, "/api/v1/auth/session", "", cookie, "")
-	if session.Code != http.StatusOK || !strings.Contains(session.Body.String(), `"username":"Admin"`) {
+	var sessionBody struct {
+		CSRFToken string `json:"csrfToken"`
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(session.Body.Bytes(), &sessionBody); err != nil { t.Fatal(err) }
+	if session.Code != http.StatusOK || sessionBody.Username != "Admin" || sessionBody.CSRFToken == "" || sessionBody.CSRFToken == csrf || session.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("session: %d %s", session.Code, session.Body.String())
 	}
-	logout := request(t, f.handler, http.MethodPost, "/api/v1/auth/logout", "", cookie, csrf)
+	stale := request(t, f.handler, http.MethodPost, "/api/v1/auth/logout", "", cookie, csrf)
+	if stale.Code != http.StatusForbidden { t.Fatalf("stale csrf remained valid: %d", stale.Code) }
+	logout := request(t, f.handler, http.MethodPost, "/api/v1/auth/logout", "", cookie, sessionBody.CSRFToken)
 	if logout.Code != http.StatusNoContent {
 		t.Fatalf("logout: %d %s", logout.Code, logout.Body.String())
 	}

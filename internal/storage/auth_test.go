@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"path/filepath"
@@ -145,5 +146,25 @@ func TestSessionRepositoryLookupJoinsUser(t *testing.T) {
 	}
 	if got.Username != "Admin" || got.PasswordHash != "hash" || got.UserID != "u" {
 		t.Fatalf("session=%#v", got)
+	}
+}
+
+func TestSessionRepositoryRotatesOnlyCurrentCSRFHash(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "helio.db"))
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	oldHash := []byte("old-csrf-digest")
+	if err := db.Bootstrap(context.Background(), User{ID: "u", Username: "Admin", PasswordHash: "hash", CreatedAt: now}, Session{TokenHash: []byte("token-digest"), UserID: "u", CSRFHash: oldHash, CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil { t.Fatal(err) }
+
+	newHash := []byte("new-csrf-digest")
+	if err := db.RotateSessionCSRF(context.Background(), []byte("token-digest"), newHash); err != nil { t.Fatal(err) }
+	got, err := db.LookupSession(context.Background(), []byte("token-digest"))
+	if err != nil { t.Fatal(err) }
+	if bytes.Equal(got.CSRFHash, oldHash) || !bytes.Equal(got.CSRFHash, newHash) {
+		t.Fatalf("csrf hash was not rotated: %x", got.CSRFHash)
+	}
+	if err := db.RotateSessionCSRF(context.Background(), []byte("missing"), newHash); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing session rotation: %v", err)
 	}
 }

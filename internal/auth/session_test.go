@@ -90,6 +90,29 @@ func TestSessionAuthenticateExpiryIdleAndTouch(t *testing.T) {
 	}
 }
 
+func TestRotateCSRFReplacesSingleCurrentTokenWithoutStoringRawMaterial(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	m, db := testManager(t, &now)
+	creds, err := m.Bootstrap(context.Background(), "Admin", "correct horse battery staple")
+	if err != nil { t.Fatal(err) }
+
+	fresh, err := m.RotateCSRF(context.Background(), creds.Token)
+	if err != nil { t.Fatal(err) }
+	if fresh == "" || fresh == creds.CSRF {
+		t.Fatalf("csrf was not freshly rotated")
+	}
+	tokenHash := sha256.Sum256([]byte(creds.Token))
+	session, err := db.LookupSession(context.Background(), tokenHash[:])
+	if err != nil { t.Fatal(err) }
+	want := sha256.Sum256([]byte(fresh))
+	if string(session.CSRFHash) != string(want[:]) {
+		t.Fatal("database does not contain the fresh CSRF digest")
+	}
+	if found, err := db.ContainsSessionMaterial(context.Background(), creds.Token, fresh); err != nil || found {
+		t.Fatalf("raw authentication material stored: found=%v err=%v", found, err)
+	}
+}
+
 func TestSessionCookieSecurityFlags(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	m, _ := testManager(t, &now)

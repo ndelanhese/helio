@@ -36,6 +36,7 @@ type Store interface {
 	CreateSession(context.Context, storage.Session) error
 	LookupSession(context.Context, []byte) (storage.Session, error)
 	TouchSession(context.Context, []byte, time.Time) error
+	RotateSessionCSRF(context.Context, []byte, []byte) error
 	DeleteSession(context.Context, []byte) error
 }
 
@@ -216,6 +217,26 @@ func (m *Manager) Logout(ctx context.Context, rawToken string) error {
 		return fmt.Errorf("logout: %w", err)
 	}
 	return nil
+}
+
+// RotateCSRF issues a fresh 256-bit CSRF token and atomically makes it the
+// session's only current CSRF token. Raw token material is never persisted.
+func (m *Manager) RotateCSRF(ctx context.Context, rawSessionToken string) (string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(rawSessionToken)
+	if err != nil || len(decoded) != tokenBytes {
+		return "", ErrUnauthenticated
+	}
+	csrf, err := randomToken(m.random, tokenBytes)
+	if err != nil {
+		return "", err
+	}
+	if err := m.store.RotateSessionCSRF(ctx, digestToken(rawSessionToken), digestToken(csrf)); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return "", ErrUnauthenticated
+		}
+		return "", fmt.Errorf("rotate csrf: %w", err)
+	}
+	return csrf, nil
 }
 
 func (m *Manager) BootstrapOpen(ctx context.Context) (bool, error) { return m.store.BootstrapOpen(ctx) }
