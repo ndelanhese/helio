@@ -240,7 +240,7 @@
 .solar-comparison dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin: 0; }
 .solar-comparison dt { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .solar-comparison dd { margin: var(--space-1) 0 0; font-family: var(--font-editorial); font-size: 1.15rem; line-height: 1; white-space: nowrap; }
-.model-tooltip-trigger { display: inline-grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--muted); cursor: help; vertical-align: text-bottom; }
+.model-tooltip-trigger { display: inline-grid; width: 44px; height: 44px; place-items: center; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--muted); cursor: help; vertical-align: middle; }
 .model-tooltip-trigger svg { width: 13px; height: 13px; }
 .model-tooltip { position: absolute; z-index: 2; right: 0; top: calc(100% + var(--space-2)); max-width: 34ch; padding: var(--space-3); border: 1px solid var(--border); background: var(--surface); color: var(--text) !important; font-size: .78rem !important; line-height: 1.45 !important; }
 @media (min-width: 520px) { .weather-readings { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
