@@ -13,9 +13,11 @@ export function HealthPanel({ snapshot }: { snapshot: LiveSnapshot }) {
   return (
     <section className={`health-panel ${fault ? 'has-fault' : ''}`} aria-labelledby="health-title">
       <div className="panel-kicker">{fault ? <AlertTriangle aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}<span>Saúde do sistema</span></div>
-      <h2 id="health-title">{fault ? 'Falha crítica' : 'Sistema operando normalmente'}</h2>
+      <h2 id="health-title">{fault ? 'Falha informada pelo inversor' : 'Sistema operando normalmente'}</h2>
       {fault
-        ? <p>Códigos {joinCodes(snapshot.faultCodes)}. A geração medida permanece visível para diagnóstico.</p>
+        ? snapshot.faultCodes.length > 0
+          ? <p>Códigos {joinCodes(snapshot.faultCodes)}. A geração medida permanece visível para diagnóstico.</p>
+          : <p>O inversor não informou códigos para esta falha.</p>
         : <p>O inversor não relata falhas ativas nesta leitura.</p>}
     </section>
   )

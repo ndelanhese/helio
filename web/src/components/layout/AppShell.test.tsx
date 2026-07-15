@@ -19,4 +19,12 @@ describe('AppShell', () => {
     expect(screen.getByText('Sem conexão')).toBeVisible()
     expect(screen.queryByText('Ao vivo')).not.toBeInTheDocument()
   })
+
+  it('uses one restrained polite surface for connection and fault announcements', () => {
+    render(<ThemeProvider><AppShell announcement="Ao vivo. Falha informada pelo inversor. Nenhum código foi informado." connectionState="connected" currentPath="/" /></ThemeProvider>)
+    const regions = screen.getAllByText(/Falha informada pelo inversor/)
+    expect(regions).toHaveLength(1)
+    expect(regions[0]).toHaveAttribute('aria-live', 'polite')
+    expect(screen.getByText('Ao vivo', { selector: '.connection-badge' })).toBeVisible()
+  })
 })

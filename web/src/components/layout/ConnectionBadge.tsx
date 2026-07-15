@@ -9,6 +9,11 @@ const labels: Record<ConnectionState, string> = {
   unavailable: 'Dados indisponíveis',
 }
 
-export function ConnectionBadge({ state }: { state: ConnectionState }) {
-  return <span aria-live="polite" className={`connection-badge is-${state}`}><i aria-hidden="true" />{labels[state]}</span>
+export function ConnectionBadge({ announcement, state }: { announcement?: string; state: ConnectionState }) {
+  return (
+    <span className={`connection-badge is-${state}`}>
+      <i aria-hidden="true" />{labels[state]}
+      {announcement && <span aria-atomic="true" aria-live="polite" className="sr-only">{announcement}</span>}
+    </span>
+  )
 }

@@ -1,67 +1,66 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 
-import { LIVE_EVENTS_URL } from '../../api/live-events'
+import { LIVE_EVENTS_URL, parseLiveEvent } from '../../api/live-events'
 import { liveQuery, queryKeys } from '../../api/queries'
 import type { LiveSnapshot, LiveState } from '../../api/types'
 import type { ConnectionState } from '../../components/layout/ConnectionBadge'
 
-type StreamState = 'connected' | 'reconnecting'
-type EventWithState = { kind: 'snapshot'; snapshot: LiveSnapshot; state: LiveState; version?: 1 }
+type StreamState = 'connecting' | 'connected' | 'reconnecting'
+interface SharedLiveStatus { announcement: string; connectionState: ConnectionState }
 
-let sharedConnection: ConnectionState = 'unavailable'
-const connectionListeners = new Set<() => void>()
+const connectionLabels: Record<ConnectionState, string> = {
+  connected: 'Ao vivo', loading: 'Verificando dados', offline: 'Sem conexão',
+  reconnecting: 'Reconectando', stale: 'Dados desatualizados', unavailable: 'Dados indisponíveis',
+}
+let sharedStatus: SharedLiveStatus = { announcement: 'Dados indisponíveis', connectionState: 'unavailable' }
+const statusListeners = new Set<() => void>()
 
-function publishConnection(value: ConnectionState) {
-  if (sharedConnection === value) return
-  sharedConnection = value
-  for (const listener of connectionListeners) listener()
+function faultAnnouncement(snapshot?: LiveSnapshot) {
+  if (!snapshot || (snapshot.status !== 'fault' && snapshot.faultCodes.length === 0)) return 'Sistema sem falhas ativas.'
+  if (snapshot.faultCodes.length === 0) return 'Falha informada pelo inversor. Nenhum código foi informado.'
+  return `Falha informada pelo inversor. Códigos ${snapshot.faultCodes.join(', ')}.`
 }
 
-export function useLiveConnectionState(): ConnectionState {
+function publishStatus(connectionState: ConnectionState, snapshot?: LiveSnapshot) {
+  const fault = faultAnnouncement(snapshot)
+  const announcement = connectionState === 'connected' ? `${connectionLabels[connectionState]}. ${fault}` : connectionLabels[connectionState]
+  if (sharedStatus.connectionState === connectionState && sharedStatus.announcement === announcement) return
+  sharedStatus = { announcement, connectionState }
+  for (const listener of statusListeners) listener()
+}
+
+export function useLiveStatus(): SharedLiveStatus {
   return useSyncExternalStore(
-    (listener) => { connectionListeners.add(listener); return () => connectionListeners.delete(listener) },
-    () => sharedConnection,
-    (): ConnectionState => 'unavailable',
+    (listener) => { statusListeners.add(listener); return () => statusListeners.delete(listener) },
+    () => sharedStatus,
+    () => sharedStatus,
   )
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
+function time(value?: string) {
+  const parsed = value ? Date.parse(value) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : -Infinity
 }
 
-function isSnapshot(value: unknown): value is LiveSnapshot {
-  if (!isRecord(value) || !isRecord(value.pv1) || !isRecord(value.pv2) || !isRecord(value.grid)) return false
-  return typeof value.observedAt === 'string' && typeof value.status === 'string'
-    && typeof value.acPowerW === 'number' && typeof value.energyTodayWh === 'number'
-    && typeof value.energyLifetimeWh === 'number' && Array.isArray(value.faultCodes)
-    && typeof value.pv1.active === 'boolean' && typeof value.pv1.powerW === 'number'
-    && typeof value.pv2.active === 'boolean' && typeof value.grid.voltageV === 'number'
-    && typeof value.grid.frequencyHz === 'number'
-}
-
-function isLiveState(value: unknown): value is LiveState {
-  if (!isRecord(value) || typeof value.stale !== 'boolean') return false
-  if ('version' in value && value.version !== 1) return false
-  return value.snapshot === undefined || isSnapshot(value.snapshot)
-}
-
-function parseData(value: string): unknown {
-  try { return JSON.parse(value) }
-  catch { return null }
-}
-
-function parseSnapshotEvent(value: string): EventWithState | null {
-  const event = parseData(value)
-  if (!isRecord(event) || event.kind !== 'snapshot' || !isLiveState(event.state) || !isSnapshot(event.snapshot)) return null
-  if ('version' in event && event.version !== 1) return null
-  return event as unknown as EventWithState
+function mergeState(current: LiveState | undefined, incoming: LiveState, eventSnapshot?: LiveSnapshot): LiveState {
+  if (!current) return { ...incoming, snapshot: eventSnapshot ?? incoming.snapshot }
+  const candidate = eventSnapshot ?? incoming.snapshot
+  const snapshot = time(candidate?.observedAt) >= time(current.snapshot?.observedAt) ? candidate : current.snapshot
+  const incomingIsCurrent = time(incoming.lastSuccess) >= time(current.lastSuccess)
+  return {
+    ...(incomingIsCurrent ? current : incoming),
+    ...(incomingIsCurrent ? incoming : current),
+    lastSuccess: incomingIsCurrent ? (incoming.lastSuccess ?? current.lastSuccess) : current.lastSuccess,
+    snapshot,
+    stale: incomingIsCurrent ? incoming.stale : current.stale,
+  }
 }
 
 export function useLiveTelemetry() {
   const client = useQueryClient()
   const query = useQuery(liveQuery)
-  const [streamState, setStreamState] = useState<StreamState>('connected')
+  const [streamState, setStreamState] = useState<StreamState>('connecting')
   const [clock, setClock] = useState(() => Date.now())
   const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine)
 
@@ -84,15 +83,19 @@ export function useLiveTelemetry() {
   useEffect(() => {
     if (typeof EventSource === 'undefined') return
     const source = new EventSource(LIVE_EVENTS_URL)
-    const applyState = (message: Event) => {
-      const parsed = parseData((message as MessageEvent).data)
-      if (isLiveState(parsed)) client.setQueryData(queryKeys.live, parsed)
-    }
-    const applySnapshot = (message: Event) => {
-      const parsed = parseSnapshotEvent((message as MessageEvent).data)
+    const apply = (kind: 'state' | 'snapshot', message: Event) => {
+      const parsed = parseLiveEvent(kind, (message as MessageEvent).data)
       if (!parsed) return
-      client.setQueryData<LiveState>(queryKeys.live, { ...parsed.state, snapshot: parsed.snapshot })
+      void client.cancelQueries({ queryKey: queryKeys.live })
+      client.setQueryData<LiveState>(queryKeys.live, (current) => mergeState(
+        current,
+        parsed.state,
+        parsed.kind === 'snapshot' ? parsed.snapshot : undefined,
+      ))
+      setStreamState('connected')
     }
+    const applyState = (message: Event) => apply('state', message)
+    const applySnapshot = (message: Event) => apply('snapshot', message)
     source.addEventListener('state', applyState)
     source.addEventListener('snapshot', applySnapshot)
     source.onopen = () => {
@@ -114,15 +117,22 @@ export function useLiveTelemetry() {
   const isOld = Number.isFinite(lastSuccessAt) && clock - lastSuccessAt > 30_000
   let connectionState: ConnectionState = 'connected'
   if (offline) connectionState = 'offline'
-  else if (query.isPending) connectionState = 'loading'
   else if (!query.data?.snapshot && query.isError) connectionState = 'unavailable'
+  else if (query.isPending || streamState === 'connecting') connectionState = 'loading'
   else if (streamState === 'reconnecting') connectionState = 'reconnecting'
   else if (query.data?.stale || isOld) connectionState = 'stale'
 
-  useEffect(() => {
-    publishConnection(connectionState)
-    return () => publishConnection('unavailable')
-  }, [connectionState])
+  const announcement = connectionState === 'connected'
+    ? `${connectionLabels[connectionState]}. ${faultAnnouncement(query.data?.snapshot)}`
+    : connectionLabels[connectionState]
 
-  return { ...query, connectionState, lastSuccessAgeMs: Number.isFinite(lastSuccessAt) ? Math.max(0, clock - lastSuccessAt) : null }
+  useEffect(() => publishStatus(connectionState, query.data?.snapshot), [connectionState, query.data?.snapshot])
+  useEffect(() => () => publishStatus('unavailable'), [])
+
+  return {
+    ...query,
+    announcement,
+    connectionState,
+    lastSuccessAgeMs: Number.isFinite(lastSuccessAt) ? Math.max(0, clock - lastSuccessAt) : null,
+  }
 }

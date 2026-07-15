@@ -8,14 +8,14 @@ import { replaceLocation } from '../app/navigation'
 import { AppShell } from '../components/layout/AppShell'
 import type { ConnectionState } from '../components/layout/ConnectionBadge'
 import { SessionUnavailable } from '../components/layout/SessionUnavailable'
-import { useLiveConnectionState } from '../features/live/useLiveTelemetry'
+import { useLiveStatus } from '../features/live/useLiveTelemetry'
 
 export const Route = createRootRoute({
   component: RootLayout,
 })
 
 function RootLayout() {
-  const liveConnection = useLiveConnectionState()
+  const liveStatus = useLiveStatus()
   const path = window.location.pathname
   const bootstrap = useQuery(bootstrapStatusQuery)
   const needsSession = bootstrap.data?.open === false && path !== '/login' && path !== '/bootstrap'
@@ -25,7 +25,7 @@ function RootLayout() {
   const decision = bootstrap.data
     ? resolveAppAccess(path, bootstrap.data.open, needsSession ? authenticated : false)
     : 'loading'
-  const shellConnection: ConnectionState = path === '/' ? liveConnection : 'unavailable'
+  const shellConnection: ConnectionState = path === '/' ? liveStatus.connectionState : 'unavailable'
 
   useEffect(() => {
     if (decision === '/bootstrap') replaceLocation('/bootstrap')
@@ -36,5 +36,5 @@ function RootLayout() {
   if (needsSession && sessionAccess === 'unavailable') return <SessionUnavailable onRetry={() => { void session.refetch() }} />
   if (decision !== 'render') return <main aria-busy="true" className="route-state">Preparando o Helio…</main>
   if (path === '/login' || path === '/bootstrap') return <Outlet />
-  return <AppShell connectionState={shellConnection} currentPath={path}><Outlet /></AppShell>
+  return <AppShell announcement={path === '/' ? liveStatus.announcement : undefined} connectionState={shellConnection} currentPath={path}><Outlet /></AppShell>
 }

@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { settingsQuery } from '../../api/queries'
-import { ConnectionBadge } from '../../components/layout/ConnectionBadge'
 import { HealthPanel } from './HealthPanel'
 import { HeroPower } from './HeroPower'
 import { MetricStrip } from './MetricStrip'
@@ -22,18 +21,14 @@ export function NowPage() {
   )
   if (!snapshot) return (
     <section className="live-empty">
-      <ConnectionBadge state={live.connectionState} />
       <h1>A leitura do inversor ainda não chegou.</h1>
       <p>O Helio continuará tentando se reconectar sem substituir a ausência por zero.</p>
       <button className="secondary-action" type="button" onClick={() => { void live.refetch() }}>Buscar novamente</button>
     </section>
   )
 
-  const faultSignature = snapshot.faultCodes.length ? `Falha crítica. Códigos ${snapshot.faultCodes.join(', ')}.` : 'Sistema sem falhas ativas.'
   return (
     <article className="now-page">
-      <div className="page-connection"><ConnectionBadge state={live.connectionState} /></div>
-      <p className="sr-only" aria-live="polite">{live.connectionState === 'connected' ? faultSignature : live.connectionState}</p>
       <HeroPower snapshot={snapshot} updatedAt={live.data?.lastSuccess ?? snapshot.observedAt} timezone={settings.data?.timezone} />
       <MetricStrip snapshot={snapshot} />
       <PVFlow snapshot={snapshot} settings={settings.data} />

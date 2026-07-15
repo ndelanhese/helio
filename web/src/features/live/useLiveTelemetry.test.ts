@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LiveState } from '../../api/types'
 import { queryKeys } from '../../api/queries'
-import { useLiveTelemetry } from './useLiveTelemetry'
+import { useLiveStatus, useLiveTelemetry } from './useLiveTelemetry'
 
 const state: LiveState = {
   lastSuccess: '2026-07-14T15:42:00Z',
@@ -56,6 +56,10 @@ describe('useLiveTelemetry', () => {
     const { result } = renderHook(() => useLiveTelemetry(), { wrapper })
     await waitFor(() => expect(result.current.data?.snapshot?.acPowerW).toBe(2070))
     expect(FakeEventSource.instance.url).toBe('/api/v1/live/events')
+    expect(result.current.connectionState).toBe('loading')
+
+    act(() => FakeEventSource.instance.onopen?.(new Event('open')))
+    await waitFor(() => expect(result.current.connectionState).toBe('connected'))
 
     act(() => FakeEventSource.instance.emit('state', { ...state, stale: true }))
     expect(client.getQueryData<LiveState>(queryKeys.live)?.stale).toBe(true)
@@ -68,18 +72,56 @@ describe('useLiveTelemetry', () => {
   })
 
   it('marks reconnecting and refetches on stream error, then refetches on open', async () => {
+    const status = renderHook(() => useLiveStatus())
     const { result } = renderHook(() => useLiveTelemetry(), { wrapper })
+    await waitFor(() => expect(result.current.data).toBeDefined())
+    act(() => FakeEventSource.instance.onopen?.(new Event('open')))
     await waitFor(() => expect(result.current.connectionState).toBe('connected'))
     const initialRequests = requests
 
     act(() => FakeEventSource.instance.onerror?.(new Event('error')))
     expect(result.current.connectionState).toBe('reconnecting')
+    await waitFor(() => expect(status.result.current.connectionState).toBe('reconnecting'))
+    expect(status.result.current.announcement).toBe('Reconectando')
     await waitFor(() => expect(requests).toBeGreaterThan(initialRequests))
 
     const afterError = requests
     act(() => FakeEventSource.instance.onopen?.(new Event('open')))
     await waitFor(() => expect(result.current.connectionState).toBe('connected'))
     await waitFor(() => expect(requests).toBeGreaterThan(afterError))
+  })
+
+  it('ignores malformed and unknown stream events', async () => {
+    renderHook(() => useLiveTelemetry(), { wrapper })
+    await waitFor(() => expect(client.getQueryData(queryKeys.live)).toBeDefined())
+    const before = client.getQueryData(queryKeys.live)
+    act(() => {
+      FakeEventSource.instance.emit('snapshot', { kind: 'snapshot', state, snapshot: { ...state.snapshot, pv1: { active: true } } })
+      FakeEventSource.instance.emit('unknown', state)
+    })
+    expect(client.getQueryData(queryKeys.live)).toEqual(before)
+  })
+
+  it('does not let an older HTTP response replace a newer SSE snapshot', async () => {
+    let resolveRequest!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { resolveRequest = resolve })))
+    renderHook(() => useLiveTelemetry(), { wrapper })
+    await waitFor(() => expect(FakeEventSource.instance).toBeDefined())
+    act(() => FakeEventSource.instance.emit('snapshot', {
+      kind: 'snapshot', state: { ...state, lastSuccess: '2026-07-14T15:42:20Z' },
+      snapshot: { ...state.snapshot, observedAt: '2026-07-14T15:42:20Z', acPowerW: 2400 },
+    }))
+    resolveRequest(new Response(JSON.stringify(state), { headers: { 'Content-Type': 'application/json' } }))
+    await act(async () => undefined)
+    expect(client.getQueryData<LiveState>(queryKeys.live)?.snapshot?.acPowerW).toBe(2400)
+  })
+
+  it('reports offline transitions in Portuguese', async () => {
+    const { result } = renderHook(() => useLiveTelemetry(), { wrapper })
+    await waitFor(() => expect(result.current.data).toBeDefined())
+    act(() => window.dispatchEvent(new Event('offline')))
+    expect(result.current.connectionState).toBe('offline')
+    expect(result.current.announcement).toMatch(/Sem conexão/)
   })
 
   it('closes the stream and removes listeners on unmount', async () => {

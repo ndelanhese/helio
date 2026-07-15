@@ -91,5 +91,5 @@ export interface HistoryResponse {
 }
 
 export type LiveEvent =
-  | { type: 'snapshot'; version: 1; data: LiveState }
-  | { type: 'state'; version: 1; data: Record<string, unknown> }
+  | { kind: 'state'; state: LiveState }
+  | { kind: 'snapshot'; snapshot: LiveSnapshot; state: LiveState }

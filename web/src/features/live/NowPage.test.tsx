@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { renderApp } from '../../test/render'
 import { server } from '../../test/server'
+import { AppShell } from '../../components/layout/AppShell'
 import { NowPage } from './NowPage'
+import { useLiveStatus } from './useLiveTelemetry'
 
 const capturedAt = '2026-07-14T15:42:00Z'
 const liveState = {
@@ -51,6 +53,11 @@ function useFixture(state = liveState) {
   )
 }
 
+function LiveHarness() {
+  const status = useLiveStatus()
+  return <AppShell announcement={status.announcement} connectionState={status.connectionState} currentPath="/"><NowPage /></AppShell>
+}
+
 describe('NowPage', () => {
   beforeEach(() => {
     vi.setSystemTime(new Date('2026-07-14T15:42:10Z'))
@@ -60,7 +67,7 @@ describe('NowPage', () => {
 
   it('presents the latest real inverter snapshot in Brazilian Portuguese', async () => {
     useFixture()
-    renderApp(<NowPage />)
+    renderApp(<LiveHarness />)
 
     expect(await screen.findByRole('heading', { name: '2,07 kW' })).toBeVisible()
     expect(screen.getByText('12,34 kWh')).toBeVisible()
@@ -78,19 +85,21 @@ describe('NowPage', () => {
 
   it('keeps the last measurement visible when it becomes stale', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2026-07-14T15:42:10Z'))
     useFixture()
-    renderApp(<NowPage />)
+    renderApp(<LiveHarness />)
     expect(await screen.findByRole('heading', { name: '2,07 kW' })).toBeVisible()
+    QuietEventSource.instances.at(-1)?.onopen?.(new Event('open'))
 
-    await vi.advanceTimersByTimeAsync(21_000)
+    await vi.advanceTimersByTimeAsync(31_000)
 
-    expect(screen.getByText('Dados desatualizados')).toBeVisible()
+    expect(screen.getByText(/Dados desatualizados/, { selector: '.connection-badge' })).toBeVisible()
     expect(screen.getByRole('heading', { name: '2,07 kW' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: '0 W' })).not.toBeInTheDocument()
     vi.useRealTimers()
   })
 
-  it('shows fault severity and codes without replacing production metrics', async () => {
+  it('shows a neutral fault label and codes without replacing production metrics', async () => {
     useFixture({
       ...liveState,
       snapshot: { ...liveState.snapshot, status: 'fault', faultCodes: [1, 3, 55] },
@@ -98,9 +107,27 @@ describe('NowPage', () => {
     renderApp(<NowPage />)
 
     expect(await screen.findByRole('heading', { name: '2,07 kW' })).toBeVisible()
-    expect(screen.getByText('Falha crítica')).toBeVisible()
+    expect(screen.getByText('Falha informada pelo inversor')).toBeVisible()
     expect(screen.getByText(/Códigos 1, 3 e 55/)).toBeVisible()
     expect(screen.queryByText(/PV2.*falha/i)).not.toBeInTheDocument()
+  })
+
+  it('handles a code-less inverter fault without invented severity or undefined text', async () => {
+    useFixture({ ...liveState, snapshot: { ...liveState.snapshot, status: 'fault', faultCodes: [] } })
+    renderApp(<NowPage />)
+    expect(await screen.findByText('Falha informada pelo inversor')).toBeVisible()
+    expect(screen.getByText('O inversor não informou códigos para esta falha.')).toBeVisible()
+    expect(screen.queryByText(/crítica|undefined/i)).not.toBeInTheDocument()
+  })
+
+  it('shows an honest unavailable state when the live query fails', async () => {
+    server.use(
+      http.get('/api/v1/live', () => HttpResponse.json({ error: { code: 'unavailable', message: 'offline' } }, { status: 503 })),
+      http.get('/api/v1/settings', () => HttpResponse.json(settings)),
+    )
+    renderApp(<NowPage />)
+    expect(await screen.findByText('A leitura do inversor ainda não chegou.')).toBeVisible()
+    expect(screen.getByText(/sem substituir a ausência por zero/i)).toBeVisible()
   })
 
   it('uses a meaningful loading skeleton before the first snapshot', () => {
@@ -126,5 +153,23 @@ describe('NowPage', () => {
     expect(await screen.findByText('PV2')).toBeVisible()
     expect(screen.getByText('720 W')).toBeVisible()
     expect(screen.queryByText('PV2 não utilizado')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [375, 812],
+    [768, 1024],
+    [1440, 900],
+  ])('fits the editorial harness at %d×%d without a clipping container', async (width, height) => {
+    Object.defineProperties(window, {
+      innerHeight: { configurable: true, value: height },
+      innerWidth: { configurable: true, value: width },
+    })
+    useFixture()
+    const { container } = renderApp(<LiveHarness />)
+    expect(await screen.findByRole('heading', { name: '2,07 kW' })).toBeVisible()
+    const page = container.querySelector<HTMLElement>('.now-page')
+    expect(page).not.toBeNull()
+    expect(page?.style.overflow).not.toBe('clip')
+    expect(container.querySelector('.primary-nav')).toBeVisible()
   })
 })
