@@ -1,0 +1,40 @@
+@import './tokens.css';
+@import './components.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { background: var(--canvas); color: var(--text); font-family: var(--font-body); }
+
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--canvas); }
+
+button, input, select, textarea { color: inherit; font: inherit; }
+
+button, a { -webkit-tap-highlight-color: transparent; }
+
+a { color: inherit; }
+
+:focus-visible { outline: 3px solid var(--sun); outline-offset: 3px; }
+
+::selection { background: var(--sun); color: #173B2D; }
+
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--text);
+  color: var(--canvas);
+  transform: translateY(-160%);
+}
+
+.skip-link:focus { transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
