@@ -275,7 +275,7 @@ func TestRunnerRunsActualAnalysisAfterAggregationBeforeDailyAlert(t *testing.T) 
 	}
 }
 
-func TestRunnerRefreshesWeatherImmediatelyHourlyAndEvaluatesEveryCollectorEvent(t *testing.T) {
+func TestRunnerRefreshesCurrentWeatherEveryFifteenMinutesAndEvaluatesEveryCollectorEvent(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	clock := newFakeClock(now)
 	weatherService := &fakeWeather{result: weather.Result{Available: true, FetchedAt: now, Hours: []weather.Hour{{Time: now.Truncate(time.Hour), IrradianceWM2: 500, FetchedAt: now}}}}
@@ -292,9 +292,12 @@ func TestRunnerRefreshesWeatherImmediatelyHourlyAndEvaluatesEveryCollectorEvent(
 		defer weatherService.mu.Unlock()
 		return len(weatherService.calls) == 1
 	})
+	if got := clock.firstWait(t); got != 15*time.Minute {
+		t.Fatalf("weather refresh delay = %v, want 15m", got)
+	}
 	hub.Publish(collector.Event{Kind: "snapshot", Snapshot: &domain.TelemetrySnapshot{ObservedAt: now, ACPowerW: 123, Grid: domain.Grid{VoltageV: 230, FrequencyHz: 60}}, State: collector.State{LastSuccess: now}})
 	eventually(t, func() bool { alertEngine.mu.Lock(); defer alertEngine.mu.Unlock(); return len(alertEngine.inputs) == 1 })
-	clock.advance(now.Add(time.Hour))
+	clock.advance(now.Add(15 * time.Minute))
 	eventually(t, func() bool {
 		weatherService.mu.Lock()
 		defer weatherService.mu.Unlock()

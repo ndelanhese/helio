@@ -96,9 +96,9 @@ func TestRunnerInitialStatusHasTimestamp(t *testing.T) {
 func TestSetWeatherResultPublishesCurrentHourlyReadings(t *testing.T) {
 	at := time.Date(2026, 7, 14, 15, 42, 0, 0, time.UTC)
 	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) { return domain.Settings{}, nil })
-	runner.setWeatherResult(weather.Result{Available: true, Hours: []weather.Hour{{Time: at.Add(-time.Hour).Truncate(time.Hour), CloudCoverPct: 43, IrradianceWM2: 612}, {Time: at.Add(time.Hour).Truncate(time.Hour), CloudCoverPct: 10, IrradianceWM2: 900}}}, at)
+	runner.setWeatherResult(weather.Result{Available: true, Current: &weather.Current{At: at, TemperatureC: 22.4, PrecipitationMM: 0.3, WeatherCode: 61, CloudCoverPct: 78, WindSpeedKMH: 14.2}}, at)
 	status := runner.WeatherStatus()
-	if status.CloudCoverPct == nil || *status.CloudCoverPct != 43 || status.IrradianceWM2 == nil || *status.IrradianceWM2 != 612 {
+	if status.TemperatureC == nil || *status.TemperatureC != 22.4 || status.PrecipitationMM == nil || *status.PrecipitationMM != 0.3 || status.WeatherCode == nil || *status.WeatherCode != 61 || status.CloudCoverPct == nil || *status.CloudCoverPct != 78 || status.WindSpeedKMH == nil || *status.WindSpeedKMH != 14.2 {
 		t.Fatalf("weather readings = %#v", status)
 	}
 }

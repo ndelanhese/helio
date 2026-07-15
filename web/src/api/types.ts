@@ -170,7 +170,10 @@ export interface ComponentHealth {
   loggerUpdatedAt?: string
   weather: 'available' | 'stale' | 'unavailable'
 	cloudCoverPct?: number
-	irradianceWM2?: number
+	precipitationMM?: number
+	temperatureC?: number
+	weatherCode?: number
+	windSpeedKMH?: number
   weatherFetchedAt?: string
   weatherUpdatedAt?: string
 }

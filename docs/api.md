@@ -29,7 +29,7 @@ Unauthenticated:
 
 - `GET /health/live` — process liveness.
 - `GET /health/ready` — database readiness.
-- `GET /health/components` — sanitized component state; when weather is available, includes current hourly `cloudCoverPct` and `irradianceWM2` from forecast data.
+- `GET /health/components` — sanitized component state; when weather is available, includes current modeled `temperatureC`, `precipitationMM`, `weatherCode`, `cloudCoverPct`, and `windSpeedKMH`.
 - `GET /api/v1/bootstrap/status` — `{ "open": true|false }`.
 - `POST /api/v1/bootstrap` — one-time administrator and settings creation; closes after success.
 - `POST /api/v1/auth/login` — creates a session.

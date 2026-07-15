@@ -40,6 +40,65 @@ func NewOpenMeteo(baseURL string, client *http.Client, clock func() time.Time) *
 
 func (p *OpenMeteo) Source() string { return "open-meteo" }
 
+func (p *OpenMeteo) Current(ctx context.Context, request Request) (Current, error) {
+	if !finiteInRange(request.Latitude, -90, 90) || !finiteInRange(request.Longitude, -180, 180) {
+		return Current{}, errors.New("weather request coordinates are invalid")
+	}
+	if _, err := url.ParseRequestURI(p.baseURL); err != nil {
+		return Current{}, errors.New("weather provider URL is invalid")
+	}
+	query := url.Values{}
+	query.Set("latitude", strconv.FormatFloat(request.Latitude, 'f', -1, 64))
+	query.Set("longitude", strconv.FormatFloat(request.Longitude, 'f', -1, 64))
+	query.Set("current", "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m")
+	query.Set("timezone", "UTC")
+
+	timedCtx, cancel := context.WithTimeout(ctx, openMeteoTimeout)
+	defer cancel()
+	httpRequest, err := http.NewRequestWithContext(timedCtx, http.MethodGet, p.baseURL+"?"+query.Encode(), nil)
+	if err != nil {
+		return Current{}, errors.New("build weather request")
+	}
+	httpRequest.Header.Set("Accept", "application/json")
+	response, err := p.client.Do(httpRequest)
+	if err != nil {
+		return Current{}, errors.New("weather provider request failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Current{}, fmt.Errorf("weather provider returned status class %dxx", response.StatusCode/100)
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return Current{}, errors.New("weather provider returned unsupported content type")
+	}
+	limited := io.LimitReader(response.Body, maxResponseBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return Current{}, errors.New("read weather provider response")
+	}
+	if len(body) > maxResponseBytes {
+		return Current{}, errors.New("weather provider response is too large")
+	}
+	var payload openMeteoResponse
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return Current{}, errors.New("weather provider returned invalid JSON")
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return Current{}, errors.New("weather provider returned invalid JSON")
+	}
+	if payload.Current == nil {
+		return Current{}, errors.New("weather provider returned missing current conditions")
+	}
+	at, err := time.Parse("2006-01-02T15:04", payload.Current.Time)
+	if err != nil || !finiteInRange(payload.Current.TemperatureC, -100, 100) || !finiteInRange(payload.Current.PrecipitationMM, 0, 1_000) || payload.Current.WeatherCode < 0 || payload.Current.WeatherCode > 99 || !finiteInRange(payload.Current.CloudCoverPct, 0, 100) || !finiteInRange(payload.Current.WindSpeedKMH, 0, 500) {
+		return Current{}, errors.New("weather provider returned invalid current conditions")
+	}
+	return Current{At: at.UTC(), TemperatureC: payload.Current.TemperatureC, PrecipitationMM: payload.Current.PrecipitationMM, WeatherCode: payload.Current.WeatherCode, CloudCoverPct: payload.Current.CloudCoverPct, WindSpeedKMH: payload.Current.WindSpeedKMH}, nil
+}
+
 func (p *OpenMeteo) Hourly(ctx context.Context, request Request) ([]Hour, error) {
 	start := request.Start.UTC()
 	end := request.End.UTC()
@@ -145,15 +204,35 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 }
 
 type openMeteoResponse struct {
-	Latitude             float64               `json:"latitude,omitempty"`
-	Longitude            float64               `json:"longitude,omitempty"`
-	GenerationTimeMS     float64               `json:"generationtime_ms,omitempty"`
-	UTCOffsetSeconds     int                   `json:"utc_offset_seconds,omitempty"`
-	Timezone             string                `json:"timezone,omitempty"`
-	TimezoneAbbreviation string                `json:"timezone_abbreviation,omitempty"`
-	Elevation            float64               `json:"elevation,omitempty"`
-	HourlyUnits          *openMeteoHourlyUnits `json:"hourly_units,omitempty"`
-	Hourly               openMeteoHourly       `json:"hourly"`
+	Latitude             float64                `json:"latitude,omitempty"`
+	Longitude            float64                `json:"longitude,omitempty"`
+	GenerationTimeMS     float64                `json:"generationtime_ms,omitempty"`
+	UTCOffsetSeconds     int                    `json:"utc_offset_seconds,omitempty"`
+	Timezone             string                 `json:"timezone,omitempty"`
+	TimezoneAbbreviation string                 `json:"timezone_abbreviation,omitempty"`
+	Elevation            float64                `json:"elevation,omitempty"`
+	HourlyUnits          *openMeteoHourlyUnits  `json:"hourly_units,omitempty"`
+	Hourly               openMeteoHourly        `json:"hourly"`
+	CurrentUnits         *openMeteoCurrentUnits `json:"current_units,omitempty"`
+	Current              *openMeteoCurrent      `json:"current,omitempty"`
+}
+type openMeteoCurrentUnits struct {
+	Time            string `json:"time"`
+	Interval        string `json:"interval"`
+	TemperatureC    string `json:"temperature_2m"`
+	PrecipitationMM string `json:"precipitation"`
+	WeatherCode     string `json:"weather_code"`
+	CloudCoverPct   string `json:"cloud_cover"`
+	WindSpeedKMH    string `json:"wind_speed_10m"`
+}
+type openMeteoCurrent struct {
+	Time            string  `json:"time"`
+	Interval        int     `json:"interval"`
+	TemperatureC    float64 `json:"temperature_2m"`
+	PrecipitationMM float64 `json:"precipitation"`
+	WeatherCode     int     `json:"weather_code"`
+	CloudCoverPct   float64 `json:"cloud_cover"`
+	WindSpeedKMH    float64 `json:"wind_speed_10m"`
 }
 type openMeteoHourlyUnits struct {
 	Time               string `json:"time"`

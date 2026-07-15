@@ -2,7 +2,7 @@
 
 ## Health and readiness
 
-`/health/live` proves the process can answer HTTP. `/health/ready` is a database-readiness check used by Docker; logger or weather failure does not make the container unready. `/health/components` reports database, logger, collector, jobs, weather, alerts, and analysis states plus sanitized error classes and timestamps. When weather is available, it also returns current hourly forecast cloud cover and solar irradiance. Weather uses `available`, `stale`, or `unavailable`.
+`/health/live` proves the process can answer HTTP. `/health/ready` is a database-readiness check used by Docker; logger or weather failure does not make the container unready. `/health/components` reports database, logger, collector, jobs, weather, alerts, and analysis states plus sanitized error classes and timestamps. When weather is available, it also returns current modeled temperature, precipitation, condition code, cloud cover, and wind; Helio refreshes this context every 15 minutes. Weather uses `available`, `stale`, or `unavailable`.
 
 ```sh
 curl --fail http://127.0.0.1:8080/health/live

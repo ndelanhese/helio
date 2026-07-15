@@ -21,6 +21,15 @@ type Hour struct {
 	FetchedAt     time.Time
 }
 
+type Current struct {
+	At              time.Time
+	TemperatureC    float64
+	PrecipitationMM float64
+	WeatherCode     int
+	CloudCoverPct   float64
+	WindSpeedKMH    float64
+}
+
 type Provider interface {
 	Hourly(context.Context, Request) ([]Hour, error)
 }

@@ -19,6 +19,7 @@ const (
 	defaultRetentionDays = 730
 	defaultShutdownLimit = 10 * time.Second
 	retryDelay           = time.Minute
+	weatherRefreshDelay  = 15 * time.Minute
 	alertEventBurst      = 256
 )
 
@@ -131,12 +132,15 @@ type Integration struct {
 }
 
 type WeatherStatus struct {
-	State         string
-	UpdatedAt     time.Time
-	FetchedAt     time.Time
-	CloudCoverPct *float64
-	IrradianceWM2 *float64
-	ErrorClass    string
+	State           string
+	UpdatedAt       time.Time
+	FetchedAt       time.Time
+	TemperatureC    *float64
+	PrecipitationMM *float64
+	WeatherCode     *int
+	CloudCoverPct   *float64
+	WindSpeedKMH    *float64
+	ErrorClass      string
 }
 
 type WorkerStatus struct {
@@ -590,9 +594,9 @@ func (r *Runner) runAlertIntegration(ctx context.Context, markReady func()) {
 }
 
 func (r *Runner) runWeatherIntegration(ctx context.Context) {
-	nextDelay := time.Hour
+	nextDelay := weatherRefreshDelay
 	refresh := func() {
-		nextDelay = time.Hour
+		nextDelay = weatherRefreshDelay
 		defer func() {
 			if recover() != nil {
 				r.setWeatherUnavailable("panic", r.clock.Now())
@@ -644,30 +648,16 @@ func (r *Runner) setWeatherResult(result weather.Result, at time.Time) {
 	r.mu.Lock()
 	r.weatherResult = result
 	status := WeatherStatus{State: state, UpdatedAt: at.UTC(), FetchedAt: result.FetchedAt.UTC(), ErrorClass: result.ErrorClass}
-	if hour, ok := currentWeatherHour(result, at); ok {
-		cloudCover := hour.CloudCoverPct
-		irradiance := hour.IrradianceWM2
-		status.CloudCoverPct = &cloudCover
-		status.IrradianceWM2 = &irradiance
+	if result.Current != nil {
+		current := *result.Current
+		status.TemperatureC = &current.TemperatureC
+		status.PrecipitationMM = &current.PrecipitationMM
+		status.WeatherCode = &current.WeatherCode
+		status.CloudCoverPct = &current.CloudCoverPct
+		status.WindSpeedKMH = &current.WindSpeedKMH
 	}
 	r.weatherStatus = status
 	r.mu.Unlock()
-}
-
-func currentWeatherHour(result weather.Result, at time.Time) (weather.Hour, bool) {
-	cutoff := at.UTC().Truncate(time.Hour)
-	var current weather.Hour
-	found := false
-	for _, hour := range result.Hours {
-		if hour.Time.UTC().After(cutoff) {
-			continue
-		}
-		if !found || hour.Time.UTC().After(current.Time.UTC()) {
-			current = hour
-			found = true
-		}
-	}
-	return current, found
 }
 
 func (r *Runner) evaluateCollectorEventSafely(ctx context.Context, event collector.Event) {

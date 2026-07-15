@@ -230,9 +230,11 @@
 .weather-context { display: grid; grid-template-columns: 32px 1fr; gap: var(--space-4); }
 .weather-context > svg { width: 28px; color: var(--sun); }
 .weather-context .eyebrow { margin: 0 0 var(--space-2); }
-.weather-readings { display: flex; align-items: baseline; gap: var(--space-3); margin: var(--space-3) 0 0; }
+.weather-summary { margin-top: var(--space-2) !important; color: var(--text) !important; font-weight: 700; }
+.weather-readings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 0; }
+.weather-readings div { min-width: 0; }
 .weather-readings dt { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-.weather-readings dd { margin: 0; font-family: var(--font-editorial); font-size: 1.35rem; line-height: 1; }
+.weather-readings dd { margin: var(--space-1) 0 0; font-family: var(--font-editorial); font-size: 1.15rem; line-height: 1; white-space: nowrap; }
 .weather-context p:last-child { margin-top: var(--space-3); }
 .live-loading, .live-empty { display: grid; min-height: 55vh; align-content: center; gap: var(--space-5); }
 .live-loading > p { color: var(--muted); }

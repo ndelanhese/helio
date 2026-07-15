@@ -35,15 +35,23 @@ func (r *fakeRepository) Upsert(_ context.Context, hours []Hour, source string, 
 }
 
 type fakeProvider struct {
-	hours  []Hour
-	err    error
-	calls  int
-	source string
+	hours        []Hour
+	err          error
+	calls        int
+	source       string
+	current      Current
+	currentErr   error
+	currentCalls int
 }
 
 func (p *fakeProvider) Hourly(context.Context, Request) ([]Hour, error) {
 	p.calls++
 	return p.hours, p.err
+}
+
+func (p *fakeProvider) Current(context.Context, Request) (Current, error) {
+	p.currentCalls++
+	return p.current, p.currentErr
 }
 
 func (p *fakeProvider) Source() string {
@@ -64,6 +72,16 @@ func TestWeatherCacheFreshHitAvoidsHTTP(t *testing.T) {
 	result := NewService(repo, provider, func() time.Time { return now }).Get(context.Background(), Request{Start: now, End: now.Add(time.Hour)})
 	if !result.Available || result.Stale || result.Source != "open-meteo" || provider.calls != 0 || result.ErrorClass != "" {
 		t.Fatalf("result=%+v calls=%d", result, provider.calls)
+	}
+}
+
+func TestWeatherCacheAddsCurrentConditionsWithoutRefreshingHourlyForecast(t *testing.T) {
+	now := time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC)
+	repo := &fakeRepository{cache: Cache{Hours: []Hour{cachedHour(now, now.Add(-10*time.Minute))}}}
+	provider := &fakeProvider{current: Current{At: now, TemperatureC: 22.4, PrecipitationMM: 0.3, WeatherCode: 61, CloudCoverPct: 78, WindSpeedKMH: 14.2}}
+	result := NewService(repo, provider, func() time.Time { return now }).Get(context.Background(), Request{Latitude: -23.5505, Longitude: -46.6333, Start: now, End: now.Add(time.Hour)})
+	if provider.calls != 0 || provider.currentCalls != 1 || result.Current == nil || result.Current.TemperatureC != 22.4 || result.Current.WindSpeedKMH != 14.2 {
+		t.Fatalf("result=%+v hourly=%d current=%d", result, provider.calls, provider.currentCalls)
 	}
 }
 
