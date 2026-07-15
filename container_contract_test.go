@@ -2,12 +2,23 @@ package helio_test
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestContainerSecretFilesAreIgnored(t *testing.T) {
-	assertFileContainsLine(t, ".gitignore", "deploy/helio.env")
+	for _, path := range []string{".env", "deploy/helio.env"} {
+		command := exec.Command("git", "check-ignore", "--no-index", path)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("%s is not ignored by Git: %v\n%s", path, err, output)
+		}
+	}
+	for _, path := range []string{".env.example", "deploy/helio.env.example"} {
+		if err := exec.Command("git", "check-ignore", "--no-index", path).Run(); err == nil {
+			t.Fatalf("%s must remain trackable", path)
+		}
+	}
 	assertFileContainsLine(t, ".dockerignore", "deploy/helio.env")
 }
 
@@ -19,7 +30,6 @@ func TestDockerfileUsesPinnedNarrowDistrolessBuild(t *testing.T) {
 	}
 	for _, required := range []string{
 		"# syntax=docker/dockerfile:1.10@sha256:",
-		"ARG SOURCE_DATE_EPOCH=0",
 		"FROM node:24.17.0-bookworm-slim@sha256:",
 		"FROM golang:1.26.5-bookworm@sha256:",
 		"FROM gcr.io/distroless/static-debian12:nonroot@sha256:",
