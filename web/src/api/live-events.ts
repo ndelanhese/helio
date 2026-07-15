@@ -35,6 +35,7 @@ function isState(value: unknown): value is LiveState {
   return optionalString(value, 'lastSuccess') && optionalString(value, 'lastError')
     && optionalString(value, 'lastErrorAt') && optionalString(value, 'errorClass')
     && (value.lastSuccess === undefined || Number.isFinite(Date.parse(value.lastSuccess as string)))
+    && (value.lastErrorAt === undefined || Number.isFinite(Date.parse(value.lastErrorAt as string)))
     && (value.snapshot === undefined || isSnapshot(value.snapshot))
 }
 

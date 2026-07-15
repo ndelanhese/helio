@@ -190,7 +190,7 @@
 .live-hero-heading .eyebrow { margin-bottom: var(--space-3); }
 .live-updated { margin: 0 0 var(--space-3); color: var(--muted); font-size: .75rem; }
 .power-lockup { position: relative; display: grid; gap: var(--space-2); }
-.power-lockup::after { position: absolute; top: -18px; right: -10vw; width: clamp(100px, 18vw, 260px); height: clamp(100px, 18vw, 260px); border-radius: 50%; background: color-mix(in srgb, var(--sun) 22%, transparent); content: ''; filter: blur(1px); z-index: -1; }
+.power-lockup::after { position: absolute; top: -18px; right: 0; width: clamp(100px, 18vw, 260px); height: clamp(100px, 18vw, 260px); border-radius: 50%; background: color-mix(in srgb, var(--sun) 22%, transparent); content: ''; filter: blur(1px); z-index: -1; }
 .power-lockup p { margin: 0; color: var(--muted); font-size: .82rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .power-lockup h1 { max-width: 100%; margin: 0 0 0 -.055em; font-family: var(--font-editorial); font-size: clamp(3.5rem, 15vw, 10rem); font-weight: 400; line-height: .86; letter-spacing: -.075em; overflow-wrap: anywhere; }
 .energy-totals { display: grid; margin: 0; gap: var(--space-4); }

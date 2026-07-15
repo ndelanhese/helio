@@ -20,6 +20,7 @@ describe('parseLiveEvent', () => {
   it('rejects unknown, versioned, incomplete, non-finite, and malformed payloads', () => {
     expect(parseLiveEvent('unknown', JSON.stringify(state))).toBeNull()
     expect(parseLiveEvent('state', JSON.stringify({ ...state, version: 2 }))).toBeNull()
+    expect(parseLiveEvent('state', JSON.stringify({ ...state, lastErrorAt: 'ontem' }))).toBeNull()
     expect(parseLiveEvent('snapshot', JSON.stringify({ kind: 'snapshot', state, snapshot: { ...snapshot, pv1: { active: true, powerW: 1 } } }))).toBeNull()
     expect(parseLiveEvent('state', JSON.stringify({ ...state, snapshot: { ...snapshot, grid: { ...snapshot.grid, frequencyHz: '59.97' } } }))).toBeNull()
     expect(parseLiveEvent('state', JSON.stringify({ ...state, snapshot: { ...snapshot, faultCodes: [1, -2, 3.5] } }))).toBeNull()

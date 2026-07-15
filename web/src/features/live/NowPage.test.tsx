@@ -155,21 +155,4 @@ describe('NowPage', () => {
     expect(screen.queryByText('PV2 não utilizado')).not.toBeInTheDocument()
   })
 
-  it.each([
-    [375, 812],
-    [768, 1024],
-    [1440, 900],
-  ])('fits the editorial harness at %d×%d without a clipping container', async (width, height) => {
-    Object.defineProperties(window, {
-      innerHeight: { configurable: true, value: height },
-      innerWidth: { configurable: true, value: width },
-    })
-    useFixture()
-    const { container } = renderApp(<LiveHarness />)
-    expect(await screen.findByRole('heading', { name: '2,07 kW' })).toBeVisible()
-    const page = container.querySelector<HTMLElement>('.now-page')
-    expect(page).not.toBeNull()
-    expect(page?.style.overflow).not.toBe('clip')
-    expect(container.querySelector('.primary-nav')).toBeVisible()
-  })
 })

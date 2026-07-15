@@ -8,7 +8,8 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint . --error-on-warnings",
-    "test": "vitest"
+    "test": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@tanstack/react-query": "5.101.2",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.3",
+    "@playwright/test": "1.55.1",
     "@tanstack/router-plugin": "1.168.20",
     "@testing-library/dom": "10.4.1",
     "@testing-library/jest-dom": "6.9.1",
