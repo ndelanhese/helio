@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { test, expect } from './fixtures'
-import { isScreenshotProject, preparePage, screenshotOptions, startKeyboard, tabUntil } from './support'
+import { isScreenshotProject, preparePage, screenshotOptions, startKeyboard, tabUntil, waitForVisualReadiness } from './support'
 
 test('history exposes a gap and exports the exact selected range by keyboard', async ({ page, setScenario }, testInfo) => {
   await setScenario('history-gap')
@@ -28,5 +28,25 @@ test('@screenshot History gap desktop', async ({ page, setScenario }, testInfo) 
   await preparePage(page)
   await page.goto('/history')
   await expect(page.getByRole('heading', { name: 'Histórico solar' })).toBeVisible()
-  await expect(page).toHaveScreenshot('history-gap-desktop.png', screenshotOptions())
+  await waitForVisualReadiness(page, 'light')
+  await page.evaluate(() => {
+    const chart = document.querySelector<HTMLElement>('.recharts-responsive-container')
+    if (!chart) throw new Error('responsive history chart was not rendered')
+    const readyWidth = Math.round(chart.getBoundingClientRect().width)
+    chart.style.setProperty('width', `${readyWidth}px`, 'important')
+    chart.style.setProperty('min-width', `${readyWidth}px`, 'important')
+    chart.style.setProperty('max-width', `${readyWidth}px`, 'important')
+    const probe = { observer: undefined as ResizeObserver | undefined, widths: [Math.round(chart.getBoundingClientRect().width)] }
+    probe.observer = new ResizeObserver(() => probe.widths.push(Math.round(chart.getBoundingClientRect().width)))
+    probe.observer.observe(chart)
+    ;(window as typeof window & { __helioChartWidthProbe?: typeof probe }).__helioChartWidthProbe = probe
+  })
+  await page.screenshot(screenshotOptions())
+  const chartWidths = await page.evaluate(() => {
+    const probe = (window as typeof window & { __helioChartWidthProbe?: { observer?: ResizeObserver; widths: number[] } }).__helioChartWidthProbe
+    probe?.observer?.disconnect()
+    return probe?.widths ?? []
+  })
+  expect([...new Set(chartWidths)], `chart widths observed during full-page capture: ${chartWidths.join(', ')}`).toHaveLength(1)
+  await expect(page).toHaveScreenshot('history-gap-desktop.png', { ...screenshotOptions(), timeout: 60_000 })
 })

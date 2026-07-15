@@ -77,7 +77,15 @@ export async function waitForVisualReadiness(page: Page, theme?: TestTheme) {
       ? { canvas: '#101714', text: '#EEF4EE', background: 'rgb(16, 23, 20)', color: 'rgb(238, 244, 238)' }
       : { canvas: '#F3F1E8', text: '#173B2D', background: 'rgb(243, 241, 232)', color: 'rgb(23, 59, 45)' }
     const linksReady = [...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')].every((link) => link.sheet !== null)
+    const responsiveChartsReady = [...document.querySelectorAll<HTMLElement>('.recharts-responsive-container')].every((container) => {
+      const surface = container.querySelector<SVGElement>('svg.recharts-surface')
+      if (!surface) return false
+      const containerBox = container.getBoundingClientRect()
+      const surfaceBox = surface.getBoundingClientRect()
+      return Math.abs(containerBox.width - surfaceBox.width) < 1 && Math.abs(containerBox.height - surfaceBox.height) < 1
+    })
     return root.dataset.theme === resolved && linksReady
+      && responsiveChartsReady
       && style.getPropertyValue('--canvas').trim().toUpperCase() === tokens.canvas
       && style.getPropertyValue('--text').trim().toUpperCase() === tokens.text
       && style.backgroundColor === tokens.background && style.color === tokens.color
@@ -85,7 +93,14 @@ export async function waitForVisualReadiness(page: Page, theme?: TestTheme) {
   await page.evaluate(async () => {
     await document.fonts.ready
     const frames = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-    const signature = () => `${document.documentElement.dataset.theme}|${document.styleSheets.length}|${document.body.querySelectorAll('*').length}|${document.body.textContent?.length ?? 0}`
+    const signature = () => {
+      const chartGeometry = [...document.querySelectorAll<HTMLElement>('.recharts-responsive-container, svg.recharts-surface')]
+        .map((element) => {
+          const box = element.getBoundingClientRect()
+          return `${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}`
+        }).join(';')
+      return `${document.documentElement.dataset.theme}|${document.styleSheets.length}|${document.body.querySelectorAll('*').length}|${document.body.textContent?.length ?? 0}|${document.documentElement.scrollWidth},${document.documentElement.scrollHeight}|${chartGeometry}`
+    }
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await frames()
       const before = signature()

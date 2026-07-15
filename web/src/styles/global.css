@@ -3,7 +3,7 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html { background: var(--canvas); color: var(--text); font-family: var(--font-body); }
+html { background: var(--canvas); color: var(--text); font-family: var(--font-body); scrollbar-gutter: stable; }
 
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--canvas); }
 
