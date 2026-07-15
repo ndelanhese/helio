@@ -4,7 +4,7 @@ services:
     build:
       context: .
     ports:
-      - "8080:8080"
+      - "${HELIO_BIND_IP:-127.0.0.1}:8080:8080"
     env_file:
       - path: deploy/helio.env
         required: false
@@ -12,7 +12,7 @@ services:
       - helio-data:/data
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
     security_opt:
       - no-new-privileges:true
     cap_drop:

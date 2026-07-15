@@ -18,6 +18,7 @@ test-results
 .env.*
 !*.env.example
 !deploy/*.env.example
+deploy/helio.env
 *.pem
 *.key
 *.crt
