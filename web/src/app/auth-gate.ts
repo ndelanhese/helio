@@ -1,6 +1,6 @@
 import { ApiError } from '../api/client'
 
-export type AccessDecision = 'loading' | 'render' | '/bootstrap' | '/login'
+export type AccessDecision = 'loading' | 'render' | '/' | '/bootstrap' | '/login'
 export type SessionAccess = 'loading' | 'authenticated' | 'anonymous' | 'unavailable'
 
 export function classifySessionResult(isSuccess: boolean, error: unknown): SessionAccess {
@@ -16,7 +16,10 @@ export function resolveAppAccess(
   authenticated: boolean | null,
 ): AccessDecision {
   if (bootstrapOpen) return path === '/bootstrap' ? 'render' : '/bootstrap'
-  if (path === '/bootstrap') return '/login'
+  if (path === '/bootstrap') {
+    if (authenticated === null) return 'loading'
+    return authenticated ? '/' : '/login'
+  }
   if (path === '/login') return 'render'
   if (authenticated === null) return 'loading'
   return authenticated ? 'render' : '/login'

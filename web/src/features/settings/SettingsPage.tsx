@@ -141,7 +141,7 @@ function SettingsEditor({ health, initial, sessionUsername }: { health: UseQuery
         </div>
         </section> : null}
         <div className="settings-save-rail">
-        <div aria-live="polite">{errors.general ? <p className="form-alert">{errors.general}</p> : status ? <p className="save-success"><Check aria-hidden="true" />{status}</p> : <p>Revise os ajustes antes de salvar.</p>}</div>
+        <div aria-label={errors.general || status || 'Estado do salvamento'} aria-live="polite" role="status">{errors.general ? <p className="form-alert">{errors.general}</p> : status ? <p className="save-success"><Check aria-hidden="true" />{status}</p> : <p>Revise os ajustes antes de salvar.</p>}</div>
           <button className="primary-action" disabled={saving} type="submit">{saving ? 'Salvando configurações…' : 'Salvar configurações'}</button>
         </div>
       </form>

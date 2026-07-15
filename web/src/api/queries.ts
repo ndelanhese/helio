@@ -70,6 +70,10 @@ export function confirmCurrentPassword(payload: LoginPayload) {
   return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload, suppressUnauthorized: true })
 }
 
+export function logout() {
+  return api.request('/auth/logout', { method: 'POST' })
+}
+
 export function createBootstrap(payload: BootstrapPayload) {
   return api.request<AuthCredentials>('/bootstrap', { method: 'POST', body: payload })
 }

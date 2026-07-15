@@ -18,7 +18,7 @@ function RootLayout() {
   const liveStatus = useLiveStatus()
   const path = window.location.pathname
   const bootstrap = useQuery(bootstrapStatusQuery)
-  const needsSession = bootstrap.data?.open === false && path !== '/login' && path !== '/bootstrap'
+  const needsSession = bootstrap.data?.open === false && path !== '/login'
   const session = useQuery({ ...sessionQuery, enabled: needsSession })
   const sessionAccess = classifySessionResult(session.isSuccess, session.error)
   const authenticated = sessionAccess === 'authenticated' ? true : sessionAccess === 'anonymous' ? false : null
@@ -30,6 +30,7 @@ function RootLayout() {
   useEffect(() => {
     if (decision === '/bootstrap') replaceLocation('/bootstrap')
     if (decision === '/login') replaceLocation(loginRedirect(`${path}${window.location.search}`))
+    if (decision === '/') replaceLocation('/')
   }, [decision, path])
 
   if (bootstrap.isError) return <main className="route-state">Não foi possível verificar o acesso ao Helio.</main>

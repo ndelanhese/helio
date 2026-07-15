@@ -22,7 +22,7 @@ export function ProductionChart({ current, previous, range, timezone }: { curren
     <section aria-label="Curva de produção" className="production-chart">
       <div aria-hidden="true" className="chart-frame">
         <ResponsiveContainer height={320} width="100%">
-          <LineChart data={data} margin={{ bottom: 8, left: 2, right: 12, top: 20 }}>
+          <LineChart accessibilityLayer={false} data={data} margin={{ bottom: 8, left: 2, right: 12, top: 20 }}>
             <CartesianGrid stroke="var(--border)" vertical={false} />
             <XAxis dataKey="at" domain={[Date.parse(range.from), Date.parse(range.to)]} scale="time" tickFormatter={(value) => hours.format(new Date(value))} type="number" />
             <YAxis tickFormatter={(value) => value >= 1000 ? `${numberCompact(value / 1000)}k` : String(value)} width={42} />

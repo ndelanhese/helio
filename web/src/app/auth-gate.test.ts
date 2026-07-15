@@ -10,6 +10,7 @@ describe('resolveAppAccess', () => {
     expect(resolveAppAccess('/history', true, true)).toBe('/bootstrap')
     expect(resolveAppAccess('/login', true, false)).toBe('/bootstrap')
     expect(resolveAppAccess('/bootstrap', false, false)).toBe('/login')
+    expect(resolveAppAccess('/bootstrap', false, true)).toBe('/')
     expect(resolveAppAccess('/login', false, false)).toBe('render')
     expect(resolveAppAccess('/history', false, null)).toBe('loading')
     expect(resolveAppAccess('/history', false, false)).toBe('/login')
