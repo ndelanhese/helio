@@ -63,6 +63,37 @@ func TestSettingsVersionedRoundTripAndUpsert(t *testing.T) {
 	}
 }
 
+func TestApplySettingsRollsBackSettingsWhenRequiredAuditFails(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "settings.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	initial := validStoredSettings()
+	if err := db.PutSettings(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('actor','Admin','x','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `CREATE TRIGGER reject_settings_audit BEFORE INSERT ON action_audit WHEN NEW.action='settings.update' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	updated := initial
+	updated.PanelCount = 8
+	if err := db.ApplySettings(ctx, updated, "actor", false); err == nil {
+		t.Fatal("ApplySettings succeeded without required audit")
+	}
+	got, err := db.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PanelCount != initial.PanelCount {
+		t.Fatalf("settings committed without audit: panelCount=%d", got.PanelCount)
+	}
+}
+
 func TestSettingsGetMissing(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "settings.db"))
 	if err != nil {

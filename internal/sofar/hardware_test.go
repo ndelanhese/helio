@@ -111,6 +111,13 @@ func TestMarshalHardwareSnapshotContainsTelemetryOnly(t *testing.T) {
 	}
 }
 
+func TestHardwareReaderUsesConfiguredActiveMPPT(t *testing.T) {
+	reader := NewHardwareReader(HardwareConfig{Address: "192.168.1.50:8899", Serial: 123, SlaveID: 1, ActiveMPPT: []int{1}})
+	if !reader.reader.activeMPPT[1] || reader.reader.activeMPPT[2] {
+		t.Fatalf("active MPPT=%v", reader.reader.activeMPPT)
+	}
+}
+
 func TestHardwareReadOnly(t *testing.T) {
 	if os.Getenv("HELIO_HARDWARE_TEST") != "1" {
 		t.Skip("set HELIO_HARDWARE_TEST=1")

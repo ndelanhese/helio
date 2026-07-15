@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -8,6 +9,12 @@ import (
 )
 
 type timeRange struct{ from, to time.Time }
+
+type summaryHistoryStore interface {
+	HourlyHistory(context.Context, time.Time, time.Time, *time.Location) ([]domain.AggregatePoint, error)
+	DailyHistory(context.Context, time.Time, time.Time, *time.Location) ([]domain.AggregatePoint, error)
+	MonthlyHistory(context.Context, time.Time, time.Time, *time.Location) ([]domain.AggregatePoint, error)
+}
 
 func parseRange(r *http.Request, requireResolution bool) (timeRange, string, error) {
 	from, err := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
@@ -56,6 +63,38 @@ func (a *API) history(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_range", err.Error())
 		return
 	}
+	if resolution != "minute" {
+		summaries, ok := a.dependencies.History.(summaryHistoryStore)
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "unavailable", "summary history is unavailable")
+			return
+		}
+		settings, settingsErr := a.dependencies.Store.GetSettings(r.Context(), a.dependencies.AllowPublicLogger)
+		if settingsErr != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "history timezone is unavailable")
+			return
+		}
+		location, locationErr := time.LoadLocation(settings.Timezone)
+		if locationErr != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "history timezone is invalid")
+			return
+		}
+		var points []domain.AggregatePoint
+		switch resolution {
+		case "hour":
+			points, err = summaries.HourlyHistory(r.Context(), window.from, window.to, location)
+		case "day":
+			points, err = summaries.DailyHistory(r.Context(), window.from, window.to, location)
+		case "month":
+			points, err = summaries.MonthlyHistory(r.Context(), window.from, window.to, location)
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "history could not be loaded")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"from": window.from, "to": window.to, "resolution": resolution, "points": points})
+		return
+	}
 	points, err := a.dependencies.History.History(r.Context(), window.from, window.to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "history could not be loaded")
@@ -64,42 +103,5 @@ func (a *API) history(w http.ResponseWriter, r *http.Request) {
 	for index := range points {
 		points[index].At = points[index].At.UTC()
 	}
-	points = coalesceHistory(points, resolution)
 	writeJSON(w, http.StatusOK, map[string]any{"from": window.from, "to": window.to, "resolution": resolution, "points": points})
-}
-
-func coalesceHistory(points []domain.HistoryPoint, resolution string) []domain.HistoryPoint {
-	if resolution == "minute" || len(points) == 0 {
-		return points
-	}
-	result := make([]domain.HistoryPoint, 0)
-	counts := make([]int, 0)
-	for _, point := range points {
-		bucket := historyBucket(point.At.UTC(), resolution)
-		last := len(result) - 1
-		if last < 0 || !result[last].At.Equal(bucket) {
-			result = append(result, domain.HistoryPoint{At: bucket, PowerW: point.PowerW})
-			counts = append(counts, 1)
-			continue
-		}
-		result[last].PowerW += point.PowerW
-		counts[last]++
-	}
-	for index := range result {
-		result[index].PowerW /= float64(counts[index])
-	}
-	return result
-}
-
-func historyBucket(at time.Time, resolution string) time.Time {
-	switch resolution {
-	case "hour":
-		return at.Truncate(time.Hour)
-	case "day":
-		return time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
-	case "month":
-		return time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
-	default:
-		return at.Truncate(time.Minute)
-	}
 }

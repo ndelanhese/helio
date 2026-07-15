@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,10 +21,11 @@ import (
 )
 
 type fixture struct {
-	handler http.Handler
-	db      *storage.DB
-	repo    *storage.TelemetryRepository
-	hub     *collector.Hub
+	handler  http.Handler
+	db       *storage.DB
+	repo     *storage.TelemetryRepository
+	hub      *collector.Hub
+	shutdown context.CancelFunc
 }
 
 func newFixture(t *testing.T) fixture {
@@ -36,11 +38,16 @@ func newFixture(t *testing.T) fixture {
 	hub := collector.NewHub()
 	repo := storage.NewTelemetryRepository(db, time.UTC)
 	manager := auth.NewManager(db)
+	shutdownContext, shutdown := context.WithCancel(context.Background())
 	return fixture{handler: api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repo, Hub: hub,
-		Latest: func() collector.State { return collector.State{} },
-		Now:    func() time.Time { return time.Date(2026, 7, 14, 15, 4, 5, 0, time.UTC) },
-	}), db: db, repo: repo, hub: hub}
+		Latest:          func() collector.State { return collector.State{} },
+		Now:             func() time.Time { return time.Date(2026, 7, 14, 15, 4, 5, 0, time.UTC) },
+		ShutdownContext: shutdownContext,
+		ApplySettings: func(ctx context.Context, settings domain.Settings, actor string) error {
+			return db.ApplySettings(ctx, settings, actor, false)
+		},
+	}), db: db, repo: repo, hub: hub, shutdown: shutdown}
 }
 
 func request(t *testing.T, h http.Handler, method, target, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
@@ -173,7 +180,7 @@ func TestSettingsPresenceRangeHistoryCSVAndBackup(t *testing.T) {
 	}
 }
 
-func TestHistoryResolutionCoalescesPointsIntoUTCBuckets(t *testing.T) {
+func TestHistoryResolutionReadsPersistedSummaryAfterRawRetention(t *testing.T) {
 	f := newFixture(t)
 	cookie, _ := bootstrap(t, f)
 	base := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
@@ -182,19 +189,69 @@ func TestHistoryResolutionCoalescesPointsIntoUTCBuckets(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := f.repo.AggregateHour(context.Background(), base, base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.PruneBefore(context.Background(), base.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	target := "/api/v1/history?from=" + base.Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339) + "&resolution=hour"
 	rec := request(t, f.handler, http.MethodGet, target, "", cookie, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("history: %d %s", rec.Code, rec.Body.String())
 	}
 	var response struct {
-		Points []domain.HistoryPoint `json:"points"`
+		Points []domain.AggregatePoint `json:"points"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Points) != 1 || response.Points[0].PowerW != 150 || !response.Points[0].At.Equal(base) {
+	if len(response.Points) != 1 || response.Points[0].EnergyWh != 2.5 || !response.Points[0].At.Equal(base) {
 		t.Fatalf("hour points: %#v", response.Points)
+	}
+}
+
+type auditFailStore struct{ *storage.DB }
+
+func (auditFailStore) RecordAudit(context.Context, string, string, any) error {
+	return errors.New("audit unavailable")
+}
+
+type backupFailStore struct{ *storage.DB }
+
+func (backupFailStore) Backup(context.Context, io.Writer) error { return errors.New("backup failed") }
+
+func TestBackupPreparationFailureIsStructuredBeforeHeaders(t *testing.T) {
+	f := newFixture(t)
+	cookie, _ := bootstrap(t, f)
+	handler := api.New(api.Dependencies{Auth: auth.NewManager(f.db), Store: backupFailStore{f.db}, History: f.repo, Hub: f.hub})
+	rec := request(t, handler, http.MethodGet, "/api/v1/data/backup", "", cookie, "")
+	if rec.Code != http.StatusInternalServerError || rec.Header().Get("Content-Type") != "application/json" || rec.Header().Get("Content-Disposition") != "" {
+		t.Fatalf("backup preparation failure: %d %q %s", rec.Code, rec.Header(), rec.Body.String())
+	}
+}
+
+func TestComponentHealthIncludesExplicitWeatherState(t *testing.T) {
+	f := newFixture(t)
+	rec := request(t, f.handler, http.MethodGet, "/health/components", "", nil, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"weather":"unconfigured"`) {
+		t.Fatalf("components: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExportsDoNotCommitResponseWhenRequiredAuditFails(t *testing.T) {
+	f := newFixture(t)
+	cookie, _ := bootstrap(t, f)
+	manager := auth.NewManager(f.db)
+	handler := api.New(api.Dependencies{Auth: manager, Store: auditFailStore{f.db}, History: f.repo, Hub: f.hub})
+	// Use the session created by bootstrap; managers share the durable session store.
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	query := "?from=" + now.Add(-time.Minute).Format(time.RFC3339) + "&to=" + now.Add(time.Minute).Format(time.RFC3339)
+	for _, target := range []string{"/api/v1/history.csv" + query, "/api/v1/data/backup"} {
+		rec := request(t, handler, http.MethodGet, target, "", cookie, "")
+		if rec.Code != http.StatusInternalServerError || rec.Header().Get("Content-Type") != "application/json" {
+			t.Fatalf("%s audit failure: %d %q", target, rec.Code, rec.Header())
+		}
 	}
 }
 
@@ -231,4 +288,30 @@ func TestSSEInitialStateSnapshotAndCancellation(t *testing.T) {
 	}
 	cancel()
 	_, _ = io.Copy(io.Discard, resp.Body)
+}
+
+func TestSSEStopsPromptlyWhenApplicationShutsDown(t *testing.T) {
+	f := newFixture(t)
+	cookie, _ := bootstrap(t, f)
+	server := httptest.NewServer(f.handler)
+	defer server.Close()
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/live/events", nil)
+	req.AddCookie(cookie)
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 512)
+	if _, err := resp.Body.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	f.shutdown()
+	done := make(chan error, 1)
+	go func() { _, err := resp.Body.Read(buf); done <- err }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE remained active after application shutdown")
+	}
 }

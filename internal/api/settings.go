@@ -44,24 +44,14 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_settings", err.Error())
 		return
 	}
-	if err := a.dependencies.Store.PutSettings(r.Context(), settings, a.dependencies.AllowPublicLogger); err != nil {
+	principal, _ := auth.PrincipalFromRequest(r)
+	if principal == nil || a.dependencies.ApplySettings == nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "settings update is unavailable")
+		return
+	}
+	if err := a.dependencies.ApplySettings(r.Context(), settings, principal.UserID); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "settings could not be saved")
 		return
 	}
-	principal, _ := auth.PrincipalFromRequest(r)
-	if log, ok := a.dependencies.Store.(auditor); ok && principal != nil {
-		// Record only the action and non-sensitive shape. Never persist logger serial.
-		_ = log.RecordAudit(r.Context(), principal.UserID, "settings.update", map[string]any{"fields": settingsAuditFields()})
-	}
-	if a.dependencies.Reconfigure != nil {
-		if err := a.dependencies.Reconfigure(r.Context(), settings); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "collector_unavailable", "settings were saved but collector could not be reconfigured")
-			return
-		}
-	}
 	writeJSON(w, http.StatusOK, settings)
-}
-
-func settingsAuditFields() []string {
-	return []string{"loggerHost", "loggerPort", "modbusSlave", "panelCount", "panelWattage", "activeMPPT", "latitude", "longitude", "timezone", "currency", "tariffMinorPerKWh", "retentionDays"}
 }

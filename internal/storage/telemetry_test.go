@@ -396,6 +396,54 @@ func TestTelemetryEventAndRetentionPreserveSummaries(t *testing.T) {
 	}
 }
 
+func TestSummaryHistoryUsesPersistedRowsAndLocalDSTBoundaries(t *testing.T) {
+	ctx := context.Background()
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, repo := telemetryRepository(t, loc)
+	start := time.Date(2026, 3, 8, 0, 0, 0, 0, loc)
+	end := start.AddDate(0, 0, 1)
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO daily_summary(day,energy_wh,peak_power_w,productive_minutes,coverage_pct) VALUES('2026-03-08',1000,500,60,95)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `DELETE FROM telemetry_minute`); err != nil {
+		t.Fatal(err)
+	}
+	points, err := repo.DailyHistory(ctx, start.UTC(), end.UTC(), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 1 || !points[0].At.Equal(start.UTC()) || points[0].EnergyWh != 1000 {
+		t.Fatalf("DST daily summary: %#v", points)
+	}
+	if end.Sub(start) != 23*time.Hour {
+		t.Fatalf("test did not cross DST: %v", end.Sub(start))
+	}
+}
+
+func TestMonthlyHistoryConvertsLocalBucketStartToUTC(t *testing.T) {
+	ctx := context.Background()
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, repo := telemetryRepository(t, loc)
+	start := time.Date(2026, 2, 1, 0, 0, 0, 0, loc)
+	end := start.AddDate(0, 1, 0)
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO monthly_summary(month,energy_wh,peak_power_w,productive_minutes,coverage_pct) VALUES('2026-02',5000,900,100,90)`); err != nil {
+		t.Fatal(err)
+	}
+	points, err := repo.MonthlyHistory(ctx, start.UTC(), end.UTC(), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 1 || !points[0].At.Equal(start.UTC()) || points[0].EnergyWh != 5000 {
+		t.Fatalf("monthly summary: %#v", points)
+	}
+}
+
 func TestRetentionPrunesAcrossBatchBoundary(t *testing.T) {
 	ctx := context.Background()
 	db, repo := telemetryRepository(t, time.UTC)

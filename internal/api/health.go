@@ -10,16 +10,20 @@ type ComponentStatus struct {
 	Database    string `json:"database"`
 	Logger      string `json:"logger"`
 	Collector   string `json:"collector"`
+	Weather     string `json:"weather"`
 	LastSuccess string `json:"lastSuccess,omitempty"`
 }
 
 func (a *API) componentHealth(w http.ResponseWriter, r *http.Request) {
-	status := ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle"}
+	status := ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle", Weather: "unconfigured"}
 	if a.dependencies.Components != nil {
 		status = a.dependencies.Components(r.Context())
 	} else {
 		state := a.dependencies.Latest()
 		status = componentStatusFromState(status, state)
+	}
+	if status.Weather == "" {
+		status.Weather = "unconfigured"
 	}
 	writeJSON(w, http.StatusOK, status)
 }

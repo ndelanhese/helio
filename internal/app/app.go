@@ -21,11 +21,21 @@ import (
 )
 
 type App struct {
-	server   *http.Server
-	db       *storage.DB
-	runtime  *collectorRuntime
-	initErr  error
-	settings func(context.Context) (domain.Settings, error)
+	server            *http.Server
+	db                *storage.DB
+	runtime           *collectorRuntime
+	initErr           error
+	settings          func(context.Context) (domain.Settings, error)
+	settingsMu        sync.Mutex
+	settingsRuntime   settingsRuntime
+	shutdownContext   context.Context
+	shutdownCancel    context.CancelFunc
+	stopOnce          sync.Once
+	allowPublicLogger bool
+}
+
+type settingsRuntime interface {
+	Apply(context.Context, domain.Settings, func() error) error
 }
 
 func New(cfg config.Config) *App {
@@ -43,9 +53,13 @@ func New(cfg config.Config) *App {
 	repository := storage.NewTelemetryRepository(db, time.UTC)
 	runtime := &collectorRuntime{hub: hub, store: repository}
 	manager := auth.NewManager(db, auth.WithSecureCookies(cfg.SecureCookies))
+	shutdownContext, shutdownCancel := context.WithCancel(context.Background())
+	a := &App{db: db, runtime: runtime, settingsRuntime: runtime, shutdownContext: shutdownContext, shutdownCancel: shutdownCancel, allowPublicLogger: cfg.AllowPublicLogger,
+		settings: func(ctx context.Context) (domain.Settings, error) { return db.GetSettings(ctx, cfg.AllowPublicLogger) }}
 	apiHandler := api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repository, Hub: hub,
 		Latest: runtime.latest, Reconfigure: runtime.reconfigure,
+		ApplySettings: a.applySettings, ShutdownContext: shutdownContext,
 		AllowPublicLogger: cfg.AllowPublicLogger,
 		Components: func(ctx context.Context) api.ComponentStatus {
 			status := runtime.components()
@@ -60,11 +74,17 @@ func New(cfg config.Config) *App {
 		defer cancel()
 		return db.Ready(ctx)
 	}
-	return &App{
-		server: &http.Server{Addr: cfg.HTTPAddr, Handler: httpserver.New(httpserver.Dependencies{Ready: ready, API: apiHandler}), ReadHeaderTimeout: 5 * time.Second},
-		db:     db, runtime: runtime,
-		settings: func(ctx context.Context) (domain.Settings, error) { return db.GetSettings(ctx, cfg.AllowPublicLogger) },
+	a.server = &http.Server{Addr: cfg.HTTPAddr, Handler: httpserver.New(httpserver.Dependencies{Ready: ready, API: apiHandler}), ReadHeaderTimeout: 5 * time.Second}
+	return a
+}
+
+func (a *App) applySettings(ctx context.Context, settings domain.Settings, actorUserID string) error {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	if a.settingsRuntime == nil || a.db == nil {
+		return errors.New("settings runtime is unavailable")
 	}
+	return a.settingsRuntime.Apply(ctx, settings, func() error { return a.db.ApplySettings(ctx, settings, actorUserID, a.allowPublicLogger) })
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -72,7 +92,7 @@ func (a *App) Run(ctx context.Context) error {
 		return a.initErr
 	}
 	a.runtime.start(ctx)
-	defer a.runtime.stop()
+	defer a.stopServices()
 	defer a.db.Close()
 	if settings, err := a.settings(ctx); err == nil {
 		if err := a.runtime.reconfigure(ctx, settings); err != nil {
@@ -85,15 +105,28 @@ func (a *App) Run(ctx context.Context) error {
 	go func() { errC <- a.server.ListenAndServe() }()
 	select {
 	case err := <-errC:
+		a.stopServices()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
 	case <-ctx.Done():
+		a.stopServices()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return a.server.Shutdown(shutdown)
 	}
+}
+
+func (a *App) stopServices() {
+	a.stopOnce.Do(func() {
+		if a.shutdownCancel != nil {
+			a.shutdownCancel()
+		}
+		if a.runtime != nil {
+			a.runtime.stop()
+		}
+	})
 }
 
 type collectorRuntime struct {
@@ -103,6 +136,7 @@ type collectorRuntime struct {
 	cancel      context.CancelFunc
 	done        chan struct{}
 	current     *collector.Collector
+	active      domain.Settings
 	hub         *collector.Hub
 	store       collector.Store
 }
@@ -136,20 +170,24 @@ func (r *collectorRuntime) latest() collector.State {
 }
 
 func (r *collectorRuntime) reconfigure(_ context.Context, settings domain.Settings) error {
+	return r.Apply(context.Background(), settings, func() error { return nil })
+}
+
+func (r *collectorRuntime) Apply(_ context.Context, settings domain.Settings, persist func() error) error {
 	r.configureMu.Lock()
 	defer r.configureMu.Unlock()
 	serial, err := strconv.ParseUint(settings.LoggerSerial, 10, 32)
 	if err != nil {
 		return errors.New("invalid logger serial")
 	}
-	reader := sofar.NewHardwareReader(sofar.HardwareConfig{Address: net.JoinHostPort(settings.LoggerHost, strconv.Itoa(settings.LoggerPort)), Serial: uint32(serial), SlaveID: byte(settings.ModbusSlave)})
+	reader := sofar.NewHardwareReader(sofar.HardwareConfig{Address: net.JoinHostPort(settings.LoggerHost, strconv.Itoa(settings.LoggerPort)), Serial: uint32(serial), SlaveID: byte(settings.ModbusSlave), ActiveMPPT: append([]int(nil), settings.ActiveMPPT...)})
 	next := collector.New(collector.Config{}, reader, r.store, r.hub)
 	r.mu.Lock()
 	if r.ctx == nil {
 		r.mu.Unlock()
 		return errors.New("collector runtime is not started")
 	}
-	oldCancel, oldDone := r.cancel, r.done
+	oldCancel, oldDone, oldCurrent, oldActive := r.cancel, r.done, r.current, r.active
 	r.mu.Unlock()
 	if oldCancel != nil {
 		oldCancel()
@@ -161,22 +199,48 @@ func (r *collectorRuntime) reconfigure(_ context.Context, settings domain.Settin
 			return errors.New("previous collector did not stop")
 		}
 	}
+	if persist != nil {
+		if err := persist(); err != nil {
+			if oldCancel != nil {
+				r.startCollectorLocked(oldCurrent, oldActive)
+			}
+			return err
+		}
+	}
 	r.mu.Lock()
 	if r.ctx == nil {
 		r.mu.Unlock()
 		return errors.New("collector runtime stopped")
 	}
+	r.mu.Unlock()
+	r.startCollectorLocked(next, settings)
+	return nil
+}
+
+func (r *collectorRuntime) startCollectorLocked(next *collector.Collector, settings domain.Settings) {
+	r.mu.Lock()
+	if r.ctx == nil {
+		r.mu.Unlock()
+		return
+	}
 	runCtx, cancel := context.WithCancel(r.ctx)
 	done := make(chan struct{})
-	r.current, r.cancel, r.done = next, cancel, done
+	r.current, r.cancel, r.done, r.active = next, cancel, done, settings
 	r.mu.Unlock()
 	go func() { defer close(done); _ = next.Run(runCtx) }()
-	return nil
+}
+
+func (r *collectorRuntime) activeConfiguration() domain.Settings {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	settings := r.active
+	settings.ActiveMPPT = append([]int(nil), settings.ActiveMPPT...)
+	return settings
 }
 
 func (r *collectorRuntime) components() api.ComponentStatus {
 	state := r.latest()
-	status := api.ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle"}
+	status := api.ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle", Weather: "unconfigured"}
 	r.mu.RLock()
 	running := r.current != nil
 	r.mu.RUnlock()

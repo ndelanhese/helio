@@ -16,6 +16,7 @@ const (
 	maximumIntegratedGap = 90 * time.Second
 	pruneBatchSize       = 10_000
 	sqliteTimeLayout     = "2006-01-02T15:04:05.000000000Z"
+	maximumSummaryRows   = 10_000
 )
 
 // TelemetryRepository stores telemetry using local calendar buckets while all
@@ -23,6 +24,105 @@ const (
 type TelemetryRepository struct {
 	db       *DB
 	location *time.Location
+}
+
+func (r *TelemetryRepository) HourlyHistory(ctx context.Context, from, to time.Time, _ *time.Location) ([]domain.AggregatePoint, error) {
+	rows, err := r.db.sql.QueryContext(ctx, `SELECT hour, energy_wh, peak_power_w, coverage_pct FROM hourly_summary
+		WHERE unixepoch(hour) >= unixepoch(?) AND unixepoch(hour) < unixepoch(?) ORDER BY unixepoch(hour) LIMIT ?`,
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), maximumSummaryRows+1)
+	if err != nil {
+		return nil, fmt.Errorf("query hourly history: %w", err)
+	}
+	defer rows.Close()
+	points := make([]domain.AggregatePoint, 0)
+	for rows.Next() {
+		var key string
+		var point domain.AggregatePoint
+		if err := rows.Scan(&key, &point.EnergyWh, &point.PeakPowerW, &point.CoveragePct); err != nil {
+			return nil, fmt.Errorf("scan hourly history: %w", err)
+		}
+		point.At, err = time.Parse(time.RFC3339, key)
+		if err != nil {
+			return nil, fmt.Errorf("parse hourly history: %w", err)
+		}
+		point.At = point.At.UTC()
+		points = append(points, point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate hourly history: %w", err)
+	}
+	return boundedSummary(points)
+}
+
+func (r *TelemetryRepository) DailyHistory(ctx context.Context, from, to time.Time, location *time.Location) ([]domain.AggregatePoint, error) {
+	if location == nil {
+		location = time.UTC
+	}
+	rows, err := r.db.sql.QueryContext(ctx, `SELECT day, energy_wh, peak_power_w, coverage_pct, productive_minutes FROM daily_summary
+		WHERE day >= ? AND day <= ? ORDER BY day LIMIT ?`, from.In(location).Format("2006-01-02"), to.In(location).Format("2006-01-02"), maximumSummaryRows+1)
+	if err != nil {
+		return nil, fmt.Errorf("query daily history: %w", err)
+	}
+	defer rows.Close()
+	points := make([]domain.AggregatePoint, 0)
+	for rows.Next() {
+		var key string
+		var point domain.AggregatePoint
+		if err := rows.Scan(&key, &point.EnergyWh, &point.PeakPowerW, &point.CoveragePct, &point.ProductiveMinutes); err != nil {
+			return nil, fmt.Errorf("scan daily history: %w", err)
+		}
+		at, err := time.ParseInLocation("2006-01-02", key, location)
+		if err != nil {
+			return nil, fmt.Errorf("parse daily history: %w", err)
+		}
+		point.At = at.UTC()
+		if !point.At.Before(from) && point.At.Before(to) {
+			points = append(points, point)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate daily history: %w", err)
+	}
+	return boundedSummary(points)
+}
+
+func (r *TelemetryRepository) MonthlyHistory(ctx context.Context, from, to time.Time, location *time.Location) ([]domain.AggregatePoint, error) {
+	if location == nil {
+		location = time.UTC
+	}
+	rows, err := r.db.sql.QueryContext(ctx, `SELECT month, energy_wh, peak_power_w, coverage_pct, productive_minutes FROM monthly_summary
+		WHERE month >= ? AND month <= ? ORDER BY month LIMIT ?`, from.In(location).Format("2006-01"), to.In(location).Format("2006-01"), maximumSummaryRows+1)
+	if err != nil {
+		return nil, fmt.Errorf("query monthly history: %w", err)
+	}
+	defer rows.Close()
+	points := make([]domain.AggregatePoint, 0)
+	for rows.Next() {
+		var key string
+		var point domain.AggregatePoint
+		if err := rows.Scan(&key, &point.EnergyWh, &point.PeakPowerW, &point.CoveragePct, &point.ProductiveMinutes); err != nil {
+			return nil, fmt.Errorf("scan monthly history: %w", err)
+		}
+		at, err := time.ParseInLocation("2006-01", key, location)
+		if err != nil {
+			return nil, fmt.Errorf("parse monthly history: %w", err)
+		}
+		point.At = at.UTC()
+		if !point.At.Before(from) && point.At.Before(to) {
+			points = append(points, point)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate monthly history: %w", err)
+	}
+	return boundedSummary(points)
+}
+
+func boundedSummary(points []domain.AggregatePoint) ([]domain.AggregatePoint, error) {
+	if len(points) > maximumSummaryRows {
+		return nil, errors.New("summary history exceeds bounded result limit")
+	}
+	return points, nil
 }
 
 type telemetryQueryer interface {

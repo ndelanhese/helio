@@ -17,9 +17,10 @@ import (
 const defaultHardwarePort = 8899
 
 type HardwareConfig struct {
-	Address string
-	Serial  uint32
-	SlaveID byte
+	Address    string
+	Serial     uint32
+	SlaveID    byte
+	ActiveMPPT []int
 }
 
 type HardwareReader struct {
@@ -76,6 +77,13 @@ func parseBoundedUint(value string, minimum, maximum uint64, name string) (uint6
 }
 
 func NewHardwareReader(config HardwareConfig) *HardwareReader {
+	activeMPPT := map[int]bool{1: true, 2: true}
+	if len(config.ActiveMPPT) > 0 {
+		activeMPPT = make(map[int]bool, len(config.ActiveMPPT))
+		for _, input := range config.ActiveMPPT {
+			activeMPPT[input] = true
+		}
+	}
 	client := solarman.NewClient(solarman.Config{
 		Address: config.Address,
 		Serial:  config.Serial,
@@ -83,7 +91,7 @@ func NewHardwareReader(config HardwareConfig) *HardwareReader {
 	}, nil)
 	return &HardwareReader{reader: NewReader(client, ReaderConfig{
 		SlaveID:    config.SlaveID,
-		ActiveMPPT: map[int]bool{1: true, 2: true},
+		ActiveMPPT: activeMPPT,
 	})}
 }
 

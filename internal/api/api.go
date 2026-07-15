@@ -31,7 +31,9 @@ type Dependencies struct {
 	Latest            func() collector.State
 	Hub               *collector.Hub
 	Reconfigure       func(context.Context, domain.Settings) error
+	ApplySettings     func(context.Context, domain.Settings, string) error
 	Components        func(context.Context) ComponentStatus
+	ShutdownContext   context.Context
 	AllowPublicLogger bool
 	Now               func() time.Time
 	SSEHeartbeat      time.Duration
@@ -51,6 +53,9 @@ func New(d Dependencies) http.Handler {
 	}
 	if d.SSEHeartbeat <= 0 {
 		d.SSEHeartbeat = 15 * time.Second
+	}
+	if d.ShutdownContext == nil {
+		d.ShutdownContext = context.Background()
 	}
 	a := &API{dependencies: d}
 	r := chi.NewRouter()

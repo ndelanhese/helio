@@ -29,6 +29,27 @@ func (db *DB) PutSettings(ctx context.Context, settings domain.Settings, allowPu
 	return putSettings(ctx, db.sql, settings, allowPublicLogger...)
 }
 
+// ApplySettings commits settings and their required administrative audit row
+// in the same SQLite transaction.
+func (db *DB) ApplySettings(ctx context.Context, settings domain.Settings, actorUserID string, allowPublicLogger bool) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin settings update: %w", err)
+	}
+	defer tx.Rollback()
+	if err := putSettings(ctx, tx, settings, allowPublicLogger); err != nil {
+		return err
+	}
+	detail := map[string]any{"fields": []string{"loggerHost", "loggerPort", "modbusSlave", "panelCount", "panelWattage", "activeMPPT", "latitude", "longitude", "timezone", "currency", "tariffMinorPerKWh", "retentionDays"}}
+	if err := insertAudit(ctx, tx, actorUserID, "settings.update", detail); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit settings update: %w", err)
+	}
+	return nil
+}
+
 func putSettings(ctx context.Context, db execer, settings domain.Settings, allowPublicLogger ...bool) error {
 	normalized, err := config.ValidateSettings(settings, allowPublicLogger...)
 	if err != nil {

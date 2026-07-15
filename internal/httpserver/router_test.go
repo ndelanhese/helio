@@ -31,7 +31,7 @@ func TestAPIMountAndReadinessOnlyTracksDatabase(t *testing.T) {
 	apiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health/components" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"logger":"offline"}`))
+			_, _ = w.Write([]byte(`{"logger":"offline","weather":"unconfigured"}`))
 			return
 		}
 		_, _ = w.Write([]byte("api"))
@@ -39,7 +39,7 @@ func TestAPIMountAndReadinessOnlyTracksDatabase(t *testing.T) {
 	handler := httpserver.New(httpserver.Dependencies{API: apiHandler, Ready: func() error { return errors.New("db down") }})
 	components := httptest.NewRecorder()
 	handler.ServeHTTP(components, httptest.NewRequest(http.MethodGet, "/health/components", nil))
-	if components.Code != http.StatusOK || components.Body.String() != `{"logger":"offline"}` {
+	if components.Code != http.StatusOK || components.Body.String() != `{"logger":"offline","weather":"unconfigured"}` {
 		t.Fatalf("components: %d %s", components.Code, components.Body.String())
 	}
 	ready := httptest.NewRecorder()
