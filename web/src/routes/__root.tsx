@@ -3,8 +3,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 
 import { bootstrapStatusQuery, sessionQuery } from '../api/queries'
-import { resolveAppAccess } from '../app/auth-gate'
+import { classifySessionResult, resolveAppAccess } from '../app/auth-gate'
 import { AppShell } from '../components/layout/AppShell'
+import { SessionUnavailable } from '../components/layout/SessionUnavailable'
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -15,8 +16,9 @@ function RootLayout() {
   const bootstrap = useQuery(bootstrapStatusQuery)
   const needsSession = bootstrap.data?.open === false && path !== '/login' && path !== '/bootstrap'
   const session = useQuery({ ...sessionQuery, enabled: needsSession })
+  const sessionAccess = classifySessionResult(session.isSuccess, session.error)
   const decision = bootstrap.data
-    ? resolveAppAccess(path, bootstrap.data.open, needsSession ? (session.isPending ? null : session.isSuccess) : false)
+    ? resolveAppAccess(path, bootstrap.data.open, needsSession ? (sessionAccess === 'loading' ? null : sessionAccess === 'authenticated') : false)
     : 'loading'
 
   useEffect(() => {
@@ -24,7 +26,8 @@ function RootLayout() {
   }, [decision])
 
   if (bootstrap.isError) return <main className="route-state">Não foi possível verificar o acesso ao Helio.</main>
+  if (needsSession && sessionAccess === 'unavailable') return <SessionUnavailable onRetry={() => { void session.refetch() }} />
   if (decision !== 'render') return <main aria-busy="true" className="route-state">Preparando o Helio…</main>
   if (path === '/login' || path === '/bootstrap') return <Outlet />
-  return <AppShell currentPath={path}><Outlet /></AppShell>
+  return <AppShell connectionState="unavailable" currentPath={path}><Outlet /></AppShell>
 }

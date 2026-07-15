@@ -15,8 +15,12 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null)
 
 function storedTheme(): ThemeChoice {
-  const value = localStorage.getItem(STORAGE_KEY)
-  return value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
+  try {
+    const value = localStorage.getItem(STORAGE_KEY)
+    return value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
+  } catch {
+    return 'system'
+  }
 }
 
 function systemTheme(): ResolvedTheme {
@@ -44,7 +48,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ThemeContextValue>(() => ({
     resolvedTheme,
     setTheme: (nextTheme) => {
-      localStorage.setItem(STORAGE_KEY, nextTheme)
+      try {
+        localStorage.setItem(STORAGE_KEY, nextTheme)
+      } catch {
+        // Storage can be unavailable in hardened/private browser contexts.
+      }
       setThemeState(nextTheme)
     },
     theme,

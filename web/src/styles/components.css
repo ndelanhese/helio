@@ -1,4 +1,4 @@
-.app-shell { max-width: 1440px; min-height: 100vh; margin: 0 auto; padding: 0 var(--space-4) 104px; }
+.app-shell { max-width: 1440px; min-height: 100vh; margin: 0 auto; padding: 0 var(--space-4) calc(104px + env(safe-area-inset-bottom)); }
 
 .masthead {
   display: flex;
@@ -8,7 +8,7 @@
   border-bottom: 1px solid var(--border);
 }
 
-.wordmark { display: flex; align-items: baseline; gap: var(--space-3); text-decoration: none; }
+.wordmark { display: flex; min-height: 44px; align-items: center; gap: var(--space-3); text-decoration: none; }
 .wordmark span { font-family: var(--font-editorial); font-size: 1.75rem; letter-spacing: -0.04em; }
 .wordmark small { color: var(--muted); font-size: .68rem; letter-spacing: .13em; text-transform: uppercase; }
 .masthead-actions { display: flex; align-items: center; gap: var(--space-3); }
@@ -23,13 +23,15 @@
 .connection-badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .connection-badge.is-offline i, .connection-badge.is-stale i { background: var(--danger); }
 .connection-badge.is-reconnecting i { background: var(--sun); }
+.connection-badge.is-loading i, .connection-badge.is-unavailable i { background: var(--muted); }
+.metric, .tabular-nums { font-variant-numeric: tabular-nums; }
 .shell-body main { min-width: 0; padding: var(--space-6) 0; }
 .route-state { display: grid; min-height: 100vh; margin: 0; place-items: center; padding: var(--space-5); color: var(--muted); }
 .primary-nav {
   position: fixed;
   z-index: 10;
   right: var(--space-3);
-  bottom: var(--space-3);
+  bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
   left: var(--space-3);
   display: grid;
   grid-template-columns: repeat(4, 1fr);

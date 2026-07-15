@@ -17,6 +17,7 @@ export interface AuthCredentials {
 }
 
 export interface Session {
+  csrfToken: string
   expiresAt: string
   userId: string
   username: string

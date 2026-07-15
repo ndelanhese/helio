@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
 
-import { ConnectionBadge } from './ConnectionBadge'
+import { ConnectionBadge, type ConnectionState } from './ConnectionBadge'
 import { PrimaryNav } from './PrimaryNav'
 import { ThemeToggle } from './ThemeToggle'
 
-export function AppShell({ children, currentPath }: { children?: ReactNode; currentPath?: string }) {
+export function AppShell({ children, connectionState, currentPath }: { children?: ReactNode; connectionState: ConnectionState; currentPath?: string }) {
   return (
     <div className="app-shell">
       <a className="skip-link" href="#conteudo">Pular para o conteúdo</a>
@@ -14,7 +14,7 @@ export function AppShell({ children, currentPath }: { children?: ReactNode; curr
           <small>observatório solar</small>
         </a>
         <div className="masthead-actions">
-          <ConnectionBadge />
+          <ConnectionBadge state={connectionState} />
           <ThemeToggle />
         </div>
       </header>
