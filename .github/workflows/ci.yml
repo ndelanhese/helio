@@ -22,7 +22,10 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Verify workflow contracts
-        run: ruby scripts/workflow_contract_test.rb
+        run: |
+          ruby scripts/workflow_contract_test.rb
+          ruby scripts/release_preflight_test.rb
+          ruby scripts/validate_e2e_artifacts_test.rb
       - name: Test with race detector
         run: go test -race ./...
       - name: Vet
@@ -66,36 +69,16 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
       - name: Run browser acceptance tests
         run: make test-e2e
-      - name: Redact and scan failed browser artifacts
-        id: privacy-scan
+      - name: Structurally validate failed browser traces
+        id: artifact-validator
         if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail
-          results=web/test-results
-          [ -d "$results" ] || exit 0
-          pattern='password|authorization|cookie|csrf|token|logger.?serial|192\.168\.|10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+'
-          scan_dir="$(mktemp -d)"
-          trap 'rm -rf "$scan_dir"' EXIT
-          trace_index=0
-          while IFS= read -r -d '' trace; do
-            trace_index=$((trace_index + 1))
-            extracted="$scan_dir/trace-$trace_index.txt"
-            unzip -p "$trace" > "$extracted"
-            if LC_ALL=C grep -aEiq "$pattern" "$extracted"; then
-              rm -f "$trace"
-            fi
-          done < <(find "$results" -type f -name 'trace.zip' -print0)
-          if LC_ALL=C grep -RInaE "$pattern" "$results"; then
-            echo "E2E artifact privacy scan failed" >&2
-            exit 1
-          fi
+        run: scripts/validate-e2e-artifacts.sh web/test-results
       - name: Upload privacy-scanned failure artifacts
-        if: failure() && steps.privacy-scan.outcome == 'success'
+        if: failure() && steps.artifact-validator.outputs.has_artifacts == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-failure-${{ github.run_id }}-${{ github.run_attempt }}
-          path: web/test-results
+          path: web/test-results/**/trace.zip
           if-no-files-found: ignore
           retention-days: 7
 

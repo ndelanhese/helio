@@ -77,6 +77,8 @@ class WorkflowContractTest < Minitest::Test
     assert_includes backend, "go test -race ./..."
     assert_includes backend, "go vet ./..."
     assert_includes backend, "ruby scripts/workflow_contract_test.rb"
+    assert_includes backend, "ruby scripts/release_preflight_test.rb"
+    assert_includes backend, "ruby scripts/validate_e2e_artifacts_test.rb"
     assert_includes frontend, "npm ci"
     assert_includes frontend, "npm test -- --run"
     assert_includes frontend, "npm run typecheck"
@@ -91,17 +93,16 @@ class WorkflowContractTest < Minitest::Test
 
     assert_includes commands, "playwright install --with-deps chromium webkit"
     assert_includes commands, "make test-e2e"
-    scan_index = e2e_steps.index { |step| step["id"] == "privacy-scan" }
+    scan_index = e2e_steps.index { |step| step["id"] == "artifact-validator" }
     upload_index = e2e_steps.index { |step| step["uses"]&.start_with?("actions/upload-artifact@") }
     refute_nil scan_index, "E2E failures must be scanned before upload"
     refute_nil upload_index, "E2E failure artifacts must be uploaded"
     assert_operator scan_index, :<, upload_index
     assert_equal "failure()", e2e_steps.fetch(scan_index).fetch("if")
-    assert_equal "failure() && steps.privacy-scan.outcome == 'success'", e2e_steps.fetch(upload_index).fetch("if")
+    assert_equal "failure() && steps.artifact-validator.outputs.has_artifacts == 'true'", e2e_steps.fetch(upload_index).fetch("if")
     scan = e2e_steps.fetch(scan_index).fetch("run")
-    assert_match(/password|cookie|csrf|token|serial|192\\\.168\\\./i, scan)
-    refute_match(/unzip[^\n]*\|[^\n]*grep/, scan, "pipefail can turn a matching trace into a false-negative via SIGPIPE")
-    assert_equal "web/test-results", e2e_steps.fetch(upload_index).fetch("with").fetch("path")
+    assert_equal "scripts/validate-e2e-artifacts.sh web/test-results", scan
+    assert_equal "web/test-results/**/trace.zip", e2e_steps.fetch(upload_index).fetch("with").fetch("path")
   end
 
   def test_container_job_builds_and_smoke_tests_the_image
@@ -119,7 +120,7 @@ class WorkflowContractTest < Minitest::Test
     assert_equal ["main"], events.fetch("push").fetch("branches")
     assert events.key?("pull_request")
     assert events.key?("schedule")
-    assert_equal({ "contents" => "read", "security-events" => "write", "actions" => "read" }, codeql["permissions"])
+    assert_equal({ "contents" => "read", "security-events" => "write" }, codeql["permissions"])
     assert_equal ["codeql"], codeql.fetch("jobs").keys
     init = steps(codeql, "codeql").find { |step| step["uses"]&.start_with?("github/codeql-action/init@") }
     refute_nil init
@@ -135,11 +136,12 @@ class WorkflowContractTest < Minitest::Test
     assert_equal "release", release["name"]
     assert_equal ["v*"], events.fetch("push").fetch("tags")
     assert_equal({}, release["permissions"])
-    assert_equal ["verify"], Array(jobs.dig("publish", "needs"))
-    assert_equal ["publish"], Array(jobs.dig("github-release", "needs"))
+    assert_equal({ "group" => "release-${{ github.ref_name }}", "cancel-in-progress" => false }, release["concurrency"])
+    assert_equal %w[release verify], jobs.keys.sort
+    assert_equal ["verify"], Array(jobs.dig("release", "needs"))
     assert_equal({ "contents" => "read" }, jobs.dig("verify", "permissions"))
-    assert_equal({ "contents" => "read", "packages" => "write", "id-token" => "write" }, jobs.dig("publish", "permissions"))
-    assert_equal({ "contents" => "write" }, jobs.dig("github-release", "permissions"))
+    assert_equal({ "contents" => "write", "packages" => "write", "id-token" => "write", "attestations" => "write" }, jobs.dig("release", "permissions"))
+    assert_equal "release", jobs.dig("release", "environment")
 
     verify = run_commands(release, "verify")
     assert_match(/\^v\(0\|\[1-9\]\[0-9\]\*\)\\\.\(0\|\[1-9\]\[0-9\]\*\)\\\.\(0\|\[1-9\]\[0-9\]\*\)\$/, verify)
@@ -150,15 +152,42 @@ class WorkflowContractTest < Minitest::Test
     %w[typecheck lint build].each { |command| assert_includes verify, "npm run #{command}" }
     assert_includes verify, "make test-e2e"
     assert_match(/HELIO_IMAGE=.*make smoke/, verify)
+    checkout = steps(release, "verify").find { |step| step["uses"]&.start_with?("actions/checkout@") }
+    assert_equal 0, checkout.dig("with", "fetch-depth")
+    assert_includes verify, 'git cat-file -t "refs/tags/$tag"'
+    assert_includes verify, 'refs/tags/$tag^{}'
+    assert_match(/remote.*(?:commit|sha).*GITHUB_SHA|GITHUB_SHA.*remote.*(?:commit|sha)/i, verify)
+    assert_includes verify, "git fetch --no-tags origin main:refs/remotes/origin/main"
+    assert_includes verify, 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
 
     assert_includes raw, "ghcr.io/ndelanhese/helio"
     assert_includes raw, "linux/amd64,linux/arm64"
     assert_includes raw, "sbom: true"
     assert_match(/provenance:\s*(?:mode=max|true)/, raw)
-    assert_match(/digest:\s*\$\{\{\s*steps\.build\.outputs\.digest\s*\}\}/, raw)
+    assert_includes raw, "scripts/release-preflight.sh"
     assert_includes raw, "sigstore/cosign-installer@"
-    assert_match(/cosign sign[^\n]*\$\{\{\s*steps\.build\.outputs\.digest\s*\}\}/, raw)
-    assert_match(/gh release create[^\n]*--notes-file CHANGELOG\.md/, raw)
+    assert_match(/cosign sign[^\n]*IMAGE_DIGEST/, raw)
+    assert_includes raw, "cosign verify-attestation --type https://slsa.dev/provenance/v1"
+    assert_match(/gh release create[^\n]*--verify-tag[^\n]*--notes-file/, raw)
+    assert_match(/Helio-Image-Digest:/, raw)
+    assert_match(/imagetools create/, raw)
+    refute_match(/gh release (?:edit|delete)|--force|--overwrite/, raw)
+    release_steps = steps(release, "release")
+    preflight_index = release_steps.index { |step| step["id"] == "preflight" }
+    existing_verifier = release_steps.find { |step| step["run"]&.include?("cosign verify-attestation") }
+    assert_equal "steps.preflight.outputs.state == 'existing'", existing_verifier["if"]
+    mutating_steps = release_steps.select do |step|
+      step["uses"]&.match?(%r{(?:docker/build-push-action|actions/attest-build-provenance)@}) ||
+        step["run"]&.match?(/cosign sign|gh release create|imagetools create/)
+    end
+    assert_equal 5, mutating_steps.length
+    mutating_steps.each do |step|
+      assert_equal "steps.preflight.outputs.state == 'new'", step["if"]
+      assert_operator preflight_index, :<, release_steps.index(step)
+    end
+    steps(release, "verify").concat(release_steps).each do |step|
+      refute_match(/\$\{\{\s*github\.(?:event|ref_name|sha)/, step["run"].to_s, "untrusted context must enter shell through environment variables")
+    end
     refute_includes raw, "pull_request"
   end
 
@@ -204,6 +233,12 @@ class WorkflowContractTest < Minitest::Test
     assert_match(/acknowledge.*business days/i, security)
     assert_match(/status update.*business days/i, security)
     assert_match(/Supported versions/i, security)
+    assert_match(/must be configured as required status checks/i, contributing)
+    assert_match(/Settings.*Rules.*Rulesets/im, contributing)
+    assert_match(/Settings.*Environments.*release/im, contributing)
+    assert_match(/required reviewer/i, contributing)
+    assert_match(/tag ruleset/i, contributing)
+    assert_match(/git tag -a v[0-9]/i, contributing)
   end
 
   def test_workflows_do_not_download_and_execute_shell_code

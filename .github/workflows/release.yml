@@ -6,6 +6,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     runs-on: ubuntu-24.04
@@ -13,11 +17,22 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Require a strict stable SemVer tag
+        with:
+          fetch-depth: 0
+      - name: Verify trusted annotated release tag
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          tag="$GITHUB_REF_NAME"
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$(git cat-file -t "refs/tags/$tag")" == tag ]]
+          local_commit="$(git rev-parse "refs/tags/$tag^{}")"
+          [[ "$local_commit" == "$GITHUB_SHA" ]]
+          read -r remote_commit remote_ref < <(git ls-remote --tags origin "refs/tags/$tag^{}")
+          [[ "$remote_ref" == "refs/tags/$tag^{}" ]]
+          [[ "$remote_commit" == "$GITHUB_SHA" ]]
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -54,19 +69,23 @@ jobs:
       - name: Container build and smoke test
         run: HELIO_IMAGE=helio:release-verify IMAGE=helio:release-verify make smoke
 
-  publish:
+  release:
     needs: verify
+    environment: release
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
+      attestations: write
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.preflight.outputs.digest || steps.build.outputs.digest }}
     env:
       IMAGE_NAME: ghcr.io/ndelanhese/helio
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Log in to GHCR
@@ -75,45 +94,76 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Derive release tags
-        id: metadata
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-      - name: Publish multi-architecture image
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Check immutable release state
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-preflight.sh
+      - name: Verify existing signature and provenance
+        if: steps.preflight.outputs.state == 'existing'
+        env:
+          VERIFIED_DIGEST: ${{ steps.preflight.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="https://github.com/ndelanhese/helio/.github/workflows/release.yml@refs/tags/$GITHUB_REF_NAME"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "https://token.actions.githubusercontent.com" "${IMAGE_NAME}@${VERIFIED_DIGEST}"
+          cosign verify-attestation --type https://slsa.dev/provenance/v1 --certificate-identity "$identity" --certificate-oidc-issuer "https://token.actions.githubusercontent.com" "${IMAGE_NAME}@${VERIFIED_DIGEST}"
+      - name: Publish immutable multi-architecture image
+        if: steps.preflight.outputs.state == 'new'
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
+          tags: ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          labels: org.opencontainers.image.version=${{ github.ref_name }}
           sbom: true
           provenance: mode=max
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: Sign published digest with GitHub OIDC
+      - name: Attest published provenance
+        if: steps.preflight.outputs.state == 'new'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Sign immutable image digest
+        if: steps.preflight.outputs.state == 'new'
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         shell: bash
-        run: cosign sign --yes "${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
-
-  github-release:
-    needs: publish
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Create release from changelog
+        run: cosign sign --yes "${IMAGE_NAME}@${IMAGE_DIGEST}"
+      - name: Create immutable GitHub Release
+        if: steps.preflight.outputs.state == 'new'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "Helio $GITHUB_REF_NAME" --notes-file CHANGELOG.md
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/helio-release-notes.md"
+          cp CHANGELOG.md "$notes"
+          printf '\nHelio-Image-Digest: %s\n' "$IMAGE_DIGEST" >> "$notes"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Helio $GITHUB_REF_NAME" --notes-file "$notes"
+      - name: Advance stable moving tags
+        if: steps.preflight.outputs.state == 'new'
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          minor="${version%.*}"
+          docker buildx imagetools create --tag "${IMAGE_NAME}:${minor}" --tag "${IMAGE_NAME}:latest" "${IMAGE_NAME}@${IMAGE_DIGEST}"
       - name: Report immutable image digest
         env:
-          IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.preflight.outputs.digest }}
+          PUBLISHED_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
         run: |
-          printf 'Published image digest: **%s**\n' "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          digest="${EXISTING_DIGEST:-$PUBLISHED_DIGEST}"
+          printf 'Immutable image digest: **%s**\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
