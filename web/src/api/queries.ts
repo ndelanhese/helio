@@ -69,3 +69,12 @@ export function login(payload: LoginPayload) {
 export function createBootstrap(payload: BootstrapPayload) {
   return api.request<AuthCredentials>('/bootstrap', { method: 'POST', body: payload })
 }
+
+export function updateSettings(payload: Settings) {
+  const { installedPowerW: _derived, ...settings } = payload
+  return api.request<Settings>('/settings', { method: 'PUT', body: settings })
+}
+
+export function downloadBackup() {
+  return api.download('/data/backup')
+}

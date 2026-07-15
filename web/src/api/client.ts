@@ -89,6 +89,27 @@ export class ApiClient {
     }
     return data as T
   }
+
+  async download(path: string): Promise<{ blob: Blob; filename: string }> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/vnd.sqlite3' },
+    })
+    if (response.status === 401) handleUnauthorized()
+    if (!response.ok) {
+      let code = 'request_failed'
+      try {
+        const envelope = await response.json() as Partial<ApiErrorEnvelope>
+        code = envelope.error?.code ?? code
+      } catch {
+        // Binary and empty error responses still use a safe local message.
+      }
+      throw new ApiError(code, response.status, 'Não foi possível baixar o arquivo')
+    }
+    const disposition = response.headers.get('Content-Disposition') ?? ''
+    const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? 'helio-backup.db'
+    return { blob: await response.blob(), filename }
+  }
 }
 
 function parseRetryAfter(value: string | null) {

@@ -159,9 +159,15 @@ export interface AlertsResponse {
 }
 
 export interface ComponentHealth {
+  analysis?: string
+  alerts?: string
   collector: string
+  collectorUpdatedAt?: string
   database: string
+  databaseUpdatedAt?: string
+  jobs?: string
   logger: string
+  loggerUpdatedAt?: string
   weather: 'available' | 'stale' | 'unavailable'
   weatherFetchedAt?: string
   weatherUpdatedAt?: string

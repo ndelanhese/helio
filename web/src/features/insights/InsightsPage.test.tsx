@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { renderApp } from '../../test/render'
 import { server } from '../../test/server'
 import { InsightsPage } from './InsightsPage'
+import { InsightCard } from './InsightCard'
 
 const settings = {
   activeMPPT: [1], currency: 'BRL', latitude: -23.5, longitude: -46.6,
@@ -15,6 +16,22 @@ const settings = {
 }
 
 describe('InsightsPage', () => {
+  it.each([
+    ['low', 'Confiança baixa'],
+    ['medium', 'Confiança média'],
+    ['high', 'Confiança alta'],
+  ] as const)('labels %s confidence without overstating the conclusion', (confidence, label) => {
+    renderApp(<InsightCard insight={{
+      version: 'v1', day: '2026-07-14', actualWh: 7_200, expectedWh: 10_000, ratio: 0.72,
+      confidence, qualifying: true, evidence: [], observationWindow: { qualifyingDays: 10, minimumDays: 7 },
+      trends: {
+        peakPower: { direction: 'stable', current: 2_600, previous: 2_600, delta: 0, deltaPct: 0, coveragePct: 100, windowDays: 7 },
+        productiveMinutes: { direction: 'stable', current: 300, previous: 300, delta: 0, deltaPct: 0, coveragePct: 100, windowDays: 7 },
+      },
+      generatedEnergyValue: { minor: 684, currency: 'BRL', label: 'valor estimado da energia gerada', estimate: true },
+    }} />)
+    expect(screen.getByText(label)).toBeVisible()
+  })
   it('explains low confidence, evidence, observation window, active alerts and recovery', async () => {
     server.use(
       http.get('/api/v1/settings', () => HttpResponse.json(settings)),
