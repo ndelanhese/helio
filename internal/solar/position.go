@@ -77,7 +77,7 @@ func solarEventUTC(day, latitude, longitude float64, sunrise bool) (float64, err
 	return normalizeHours(localMeanTime - lngHour), nil
 }
 
-// Elevation returns the apparent solar elevation in degrees at an instant.
+// Elevation returns the geometric solar elevation in degrees at an instant.
 func Elevation(at time.Time, latitude, longitude float64) float64 {
 	utc := at.UTC()
 	days := 365.0

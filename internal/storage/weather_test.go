@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,11 +27,87 @@ func TestWeatherCacheTransactionalUTCUpsert(t *testing.T) {
 	if err := repo.Upsert(ctx, updated, "open-meteo", fetched.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	hours, gotFetched, source, err := repo.Load(ctx, hour.Add(-time.Hour), hour.Add(3*time.Hour))
+	cache, err := repo.Load(ctx, hour.Add(-time.Hour), hour.Add(3*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hours) != 2 || hours[0].Time.Location() != time.UTC || hours[0].Time.Minute() != 0 || hours[0].CloudCoverPct != 30 || source != "open-meteo" || !gotFetched.Equal(fetched.Add(time.Minute).UTC()) {
-		t.Fatalf("hours=%+v fetched=%s source=%s", hours, gotFetched, source)
+	if len(cache.Hours) != 2 || cache.Hours[0].Time.Location() != time.UTC || cache.Hours[0].Time.Minute() != 0 || cache.Hours[0].CloudCoverPct != 30 || cache.Source != "open-meteo" || !cache.FetchedAt.Equal(fetched.Add(time.Minute).UTC()) || !cache.Hours[0].FetchedAt.Equal(fetched.Add(time.Minute).UTC()) {
+		t.Fatalf("cache=%+v", cache)
+	}
+}
+
+type controlledWeatherProvider struct {
+	hours   []weather.Hour
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *controlledWeatherProvider) Hourly(ctx context.Context, _ weather.Request) ([]weather.Hour, error) {
+	p.once.Do(func() { close(p.started) })
+	select {
+	case <-p.release:
+		return p.hours, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (p *controlledWeatherProvider) Source() string { return "test-provider" }
+
+func TestWeatherCacheOlderCompletionCannotOverwriteNewer(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "weather-order.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewWeatherRepository(db)
+	hour := time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC)
+	newFetched := hour.Add(20 * time.Minute)
+	if err := repo.Upsert(ctx, []weather.Hour{{Time: hour, CloudCoverPct: 10, IrradianceWM2: 700}}, "new", newFetched); err != nil {
+		t.Fatal(err)
+	}
+	oldDone := make(chan error, 1)
+	go func() {
+		oldDone <- repo.Upsert(ctx, []weather.Hour{{Time: hour, CloudCoverPct: 90, IrradianceWM2: 50}}, "old", newFetched.Add(-time.Minute))
+	}()
+	if err := <-oldDone; err != nil {
+		t.Fatal(err)
+	}
+	cache, err := repo.Load(ctx, hour, hour.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cache.Hours) != 1 || cache.Hours[0].CloudCoverPct != 10 || cache.Source != "new" || !cache.FetchedAt.Equal(newFetched) {
+		t.Fatalf("older completion overwrote cache: %+v", cache)
+	}
+}
+
+func TestWeatherCacheConcurrentOlderRefreshReturnsNewerDatabaseWinner(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "weather-concurrent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewWeatherRepository(db)
+	hour := time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC)
+	request := weather.Request{Start: hour, End: hour.Add(time.Hour)}
+	oldProvider := &controlledWeatherProvider{hours: []weather.Hour{{Time: hour, CloudCoverPct: 90, IrradianceWM2: 50}}, started: make(chan struct{}), release: make(chan struct{})}
+	newProvider := &controlledWeatherProvider{hours: []weather.Hour{{Time: hour, CloudCoverPct: 10, IrradianceWM2: 700}}, started: make(chan struct{}), release: make(chan struct{})}
+	close(newProvider.release)
+	oldService := weather.NewService(repo, oldProvider, func() time.Time { return hour.Add(10 * time.Minute) })
+	newService := weather.NewService(repo, newProvider, func() time.Time { return hour.Add(20 * time.Minute) })
+	oldResult := make(chan weather.Result, 1)
+	go func() { oldResult <- oldService.Get(ctx, request) }()
+	<-oldProvider.started
+	newResult := newService.Get(ctx, request)
+	close(oldProvider.release)
+	lateResult := <-oldResult
+	for name, result := range map[string]weather.Result{"new": newResult, "late-old": lateResult} {
+		if len(result.Hours) != 1 || result.Hours[0].CloudCoverPct != 10 || result.Hours[0].IrradianceWM2 != 700 || !result.FetchedAt.Equal(hour.Add(20*time.Minute)) {
+			t.Fatalf("%s result did not use database winner: %+v", name, result)
+		}
 	}
 }

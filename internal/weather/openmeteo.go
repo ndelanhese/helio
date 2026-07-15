@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ const (
 	openMeteoTimeout = 5 * time.Second
 	maxForecastDays  = 7
 	maxResponseBytes = 1 << 20
+	maxIrradianceWM2 = 2000
 )
 
 type OpenMeteo struct {
@@ -49,6 +51,9 @@ func (p *OpenMeteo) Hourly(ctx context.Context, request Request) ([]Hour, error)
 	}
 	if end.Before(start) || end.Sub(start) > maxForecastDays*24*time.Hour {
 		return nil, errors.New("weather request date range is invalid")
+	}
+	if !finiteInRange(request.Latitude, -90, 90) || !finiteInRange(request.Longitude, -180, 180) {
+		return nil, errors.New("weather request coordinates are invalid")
 	}
 	if _, err := url.ParseRequestURI(p.baseURL); err != nil {
 		return nil, errors.New("weather provider URL is invalid")
@@ -100,15 +105,35 @@ func (p *OpenMeteo) Hourly(ctx context.Context, request Request) ([]Hour, error)
 	if len(payload.Hourly.Time) != len(payload.Hourly.CloudCover) || len(payload.Hourly.Time) != len(payload.Hourly.ShortwaveRadiation) {
 		return nil, errors.New("weather provider returned inconsistent hourly data")
 	}
-	hours := make([]Hour, len(payload.Hourly.Time))
+	hours := make([]Hour, 0, len(payload.Hourly.Time))
+	var previous time.Time
 	for i, rawTime := range payload.Hourly.Time {
 		at, err := time.Parse("2006-01-02T15:04", rawTime)
 		if err != nil {
 			return nil, errors.New("weather provider returned invalid hourly timestamp")
 		}
-		hours[i] = Hour{Time: at.UTC(), CloudCoverPct: payload.Hourly.CloudCover[i], IrradianceWM2: payload.Hourly.ShortwaveRadiation[i]}
+		at = at.UTC()
+		if at.Minute() != 0 || at.Second() != 0 || at.Nanosecond() != 0 || (!previous.IsZero() && !at.After(previous)) {
+			return nil, errors.New("weather provider returned unordered hourly timestamps")
+		}
+		previous = at
+		if payload.Hourly.CloudCover[i] == nil || payload.Hourly.ShortwaveRadiation[i] == nil {
+			return nil, errors.New("weather provider returned missing hourly values")
+		}
+		cloud := *payload.Hourly.CloudCover[i]
+		irradiance := *payload.Hourly.ShortwaveRadiation[i]
+		if !finiteInRange(cloud, 0, 100) || !finiteInRange(irradiance, 0, maxIrradianceWM2) {
+			return nil, errors.New("weather provider returned invalid hourly values")
+		}
+		if !at.Before(start) && at.Before(end) {
+			hours = append(hours, Hour{Time: at, CloudCoverPct: cloud, IrradianceWM2: irradiance})
+		}
 	}
 	return hours, nil
+}
+
+func finiteInRange(value, minimum, maximum float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= minimum && value <= maximum
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {
@@ -136,7 +161,7 @@ type openMeteoHourlyUnits struct {
 	ShortwaveRadiation string `json:"shortwave_radiation"`
 }
 type openMeteoHourly struct {
-	Time               []string  `json:"time"`
-	CloudCover         []float64 `json:"cloud_cover"`
-	ShortwaveRadiation []float64 `json:"shortwave_radiation"`
+	Time               []string   `json:"time"`
+	CloudCover         []*float64 `json:"cloud_cover"`
+	ShortwaveRadiation []*float64 `json:"shortwave_radiation"`
 }

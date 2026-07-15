@@ -110,6 +110,98 @@ func TestOpenMeteoUsesInjectedClockForOmittedDateBounds(t *testing.T) {
 	}
 }
 
+func TestOpenMeteoFiltersFullUTCDatesToRequestedLocalDay(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"hourly":{"time":["2024-06-21T02:00","2024-06-21T03:00","2024-06-21T04:00","2024-06-22T02:00","2024-06-22T03:00"],"cloud_cover":[1,2,3,4,5],"shortwave_radiation":[0,10,20,30,40]}}`)
+	}))
+	defer server.Close()
+	brt := time.FixedZone("BRT", -3*60*60)
+	start := time.Date(2024, 6, 21, 0, 0, 0, 0, brt)
+	end := start.Add(24 * time.Hour)
+	hours, err := NewOpenMeteo(server.URL, server.Client(), time.Now).Hourly(context.Background(), Request{Start: start, End: end})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hours) != 3 || !hours[0].Time.Equal(start.UTC()) || !hours[2].Time.Equal(end.UTC().Add(-time.Hour)) {
+		t.Fatalf("filtered hours=%+v", hours)
+	}
+}
+
+func TestOpenMeteoRejectsInvalidHourlyValuesAndOrdering(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ name, body string }{
+		{"null cloud", `{"hourly":{"time":["2024-06-21T12:00"],"cloud_cover":[null],"shortwave_radiation":[1]}}`},
+		{"null irradiance", `{"hourly":{"time":["2024-06-21T12:00"],"cloud_cover":[1],"shortwave_radiation":[null]}}`},
+		{"cloud below zero", `{"hourly":{"time":["2024-06-21T12:00"],"cloud_cover":[-1],"shortwave_radiation":[1]}}`},
+		{"cloud above 100", `{"hourly":{"time":["2024-06-21T12:00"],"cloud_cover":[101],"shortwave_radiation":[1]}}`},
+		{"irradiance below zero", `{"hourly":{"time":["2024-06-21T12:00"],"cloud_cover":[1],"shortwave_radiation":[-1]}}`},
+		{"irradiance implausible", `{"hourly":{"time":["2024-06-21T12:00"],"cloud_cover":[1],"shortwave_radiation":[2001]}}`},
+		{"duplicate timestamp", `{"hourly":{"time":["2024-06-21T12:00","2024-06-21T12:00"],"cloud_cover":[1,2],"shortwave_radiation":[1,2]}}`},
+		{"descending timestamp", `{"hourly":{"time":["2024-06-21T13:00","2024-06-21T12:00"],"cloud_cover":[1,2],"shortwave_radiation":[1,2]}}`},
+		{"non-hour timestamp", `{"hourly":{"time":["2024-06-21T12:30"],"cloud_cover":[1],"shortwave_radiation":[1]}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer server.Close()
+			_, err := NewOpenMeteo(server.URL, server.Client(), time.Now).Hourly(context.Background(), Request{Start: time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC), End: time.Date(2024, 6, 21, 14, 0, 0, 0, time.UTC)})
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestOpenMeteoRejectsOversizedAndTrailingJSON(t *testing.T) {
+	t.Parallel()
+	tests := []string{
+		`{"hourly":{"time":[],"cloud_cover":[],"shortwave_radiation":[]}} {}`,
+		`{"hourly":{"time":[],"cloud_cover":[],"shortwave_radiation":[]},"padding":"` + strings.Repeat("x", maxResponseBytes) + `"}`,
+	}
+	for _, body := range tests {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		}))
+		_, err := NewOpenMeteo(server.URL, server.Client(), time.Now).Hourly(context.Background(), Request{})
+		server.Close()
+		if err == nil {
+			t.Fatal("expected bounded strict JSON error")
+		}
+	}
+}
+
+func TestOpenMeteoHonorsCallerCancellation(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewOpenMeteo(server.URL, server.Client(), time.Now).Hourly(ctx, Request{})
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected cancellation error class")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provider ignored caller cancellation")
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

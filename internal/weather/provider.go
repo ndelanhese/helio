@@ -17,6 +17,8 @@ type Hour struct {
 	Time          time.Time
 	CloudCoverPct float64
 	IrradianceWM2 float64
+	Source        string
+	FetchedAt     time.Time
 }
 
 type Provider interface {

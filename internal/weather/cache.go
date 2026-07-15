@@ -12,8 +12,14 @@ const (
 	staleFor           = 6 * time.Hour
 )
 
+type Cache struct {
+	Hours     []Hour
+	Source    string
+	FetchedAt time.Time
+}
+
 type Repository interface {
-	Load(context.Context, time.Time, time.Time) ([]Hour, time.Time, string, error)
+	Load(context.Context, time.Time, time.Time) (Cache, error)
 	Upsert(context.Context, []Hour, string, time.Time) error
 }
 
@@ -41,27 +47,98 @@ func NewService(repository Repository, provider Provider, clock func() time.Time
 
 func (s *Service) Get(ctx context.Context, request Request) Result {
 	now := s.now().UTC()
-	hours, fetchedAt, source, cacheErr := s.repository.Load(ctx, request.Start.UTC(), request.End.UTC())
-	age := now.Sub(fetchedAt.UTC())
-	if len(hours) > 0 && age >= 0 && age < freshFor {
-		return Result{Hours: hours, Source: source, FetchedAt: fetchedAt.UTC(), Available: true}
+	cache, cacheErr := s.repository.Load(ctx, request.Start.UTC(), request.End.UTC())
+	if cacheErr == nil && completeCoverage(cache.Hours, request.Start, request.End) && allYoungerThan(cache.Hours, now, freshFor) {
+		return resultFromHours(cache.Hours, false, "")
 	}
+
 	refreshed, providerErr := s.provider.Hourly(ctx, request)
-	if providerErr == nil && len(refreshed) > 0 {
+	if providerErr == nil && completeCoverage(refreshed, request.Start, request.End) {
 		source := providerSource(s.provider)
 		if err := s.repository.Upsert(ctx, refreshed, source, now); err != nil {
-			return Result{Hours: refreshed, Source: source, FetchedAt: now, Available: true, ErrorClass: ErrorClassCache}
+			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
 		}
-		return Result{Hours: refreshed, Source: source, FetchedAt: now, Available: true}
+		persisted, err := s.repository.Load(ctx, request.Start.UTC(), request.End.UTC())
+		if err != nil {
+			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
+		}
+		return resultFromHours(persisted.Hours, !allYoungerThan(persisted.Hours, now, freshFor), "")
 	}
-	if len(hours) > 0 && age >= 0 && age < staleFor {
-		return Result{Hours: hours, Source: source, FetchedAt: fetchedAt.UTC(), Stale: true, Available: true, ErrorClass: ErrorClassProvider}
+
+	usable := make([]Hour, 0, len(cache.Hours))
+	for _, hour := range cache.Hours {
+		age := now.Sub(hour.FetchedAt.UTC())
+		if !hour.FetchedAt.IsZero() && age >= 0 && age < staleFor {
+			usable = append(usable, hour)
+		}
+	}
+	if len(usable) > 0 {
+		return resultFromHours(usable, true, ErrorClassProvider)
 	}
 	errorClass := ErrorClassProvider
 	if cacheErr != nil {
 		errorClass = ErrorClassCache
 	}
 	return Result{ErrorClass: errorClass}
+}
+
+func completeCoverage(hours []Hour, start, end time.Time) bool {
+	if start.IsZero() || end.IsZero() || !end.After(start) {
+		return false
+	}
+	next := start.UTC().Truncate(time.Hour)
+	if next.Before(start.UTC()) {
+		next = next.Add(time.Hour)
+	}
+	index := 0
+	for next.Before(end.UTC()) {
+		if index >= len(hours) || !hours[index].Time.UTC().Equal(next) {
+			return false
+		}
+		index++
+		next = next.Add(time.Hour)
+	}
+	return index == len(hours)
+}
+
+func allYoungerThan(hours []Hour, now time.Time, maximum time.Duration) bool {
+	if len(hours) == 0 {
+		return false
+	}
+	for _, hour := range hours {
+		age := now.Sub(hour.FetchedAt.UTC())
+		if hour.FetchedAt.IsZero() || age < 0 || age >= maximum {
+			return false
+		}
+	}
+	return true
+}
+
+func withMetadata(hours []Hour, source string, fetchedAt time.Time) []Hour {
+	result := make([]Hour, len(hours))
+	for i, hour := range hours {
+		hour.Source = source
+		hour.FetchedAt = fetchedAt.UTC()
+		result[i] = hour
+	}
+	return result
+}
+
+func resultFromHours(hours []Hour, stale bool, errorClass string) Result {
+	if len(hours) == 0 {
+		return Result{ErrorClass: errorClass}
+	}
+	fetchedAt := hours[0].FetchedAt.UTC()
+	source := hours[0].Source
+	for _, hour := range hours[1:] {
+		if hour.FetchedAt.Before(fetchedAt) {
+			fetchedAt = hour.FetchedAt.UTC()
+		}
+		if hour.Source != source {
+			source = "mixed"
+		}
+	}
+	return Result{Hours: hours, Source: source, FetchedAt: fetchedAt, Stale: stale, Available: true, ErrorClass: errorClass}
 }
 
 func providerSource(provider Provider) string {

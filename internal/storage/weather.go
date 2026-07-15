@@ -33,7 +33,8 @@ func (r *WeatherRepository) Upsert(ctx context.Context, hours []weather.Hour, so
 		_, err := tx.ExecContext(ctx, `INSERT INTO weather_hourly(hour, cloud_cover_pct, irradiance_wm2, source, fetched_at)
 			VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT(hour) DO UPDATE SET cloud_cover_pct=excluded.cloud_cover_pct,
-			irradiance_wm2=excluded.irradiance_wm2, source=excluded.source, fetched_at=excluded.fetched_at`,
+			irradiance_wm2=excluded.irradiance_wm2, source=excluded.source, fetched_at=excluded.fetched_at
+			WHERE excluded.fetched_at >= weather_hourly.fetched_at`,
 			formatTime(hourUTC), hour.CloudCoverPct, hour.IrradianceWM2, source, formatTime(fetchedAt.UTC()))
 		if err != nil {
 			return fmt.Errorf("upsert weather hour: %w", err)
@@ -45,37 +46,44 @@ func (r *WeatherRepository) Upsert(ctx context.Context, hours []weather.Hour, so
 	return nil
 }
 
-func (r *WeatherRepository) Load(ctx context.Context, from, to time.Time) ([]weather.Hour, time.Time, string, error) {
+func (r *WeatherRepository) Load(ctx context.Context, from, to time.Time) (weather.Cache, error) {
 	rows, err := r.db.sql.QueryContext(ctx, `SELECT hour, cloud_cover_pct, irradiance_wm2, source, fetched_at
 		FROM weather_hourly WHERE hour >= ? AND hour < ? ORDER BY hour`, formatTime(from), formatTime(to))
 	if err != nil {
-		return nil, time.Time{}, "", fmt.Errorf("query weather cache: %w", err)
+		return weather.Cache{}, fmt.Errorf("query weather cache: %w", err)
 	}
 	defer rows.Close()
 	hours := make([]weather.Hour, 0)
-	var latest time.Time
-	var latestSource string
+	var oldest time.Time
+	var cacheSource string
 	for rows.Next() {
 		var rawHour, rawFetched, source string
 		var hour weather.Hour
 		if err := rows.Scan(&rawHour, &hour.CloudCoverPct, &hour.IrradianceWM2, &source, &rawFetched); err != nil {
-			return nil, time.Time{}, "", fmt.Errorf("scan weather cache: %w", err)
+			return weather.Cache{}, fmt.Errorf("scan weather cache: %w", err)
 		}
 		hour.Time, err = time.Parse(sqliteTimeLayout, rawHour)
 		if err != nil {
-			return nil, time.Time{}, "", fmt.Errorf("parse weather hour: %w", err)
+			return weather.Cache{}, fmt.Errorf("parse weather hour: %w", err)
 		}
 		fetched, err := time.Parse(sqliteTimeLayout, rawFetched)
 		if err != nil {
-			return nil, time.Time{}, "", fmt.Errorf("parse weather fetched time: %w", err)
+			return weather.Cache{}, fmt.Errorf("parse weather fetched time: %w", err)
 		}
-		if fetched.After(latest) {
-			latest, latestSource = fetched, source
+		hour.FetchedAt = fetched.UTC()
+		hour.Source = source
+		if oldest.IsZero() || fetched.Before(oldest) {
+			oldest = fetched
+		}
+		if cacheSource == "" {
+			cacheSource = source
+		} else if cacheSource != source {
+			cacheSource = "mixed"
 		}
 		hours = append(hours, hour)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, "", fmt.Errorf("iterate weather cache: %w", err)
+		return weather.Cache{}, fmt.Errorf("iterate weather cache: %w", err)
 	}
-	return hours, latest.UTC(), latestSource, nil
+	return weather.Cache{Hours: hours, FetchedAt: oldest.UTC(), Source: cacheSource}, nil
 }
