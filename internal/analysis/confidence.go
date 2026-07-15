@@ -12,7 +12,7 @@ func assessConfidence(input Input, modelCoverage, weatherCoverage float64) (doma
 	if input.Baseline.QualifyingDays >= 30 {
 		level = 2
 	}
-	qualifying := finite(input.TelemetryCoveragePct) && input.TelemetryCoveragePct >= qualifyingCoveragePct
+	qualifying := validCoverage(input.TelemetryCoveragePct) && input.TelemetryCoveragePct >= qualifyingCoveragePct
 	if !qualifying {
 		evidence = append(evidence, domain.Evidence{Code: "telemetry_coverage_low", Label: "Telemetry coverage is below the qualifying threshold", Value: safeValue(input.TelemetryCoveragePct), Unit: "percent"})
 		level = 0
@@ -44,7 +44,7 @@ func safeValue(value float64) float64 {
 	if !finite(value) {
 		return 0
 	}
-	return value
+	return clamp(value, 0, 100)
 }
 
 func min(a, b int) int {

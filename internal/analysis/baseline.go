@@ -2,6 +2,8 @@
 package analysis
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -20,6 +22,7 @@ type PowerHour struct {
 }
 
 type TrainingDay struct {
+	Timezone       string
 	Day            time.Time
 	CoveragePct    float64
 	InstalledWatts float64
@@ -36,11 +39,24 @@ type Baseline struct {
 	Buckets        map[Bucket]BaselineBucket `json:"buckets"`
 }
 
-func BuildBaseline(days []TrainingDay) Baseline {
+func BuildBaseline(days []TrainingDay) (Baseline, error) {
 	values := make(map[Bucket][]float64)
 	baseline := Baseline{Buckets: make(map[Bucket]BaselineBucket)}
+	var timezone string
 	for _, day := range days {
-		if !finite(day.CoveragePct) || day.CoveragePct < qualifyingCoveragePct || !finite(day.InstalledWatts) || day.InstalledWatts <= 0 {
+		location, err := configuredLocation(day.Timezone)
+		if err != nil {
+			return Baseline{}, fmt.Errorf("build baseline: %w", err)
+		}
+		if timezone == "" {
+			timezone = day.Timezone
+		} else if timezone != day.Timezone {
+			return Baseline{}, errors.New("build baseline: training days must use one configured timezone")
+		}
+		if day.Day.IsZero() {
+			return Baseline{}, errors.New("build baseline: training day date is required")
+		}
+		if !validCoverage(day.CoveragePct) || day.CoveragePct < qualifyingCoveragePct || !finite(day.InstalledWatts) || day.InstalledWatts <= 0 {
 			continue
 		}
 		baseline.QualifyingDays++
@@ -53,7 +69,8 @@ func BuildBaseline(days []TrainingDay) Baseline {
 				continue
 			}
 			normalized = clamp(normalized, 0, 1)
-			key := Bucket{Month: hour.At.Month(), Hour: hour.At.Hour()}
+			local := hour.At.In(location)
+			key := Bucket{Month: local.Month(), Hour: local.Hour()}
 			values[key] = append(values[key], normalized)
 		}
 	}
@@ -64,7 +81,18 @@ func BuildBaseline(days []TrainingDay) Baseline {
 		}
 		baseline.Buckets[key] = BaselineBucket{NormalizedPower: median(kept), SampleCount: len(kept)}
 	}
-	return baseline
+	return baseline, nil
+}
+
+func configuredLocation(name string) (*time.Location, error) {
+	if name == "" || name == "Local" {
+		return nil, errors.New("configured IANA timezone is required; host Local is not allowed")
+	}
+	location, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("load configured timezone %q: %w", name, err)
+	}
+	return location, nil
 }
 
 func madClip(values []float64) []float64 {
@@ -98,6 +126,8 @@ func median(values []float64) float64 {
 }
 
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
+
+func validCoverage(value float64) bool { return finite(value) && value >= 0 && value <= 100 }
 
 func clamp(value, low, high float64) float64 {
 	if !finite(value) || value < low {

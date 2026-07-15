@@ -24,14 +24,14 @@ func (r *AnalysisRepository) Save(ctx context.Context, analysis domain.DailyAnal
 	if err != nil {
 		return fmt.Errorf("marshal daily analysis evidence: %w", err)
 	}
-	_, err = r.db.sql.ExecContext(ctx, `INSERT INTO daily_summary(
-		day,energy_wh,peak_power_w,productive_minutes,coverage_pct,expected_wh,ratio,confidence_label,analysis_evidence_json,analysis_qualifying,analyzed_at)
-		VALUES(?,?,0,0,0,?,?,?,?,?,?)
-		ON CONFLICT(day) DO UPDATE SET expected_wh=excluded.expected_wh,ratio=excluded.ratio,
-		confidence_label=excluded.confidence_label,analysis_evidence_json=excluded.analysis_evidence_json,
-		analysis_qualifying=excluded.analysis_qualifying,analyzed_at=excluded.analyzed_at
-		WHERE excluded.analyzed_at >= COALESCE(daily_summary.analyzed_at,'')`,
-		analysis.Day, analysis.ActualWh, analysis.ExpectedWh, analysis.Ratio, analysis.Confidence, string(evidence), analysis.Qualifying, formatTime(analysis.AnalyzedAt.UTC()))
+	_, err = r.db.sql.ExecContext(ctx, `INSERT INTO daily_analysis(
+		day,expected_wh,actual_wh,ratio,confidence,evidence_json,qualifying,updated_at)
+		VALUES(?,?,?,?,?,?,?,?)
+		ON CONFLICT(day) DO UPDATE SET expected_wh=excluded.expected_wh,actual_wh=excluded.actual_wh,
+		ratio=excluded.ratio,confidence=excluded.confidence,evidence_json=excluded.evidence_json,
+		qualifying=excluded.qualifying,updated_at=excluded.updated_at
+		WHERE excluded.updated_at >= daily_analysis.updated_at`,
+		analysis.Day, analysis.ExpectedWh, analysis.ActualWh, analysis.Ratio, analysis.Confidence, string(evidence), analysis.Qualifying, formatTime(analysis.AnalyzedAt.UTC()))
 	if err != nil {
 		return fmt.Errorf("upsert daily analysis: %w", err)
 	}
@@ -41,9 +41,8 @@ func (r *AnalysisRepository) Save(ctx context.Context, analysis domain.DailyAnal
 func (r *AnalysisRepository) Load(ctx context.Context, day string) (domain.DailyAnalysis, bool, error) {
 	var got domain.DailyAnalysis
 	var evidenceJSON, analyzedAt string
-	err := r.db.sql.QueryRowContext(ctx, `SELECT day,expected_wh,energy_wh,ratio,confidence_label,
-		analysis_evidence_json,analysis_qualifying,analyzed_at FROM daily_summary
-		WHERE day=? AND analyzed_at IS NOT NULL`, day).Scan(&got.Day, &got.ExpectedWh, &got.ActualWh, &got.Ratio,
+	err := r.db.sql.QueryRowContext(ctx, `SELECT day,expected_wh,actual_wh,ratio,confidence,
+		evidence_json,qualifying,updated_at FROM daily_analysis WHERE day=?`, day).Scan(&got.Day, &got.ExpectedWh, &got.ActualWh, &got.Ratio,
 		&got.Confidence, &evidenceJSON, &got.Qualifying, &analyzedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.DailyAnalysis{}, false, nil

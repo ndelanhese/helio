@@ -26,7 +26,7 @@ func TestOpenMigratesAndEnablesWAL(t *testing.T) {
 	for _, table := range []string{
 		"users", "sessions", "settings", "telemetry_minute", "telemetry_events",
 		"weather_hourly", "hourly_summary", "daily_summary", "monthly_summary",
-		"alerts", "recommendations", "action_audit",
+		"daily_analysis", "alerts", "recommendations", "action_audit",
 	} {
 		var got string
 		err := db.sql.QueryRowContext(ctx,
