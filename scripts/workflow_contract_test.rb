@@ -102,6 +102,13 @@ class WorkflowContractTest < Minitest::Test
     refute_includes commands, "playwright install"
     assert_includes commands, "npm --prefix web run test:e2e"
     refute_includes commands, "make test-e2e"
+    safe_directory_index = e2e_steps.index { |step| step["run"] == 'git config --global --add safe.directory "$GITHUB_WORKSPACE"' }
+    test_index = e2e_steps.index { |step| step["run"] == "npm --prefix web run test:e2e" }
+    refute_nil safe_directory_index, "container checkout must trust only the current workspace"
+    refute_nil test_index
+    assert_operator safe_directory_index, :<, test_index
+    assert_equal 1, read(".github/workflows/ci.yml").scan(/safe\.directory/).length
+    refute_match(/safe\.directory\s+["']?\*/, read(".github/workflows/ci.yml"))
     scan_index = e2e_steps.index { |step| step["id"] == "artifact-validator" }
     upload_index = e2e_steps.index { |step| step["uses"]&.start_with?("actions/upload-artifact@") }
     refute_nil scan_index, "E2E failures must be scanned before upload"
