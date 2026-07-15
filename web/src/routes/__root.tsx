@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 
 import { bootstrapStatusQuery, sessionQuery } from '../api/queries'
 import { classifySessionResult, resolveAppAccess } from '../app/auth-gate'
+import { replaceLocation } from '../app/navigation'
 import { AppShell } from '../components/layout/AppShell'
 import { SessionUnavailable } from '../components/layout/SessionUnavailable'
 
@@ -17,12 +18,13 @@ function RootLayout() {
   const needsSession = bootstrap.data?.open === false && path !== '/login' && path !== '/bootstrap'
   const session = useQuery({ ...sessionQuery, enabled: needsSession })
   const sessionAccess = classifySessionResult(session.isSuccess, session.error)
+  const authenticated = sessionAccess === 'authenticated' ? true : sessionAccess === 'anonymous' ? false : null
   const decision = bootstrap.data
-    ? resolveAppAccess(path, bootstrap.data.open, needsSession ? (sessionAccess === 'loading' ? null : sessionAccess === 'authenticated') : false)
+    ? resolveAppAccess(path, bootstrap.data.open, needsSession ? authenticated : false)
     : 'loading'
 
   useEffect(() => {
-    if (decision === '/bootstrap' || decision === '/login') window.location.replace(decision)
+    if (decision === '/bootstrap' || decision === '/login') replaceLocation(decision)
   }, [decision])
 
   if (bootstrap.isError) return <main className="route-state">Não foi possível verificar o acesso ao Helio.</main>

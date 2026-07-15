@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query'
 
 import { ApiError, authMemory, configureUnauthorizedHandler } from '../api/client'
 import { queryKeys } from '../api/queries'
+import { replaceLocation } from './navigation'
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,5 +19,5 @@ export const queryClient = new QueryClient({
 configureUnauthorizedHandler(() => {
   authMemory.clear()
   queryClient.removeQueries({ queryKey: queryKeys.session })
-  if (window.location.pathname !== '/login') window.location.assign('/login')
+  if (window.location.pathname !== '/login') replaceLocation('/login')
 })

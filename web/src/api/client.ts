@@ -1,4 +1,5 @@
 import type { ApiErrorEnvelope } from './types'
+import { replaceLocation } from '../app/navigation'
 
 const API_BASE = '/api/v1'
 const MUTATION_METHODS = new Set(['DELETE', 'PATCH', 'POST', 'PUT'])
@@ -26,7 +27,7 @@ type UnauthorizedHandler = () => void
 
 let handleUnauthorized: UnauthorizedHandler = () => {
   authMemory.clear()
-  if (window.location.pathname !== '/login') window.location.assign('/login')
+  if (window.location.pathname !== '/login') replaceLocation('/login')
 }
 
 export function configureUnauthorizedHandler(handler: UnauthorizedHandler) {

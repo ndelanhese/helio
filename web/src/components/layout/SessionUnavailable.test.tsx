@@ -10,7 +10,9 @@ describe('SessionUnavailable', () => {
     render(<SessionUnavailable onRetry={retry} />)
 
     expect(screen.getByText('Não foi possível verificar sua sessão.')).toBeVisible()
-    await userEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }))
+    const button = screen.getByRole('button', { name: 'Tentar novamente' })
+    expect(button).toHaveClass('touch-target')
+    await userEvent.click(button)
     expect(retry).toHaveBeenCalledOnce()
   })
 })

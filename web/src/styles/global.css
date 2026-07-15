@@ -11,6 +11,8 @@ button, input, select, textarea { color: inherit; font: inherit; }
 
 button, a { -webkit-tap-highlight-color: transparent; }
 
+.touch-target { min-width: 44px; min-height: 44px; }
+
 a { color: inherit; }
 
 :focus-visible { outline: 3px solid var(--sun); outline-offset: 3px; }
