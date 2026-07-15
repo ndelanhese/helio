@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -86,6 +87,9 @@ func TestAlertRepositoryOpenResolveAuditsOnlyTransitions(t *testing.T) {
 	if len(open) != 1 || open[0].State != "resolved" {
 		t.Fatalf("alerts=%+v", open)
 	}
+	if got := open[0].Evidence.Values["failed_polls"]; got != 0 {
+		t.Fatalf("resolved evidence failed_polls=%v, want recovery value 0", got)
+	}
 	var audits int
 	if err := db.sql.QueryRowContext(ctx, `SELECT count(*) FROM action_audit WHERE action IN ('alert.open','alert.resolve')`).Scan(&audits); err != nil || audits != 2 {
 		t.Fatalf("audits=%d err=%v", audits, err)
@@ -112,6 +116,30 @@ func TestAlertRepositoryOpenResolveAuditsOnlyTransitions(t *testing.T) {
 		if len(detail.Evidence.Values) == 0 || len(detail.Evidence.Timestamps) == 0 {
 			t.Fatalf("transition audit lacks numeric/timestamp evidence: %s", encoded)
 		}
+	}
+}
+
+func TestAlertRepositoryListsNewestFirstWithSafeCap(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "alerts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	for index := range 105 {
+		at := base.Add(time.Duration(index) * time.Minute)
+		if _, err := db.sql.ExecContext(ctx, `INSERT INTO alerts(id,rule,state,severity,opened_at,resolved_at,evidence_json) VALUES(?,?,'resolved',?,?,?,?)`,
+			fmt.Sprintf("alert-%03d", index), alerts.RuleLoggerOffline, alerts.SeverityCritical, formatTime(at), formatTime(at.Add(time.Second)), `{}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := NewAlertRepository(db).List(ctx, "resolved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 100 || records[0].ID != "alert-104" || records[99].ID != "alert-005" {
+		t.Fatalf("bounded newest alerts: len=%d first=%s last=%s", len(records), records[0].ID, records[len(records)-1].ID)
 	}
 }
 

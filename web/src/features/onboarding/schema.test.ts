@@ -48,7 +48,7 @@ describe('onboarding numeric validation', () => {
     expect(toBootstrapPayload(values).settings.tariffMinorPerKWh).toBe(minor)
   })
 
-  it.each(['1.234', '1e2', '90071992547409.92', '92233720368547758.08'])('rejects unsafe or inexact tariff %s', (tariff) => {
+  it.each(['1.234', '1e2', '10000000.01', '90071992547409.92', '92233720368547758.08'])('rejects unsafe or inexact tariff %s', (tariff) => {
     expect(validateStep(3, { ...valid, tariff }).tariff).toBeDefined()
   })
 })

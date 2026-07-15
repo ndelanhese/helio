@@ -14,7 +14,10 @@ import (
 	"github.com/ndelanhese/helio/internal/domain"
 )
 
-const defaultRetentionDays = 730
+const (
+	defaultRetentionDays       = 730
+	maxTariffMinorPerKWh int64 = 1_000_000_000
+)
 
 // DecodeSettingsJSON decodes the onboarding request shape. Derived fields and
 // unknown fields are deliberately not part of this API boundary.
@@ -122,6 +125,9 @@ func ValidateSettings(in domain.Settings, allowPublicLogger ...bool) (domain.Set
 	}
 	if in.TariffMinorPerKWh < 0 {
 		return domain.Settings{}, fmt.Errorf("tariff must not be negative")
+	}
+	if in.TariffMinorPerKWh > maxTariffMinorPerKWh {
+		return domain.Settings{}, fmt.Errorf("tariff must not exceed %d minor units per kWh", maxTariffMinorPerKWh)
 	}
 	if in.RetentionDays == 0 {
 		in.RetentionDays = defaultRetentionDays

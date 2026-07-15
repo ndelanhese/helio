@@ -325,6 +325,19 @@ func TestComponentHealthWeatherUsesOnlyPublicAvailabilityEnum(t *testing.T) {
 	}
 }
 
+func TestComponentHealthExposesAnalysisPipelineState(t *testing.T) {
+	handler := api.New(api.Dependencies{Components: func(context.Context) api.ComponentStatus {
+		return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: "available",
+			Alerts: "unavailable", AlertsError: "evaluation", Analysis: "unavailable", AnalysisError: "panic"}
+	}})
+	rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"alerts":"unavailable"`) || !strings.Contains(body, `"alertsErrorClass":"evaluation"`) ||
+		!strings.Contains(body, `"analysis":"unavailable"`) || !strings.Contains(body, `"analysisErrorClass":"panic"`) {
+		t.Fatalf("pipeline health: %d %s", rec.Code, body)
+	}
+}
+
 func TestComponentHealthExposesSanitizedFailureClassAndTimestamp(t *testing.T) {
 	at := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	handler := api.New(api.Dependencies{Latest: func() collector.State {

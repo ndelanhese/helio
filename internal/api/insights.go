@@ -3,27 +3,40 @@ package api
 import (
 	"errors"
 	"math"
+	"math/big"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
 )
 
 type trendDTO struct {
-	Direction  string  `json:"direction"`
-	ChangePct  float64 `json:"changePct"`
-	WindowDays int     `json:"windowDays"`
+	Direction   string  `json:"direction"`
+	Current     float64 `json:"current"`
+	Previous    float64 `json:"previous"`
+	Delta       float64 `json:"delta"`
+	DeltaPct    float64 `json:"deltaPct"`
+	CoveragePct float64 `json:"coveragePct"`
+	WindowDays  int     `json:"windowDays"`
+}
+
+type insightEvidenceDTO struct {
+	Code  string  `json:"code"`
+	Label string  `json:"label"`
+	Value float64 `json:"value"`
+	Unit  string  `json:"unit"`
 }
 
 type insightsDTO struct {
-	Version           string            `json:"version"`
-	Day               string            `json:"day"`
-	ActualWh          float64           `json:"actualWh"`
-	ExpectedWh        float64           `json:"expectedWh"`
-	Ratio             float64           `json:"ratio"`
-	Confidence        domain.Confidence `json:"confidence"`
-	Qualifying        bool              `json:"qualifying"`
-	Evidence          []domain.Evidence `json:"evidence"`
+	Version           string               `json:"version"`
+	Day               string               `json:"day"`
+	ActualWh          float64              `json:"actualWh"`
+	ExpectedWh        float64              `json:"expectedWh"`
+	Ratio             float64              `json:"ratio"`
+	Confidence        domain.Confidence    `json:"confidence"`
+	Qualifying        bool                 `json:"qualifying"`
+	Evidence          []insightEvidenceDTO `json:"evidence"`
 	ObservationWindow struct {
 		QualifyingDays int `json:"qualifyingDays"`
 		MinimumDays    int `json:"minimumDays"`
@@ -72,16 +85,21 @@ func (a *API) insights(w http.ResponseWriter, r *http.Request) {
 	dto := insightsDTO{
 		Version: "v1", Day: result.Day, ActualWh: result.ActualWh, ExpectedWh: result.ExpectedWh,
 		Ratio: result.Ratio, Confidence: result.Confidence, Qualifying: result.Qualifying,
-		Evidence: append([]domain.Evidence(nil), result.Evidence...),
+		Evidence: insightEvidence(result.Evidence),
 	}
 	dto.ObservationWindow.MinimumDays = 7
 	for _, evidence := range result.Evidence {
-		if evidence.Code == "history_days" && evidence.Unit == "days" && evidence.Value >= 0 {
+		if evidence.Code == "history_days" && evidence.Value >= 0 {
 			dto.ObservationWindow.QualifyingDays = int(math.Round(evidence.Value))
 			break
 		}
 	}
-	dto.GeneratedEnergyValue.Minor = int64(math.Round(result.ActualWh / 1000 * float64(settings.TariffMinorPerKWh)))
+	minor, err := generatedValueMinor(result.ActualWh, settings.TariffMinorPerKWh)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "insights could not be loaded")
+		return
+	}
+	dto.GeneratedEnergyValue.Minor = minor
 	dto.GeneratedEnergyValue.Currency = settings.Currency
 	dto.GeneratedEnergyValue.Label = "valor estimado da energia gerada"
 	dto.GeneratedEnergyValue.Estimate = true
@@ -125,10 +143,20 @@ func qualifyingSummaryDays(points []domain.AggregatePoint) int {
 
 func summarizeTrend(points []domain.AggregatePoint, value func(domain.AggregatePoint) float64) trendDTO {
 	result := trendDTO{Direction: "insufficient", WindowDays: len(points)}
-	if len(points) < 4 {
+	qualifying := make([]domain.AggregatePoint, 0, len(points))
+	for _, point := range points {
+		result.CoveragePct += point.CoveragePct
+		if point.CoveragePct >= 80 {
+			qualifying = append(qualifying, point)
+		}
+	}
+	if len(points) > 0 {
+		result.CoveragePct /= float64(len(points))
+	}
+	if len(qualifying) < 4 {
 		return result
 	}
-	middle := len(points) / 2
+	middle := len(qualifying) / 2
 	average := func(slice []domain.AggregatePoint) float64 {
 		var sum float64
 		for _, point := range slice {
@@ -136,17 +164,65 @@ func summarizeTrend(points []domain.AggregatePoint, value func(domain.AggregateP
 		}
 		return sum / float64(len(slice))
 	}
-	previous, current := average(points[:middle]), average(points[middle:])
+	previous, current := average(qualifying[:middle]), average(qualifying[middle:])
+	result.Previous, result.Current = previous, current
+	result.Delta = current - previous
 	if previous <= 0 {
 		return result
 	}
-	result.ChangePct = (current - previous) * 100 / previous
+	result.DeltaPct = result.Delta * 100 / previous
 	result.Direction = "stable"
-	if result.ChangePct > 5 {
+	if result.DeltaPct > 5 {
 		result.Direction = "up"
 	}
-	if result.ChangePct < -5 {
+	if result.DeltaPct < -5 {
 		result.Direction = "down"
+	}
+	return result
+}
+
+const maxSafeJSONInteger int64 = 9_007_199_254_740_991
+
+func generatedValueMinor(actualWh float64, tariffMinorPerKWh int64) (int64, error) {
+	if math.IsNaN(actualWh) || math.IsInf(actualWh, 0) || actualWh < 0 || tariffMinorPerKWh < 0 {
+		return 0, errors.New("invalid generated value operands")
+	}
+	actual, ok := new(big.Rat).SetString(strconv.FormatFloat(actualWh, 'f', -1, 64))
+	if !ok {
+		return 0, errors.New("invalid generated energy")
+	}
+	value := new(big.Rat).Mul(actual, new(big.Rat).SetInt64(tariffMinorPerKWh))
+	value.Quo(value, big.NewRat(1000, 1))
+	quotient, remainder := new(big.Int), new(big.Int)
+	quotient.QuoRem(value.Num(), value.Denom(), remainder)
+	if new(big.Int).Lsh(remainder, 1).Cmp(value.Denom()) >= 0 {
+		quotient.Add(quotient, big.NewInt(1))
+	}
+	if !quotient.IsInt64() || quotient.Sign() < 0 || quotient.Cmp(big.NewInt(maxSafeJSONInteger)) > 0 {
+		return 0, errors.New("generated value exceeds safe JSON integer range")
+	}
+	return quotient.Int64(), nil
+}
+
+var safeInsightEvidence = map[string]struct{ label, unit string }{
+	"history_days":               {"Dias qualificáveis no histórico", "dias"},
+	"history_insufficient":       {"Histórico ainda insuficiente", "dias"},
+	"telemetry_coverage_low":     {"Cobertura da telemetria abaixo do mínimo", "%"},
+	"telemetry_coverage_reduced": {"Cobertura reduzida da telemetria", "%"},
+	"model_coverage_reduced":     {"Cobertura reduzida da referência", "%"},
+	"weather_missing":            {"Contexto meteorológico indisponível", "%"},
+	"weather_stale":              {"Contexto meteorológico desatualizado", ""},
+	"weather_coverage_reduced":   {"Cobertura meteorológica útil", "%"},
+}
+
+func insightEvidence(evidence []domain.Evidence) []insightEvidenceDTO {
+	result := make([]insightEvidenceDTO, 0, len(evidence))
+	for _, item := range evidence {
+		copy, ok := safeInsightEvidence[item.Code]
+		if !ok || math.IsNaN(item.Value) || math.IsInf(item.Value, 0) {
+			continue
+		}
+		result = append(result, insightEvidenceDTO{Code: item.Code, Label: copy.label, Value: item.Value, Unit: copy.unit})
 	}
 	return result
 }

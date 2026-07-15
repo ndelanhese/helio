@@ -22,7 +22,7 @@ func TestInsightsContractIsVersionedHonestAndTariffDerived(t *testing.T) {
 	if err := analysisStore.Save(context.Background(), domain.DailyAnalysis{
 		Day: "2026-07-14", ExpectedWh: 15_000, ActualWh: 12_340, Ratio: 12_340.0 / 15_000,
 		Confidence: domain.ConfidenceMedium, Qualifying: true, AnalyzedAt: time.Date(2026, 7, 15, 3, 5, 0, 0, time.UTC),
-		Evidence: []domain.Evidence{{Code: "history_days", Label: "Histórico qualificável", Value: 12, Unit: "days"}, {Code: "weather_stale", Label: "Contexto meteorológico desatualizado", Value: 2, Unit: "hours"}},
+		Evidence: []domain.Evidence{{Code: "history_days", Label: "Qualifying history days", Value: 12, Unit: "days"}, {Code: "weather_stale", Label: "Weather data is stale", Value: 2, Unit: "boolean"}, {Code: "private_future_model", Label: "SECRET MODEL LABEL", Value: 99, Unit: "internal"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +68,9 @@ func TestInsightsContractIsVersionedHonestAndTariffDerived(t *testing.T) {
 	}
 	if body.Version != "v1" || body.Day != "2026-07-14" || body.ActualWh != 12_340 || body.ExpectedWh != 15_000 || body.Confidence != domain.ConfidenceMedium || len(body.Evidence) != 2 {
 		t.Fatalf("unexpected contract: %#v", body)
+	}
+	if body.Evidence[0].Label != "Dias qualificáveis no histórico" || body.Evidence[0].Unit != "dias" || strings.Contains(rec.Body.String(), "Qualifying history") || strings.Contains(rec.Body.String(), "SECRET MODEL") {
+		t.Fatalf("evidence was not localized/sanitized: %#v", body.Evidence)
 	}
 	if body.GeneratedEnergyValue.Minor != 1_172 || body.GeneratedEnergyValue.Currency != "BRL" || body.GeneratedEnergyValue.Label != "valor estimado da energia gerada" || !body.GeneratedEnergyValue.Estimate {
 		t.Fatalf("generated value: %#v", body.GeneratedEnergyValue)

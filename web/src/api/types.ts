@@ -117,8 +117,12 @@ export interface EvidenceDTO {
 }
 
 export interface TrendDTO {
-  changePct: number
+  coveragePct: number
+  current: number
+  delta: number
+  deltaPct: number
   direction: TrendDirection
+  previous: number
   windowDays: number
 }
 
@@ -149,6 +153,7 @@ export interface AlertDTO {
 
 export interface AlertsResponse {
   alerts: AlertDTO[]
+  limit: number
   state: AlertState
   version: 'v1'
 }

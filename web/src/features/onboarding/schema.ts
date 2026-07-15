@@ -72,7 +72,7 @@ function tariffMinor(value: string) {
   if (!match) return undefined
   const fraction = (match[2] ?? '').padEnd(2, '0')
   const minor = BigInt(match[1]) * 100n + BigInt(fraction || '0')
-  if (minor > BigInt(Number.MAX_SAFE_INTEGER) || minor > 9_223_372_036_854_775_807n) return undefined
+  if (minor > 1_000_000_000n) return undefined
   return Number(minor)
 }
 

@@ -45,7 +45,7 @@ func (a *API) alerts(w http.ResponseWriter, r *http.Request) {
 	for _, record := range records {
 		items = append(items, alertFromRecord(record))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": "v1", "state": state, "alerts": items})
+	writeJSON(w, http.StatusOK, map[string]any{"version": "v1", "state": state, "limit": 100, "alerts": items})
 }
 
 func alertFromRecord(record storage.AlertRecord) alertDTO {

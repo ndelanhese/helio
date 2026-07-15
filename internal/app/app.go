@@ -58,6 +58,7 @@ type jobRuntime interface {
 }
 
 type weatherJobRuntime interface{ WeatherStatus() jobs.WeatherStatus }
+type integrationJobRuntime interface{ IntegrationStatus() jobs.IntegrationStatus }
 
 func New(cfg config.Config) *App {
 	if cfg.HTTPAddr == "" {
@@ -118,6 +119,17 @@ func New(cfg config.Config) *App {
 				}
 				if !weatherStatus.FetchedAt.IsZero() {
 					status.WeatherFetchedAt = weatherStatus.FetchedAt.UTC().Format(time.RFC3339)
+				}
+			}
+			if integrationRuntime, ok := a.jobRunner.(integrationJobRuntime); ok {
+				integrationStatus := integrationRuntime.IntegrationStatus()
+				status.Alerts, status.AlertsError = integrationStatus.Alerts.State, integrationStatus.Alerts.ErrorClass
+				status.Analysis, status.AnalysisError = integrationStatus.Analysis.State, integrationStatus.Analysis.ErrorClass
+				if !integrationStatus.Alerts.UpdatedAt.IsZero() {
+					status.AlertsUpdatedAt = integrationStatus.Alerts.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+				if !integrationStatus.Analysis.UpdatedAt.IsZero() {
+					status.AnalysisUpdatedAt = integrationStatus.Analysis.UpdatedAt.UTC().Format(time.RFC3339)
 				}
 			}
 			if err := db.Ready(ctx); err != nil {

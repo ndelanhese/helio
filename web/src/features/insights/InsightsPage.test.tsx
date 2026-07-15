@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
@@ -23,8 +24,8 @@ describe('InsightsPage', () => {
         evidence: [{ code: 'history_days', label: 'Histórico qualificável', value: 4, unit: 'days' }],
         observationWindow: { qualifyingDays: 4, minimumDays: 7 },
         trends: {
-          peakPower: { direction: 'insufficient', changePct: 0, windowDays: 4 },
-          productiveMinutes: { direction: 'insufficient', changePct: 0, windowDays: 4 },
+          peakPower: { direction: 'up', current: 2600, previous: 2000, delta: 600, deltaPct: 30, coveragePct: 95, windowDays: 7 },
+          productiveMinutes: { direction: 'insufficient', current: 0, previous: 0, delta: 0, deltaPct: 0, coveragePct: 72, windowDays: 4 },
         },
         generatedEnergyValue: { minor: 684, currency: 'BRL', label: 'valor estimado da energia gerada', estimate: true },
       })),
@@ -50,11 +51,40 @@ describe('InsightsPage', () => {
     expect(screen.getByText(/Histórico qualificável/)).toBeVisible()
     expect(screen.getByText('valor estimado da energia gerada')).toBeVisible()
     expect(screen.getByText(/R\$\s*6,84/)).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Potência de pico' })).toBeVisible()
+    expect(screen.getByText(/30% acima/)).toBeVisible()
+    expect(screen.getByText(/72% de cobertura/)).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Alertas ativos' })).toBeVisible()
     expect(screen.getByText('Produção abaixo da referência')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Recuperações recentes' })).toBeVisible()
     expect(screen.getByText('A leitura voltou a ficar atualizada.')).toBeVisible()
     const unsupportedClaims = new RegExp(['con', 'sumo|auto', 'consumo|import', 'ação|export', 'ação|econo', 'mia|poup', 'ança'].join(''), 'i')
     expect(document.body.textContent).not.toMatch(unsupportedClaims)
+  })
+
+  it('shows a settings-specific retry instead of waiting forever', async () => {
+    let requests = 0
+    server.use(http.get('/api/v1/settings', () => {
+      requests += 1
+      return HttpResponse.json({ error: { code: 'internal_error', message: 'failure' } }, { status: 500 })
+    }))
+    renderApp(<InsightsPage />)
+
+    expect(await screen.findByRole('heading', { name: 'Não foi possível carregar as configurações.' })).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }))
+    expect(requests).toBeGreaterThan(1)
+  })
+
+  it('treats a missing daily insight as insufficient onboarding data', async () => {
+    server.use(
+      http.get('/api/v1/settings', () => HttpResponse.json(settings)),
+      http.get('/api/v1/insights', () => HttpResponse.json({ error: { code: 'insights_not_found', message: 'not found' } }, { status: 404 })),
+      http.get('/api/v1/alerts', ({ request }) => HttpResponse.json({ version: 'v1', state: new URL(request.url).searchParams.get('state'), limit: 100, alerts: [] })),
+    )
+    renderApp(<InsightsPage />)
+
+    expect(await screen.findByRole('heading', { name: 'Ainda não há análise para este dia.' })).toBeVisible()
+    expect(screen.getByText(/histórico diário suficiente/)).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'A análise não está disponível.' })).not.toBeInTheDocument()
   })
 })

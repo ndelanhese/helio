@@ -25,6 +25,48 @@ func TestHubSlowSubscriberKeepsNewestEvent(t *testing.T) {
 	}
 }
 
+func TestHubBufferedSubscriberReceivesEveryEventInBurst(t *testing.T) {
+	h := NewHub()
+	events, unsubscribe := h.SubscribeBuffered(32)
+	defer unsubscribe()
+
+	for power := 1; power <= 20; power++ {
+		h.Publish(Event{Kind: "snapshot", Snapshot: &domain.TelemetrySnapshot{ACPowerW: float64(power)}})
+	}
+	for power := 1; power <= 20; power++ {
+		select {
+		case got := <-events:
+			if got.Snapshot == nil || got.Snapshot.ACPowerW != float64(power) {
+				t.Fatalf("event %d=%+v", power, got)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("event %d was lost", power)
+		}
+	}
+}
+
+func TestHubBufferedSubscriberShutdownReleasesBackpressure(t *testing.T) {
+	h := NewHub()
+	_, unsubscribe := h.SubscribeBuffered(1)
+	h.Publish(Event{Kind: "first"})
+	done := make(chan struct{})
+	go func() {
+		h.Publish(Event{Kind: "blocked"})
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("publisher did not apply backpressure")
+	case <-time.After(10 * time.Millisecond):
+	}
+	unsubscribe()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("unsubscribe did not release publisher")
+	}
+}
+
 func TestHubUnsubscribeClosesAndRemovesSubscriber(t *testing.T) {
 	h := NewHub()
 	events, unsubscribe := h.Subscribe()

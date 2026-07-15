@@ -13,6 +13,8 @@ type ComponentStatus struct {
 	Collector          string `json:"collector"`
 	Jobs               string `json:"jobs,omitempty"`
 	Weather            string `json:"weather"`
+	Alerts             string `json:"alerts,omitempty"`
+	Analysis           string `json:"analysis,omitempty"`
 	LastSuccess        string `json:"lastSuccess,omitempty"`
 	LoggerUpdatedAt    string `json:"loggerUpdatedAt,omitempty"`
 	CollectorUpdatedAt string `json:"collectorUpdatedAt,omitempty"`
@@ -20,11 +22,15 @@ type ComponentStatus struct {
 	DatabaseUpdatedAt  string `json:"databaseUpdatedAt,omitempty"`
 	WeatherUpdatedAt   string `json:"weatherUpdatedAt,omitempty"`
 	WeatherFetchedAt   string `json:"weatherFetchedAt,omitempty"`
+	AlertsUpdatedAt    string `json:"alertsUpdatedAt,omitempty"`
+	AnalysisUpdatedAt  string `json:"analysisUpdatedAt,omitempty"`
 	DatabaseError      string `json:"databaseErrorClass,omitempty"`
 	LoggerError        string `json:"loggerErrorClass,omitempty"`
 	WeatherError       string `json:"weatherErrorClass,omitempty"`
 	CollectorError     string `json:"collectorErrorClass,omitempty"`
 	JobsError          string `json:"jobsErrorClass,omitempty"`
+	AlertsError        string `json:"alertsErrorClass,omitempty"`
+	AnalysisError      string `json:"analysisErrorClass,omitempty"`
 }
 
 func (a *API) componentHealth(w http.ResponseWriter, r *http.Request) {

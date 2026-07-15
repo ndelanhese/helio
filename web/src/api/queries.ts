@@ -48,8 +48,9 @@ export function insightsQuery(day: string) {
   })
 }
 
-export function alertsQuery(state: AlertState) {
-  return queryOptions({
+export function alertsQuery(state: AlertState, enabled = true) {
+	return queryOptions({
+		enabled,
     queryKey: queryKeys.alerts(state),
     queryFn: ({ signal }) => api.request<AlertsResponse>(`/alerts?state=${state}`, { signal }),
   })

@@ -119,6 +119,7 @@ func TestSettingsValidationMatrix(t *testing.T) {
 		{"currency case", func(s *domain.Settings) { s.Currency = "brl" }},
 		{"currency unknown", func(s *domain.Settings) { s.Currency = "ZZZ" }},
 		{"tariff negative", func(s *domain.Settings) { s.TariffMinorPerKWh = -1 }},
+		{"tariff excessive", func(s *domain.Settings) { s.TariffMinorPerKWh = 1_000_000_001 }},
 		{"retention low", func(s *domain.Settings) { s.RetentionDays = 29 }},
 		{"retention high", func(s *domain.Settings) { s.RetentionDays = 3651 }},
 	}

@@ -19,7 +19,10 @@ const (
 	defaultRetentionDays = 730
 	shutdownLimit        = 10 * time.Second
 	retryDelay           = time.Minute
+	alertEventBurst      = 256
 )
+
+var errAlertSettings = errors.New("alert settings unavailable")
 
 type Repository interface {
 	AggregateHour(context.Context, time.Time, time.Time) (domain.HourlySummary, error)
@@ -61,6 +64,10 @@ type EventSource interface {
 	Subscribe() (<-chan collector.Event, func())
 }
 
+type bufferedEventSource interface {
+	SubscribeBuffered(int) (<-chan collector.Event, func())
+}
+
 type Integration struct {
 	AnalysisData   AnalysisData
 	AnalysisWriter AnalysisWriter
@@ -74,6 +81,17 @@ type WeatherStatus struct {
 	UpdatedAt  time.Time
 	FetchedAt  time.Time
 	ErrorClass string
+}
+
+type WorkerStatus struct {
+	State      string
+	UpdatedAt  time.Time
+	ErrorClass string
+}
+
+type IntegrationStatus struct {
+	Alerts   WorkerStatus
+	Analysis WorkerStatus
 }
 
 type Option func(*Runner)
@@ -103,10 +121,11 @@ type Runner struct {
 	clock       Clock
 	integration Integration
 
-	mu            sync.RWMutex
-	status        Status
-	weatherStatus WeatherStatus
-	weatherResult weather.Result
+	mu                sync.RWMutex
+	status            Status
+	weatherStatus     WeatherStatus
+	weatherResult     weather.Result
+	integrationStatus IntegrationStatus
 }
 
 func New(repository Repository, settings Settings, options ...Option) *Runner {
@@ -115,6 +134,10 @@ func New(repository Repository, settings Settings, options ...Option) *Runner {
 		option(runner)
 	}
 	runner.status = Status{State: "idle", UpdatedAt: runner.clock.Now().UTC()}
+	runner.integrationStatus = IntegrationStatus{
+		Alerts:   WorkerStatus{State: "unavailable", UpdatedAt: runner.clock.Now().UTC()},
+		Analysis: WorkerStatus{State: "unavailable", UpdatedAt: runner.clock.Now().UTC()},
+	}
 	return runner
 }
 
@@ -128,6 +151,12 @@ func (r *Runner) WeatherStatus() WeatherStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.weatherStatus
+}
+
+func (r *Runner) IntegrationStatus() IntegrationStatus {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.integrationStatus
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -260,7 +289,20 @@ func (r *Runner) runOnce(ctx context.Context, now time.Time, settings domain.Set
 	return nil
 }
 
-func (r *Runner) analyzeDay(ctx context.Context, now time.Time, settings domain.Settings, location *time.Location, dayStart, dayEnd time.Time, daily domain.DailySummary) error {
+func (r *Runner) analyzeDay(ctx context.Context, now time.Time, settings domain.Settings, location *time.Location, dayStart, dayEnd time.Time, daily domain.DailySummary) (err error) {
+	stage := "load_history"
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			r.setAnalysisStatus("unavailable", "panic", r.clock.Now())
+			err = fmt.Errorf("analysis panic")
+			return
+		}
+		if err != nil {
+			r.setAnalysisStatus("unavailable", stage, r.clock.Now())
+			return
+		}
+		r.setAnalysisStatus("available", "", r.clock.Now())
+	}()
 	from := dayStart.AddDate(0, 0, -35)
 	days, err := r.integration.AnalysisData.DailyHistory(ctx, from, dayStart)
 	if err != nil {
@@ -281,16 +323,19 @@ func (r *Runner) analyzeDay(ctx context.Context, now time.Time, settings domain.
 		key := point.At.In(location).Format("2006-01-02")
 		training = append(training, analysis.TrainingDay{Timezone: settings.Timezone, Day: point.At, CoveragePct: point.CoveragePct, InstalledWatts: installed, Hours: hoursByDay[key]})
 	}
+	stage = "baseline"
 	baseline, err := analysis.BuildBaseline(training)
 	if err != nil {
 		return fmt.Errorf("build production baseline: %w", err)
 	}
+	stage = "daylight"
 	daylight, err := daylightHours(dayStart, settings.Latitude, settings.Longitude, location)
 	if err != nil {
 		return fmt.Errorf("calculate analysis daylight: %w", err)
 	}
 	weatherResult := weather.Result{}
 	if r.integration.Weather != nil {
+		stage = "weather"
 		weatherResult = r.integration.Weather.Get(ctx, weather.Request{Latitude: settings.Latitude, Longitude: settings.Longitude, Start: dayStart.UTC(), End: dayEnd.UTC()})
 		r.setWeatherResult(weatherResult, r.clock.Now())
 	}
@@ -298,6 +343,7 @@ func (r *Runner) analyzeDay(ctx context.Context, now time.Time, settings domain.
 	if err != nil {
 		return fmt.Errorf("adapt analysis weather: %w", err)
 	}
+	stage = "evaluation"
 	result, err := analysis.Evaluate(analysis.Input{Timezone: settings.Timezone, Day: dayStart, Baseline: baseline, InstalledWatts: installed,
 		ActualWh: daily.EnergyWh, TelemetryCoveragePct: daily.CoveragePct, Daylight: daylight, Weather: weatherContext})
 	if err != nil {
@@ -305,10 +351,12 @@ func (r *Runner) analyzeDay(ctx context.Context, now time.Time, settings domain.
 	}
 	persisted := domain.DailyAnalysis{Day: dayStart.Format("2006-01-02"), ExpectedWh: result.ExpectedWh, ActualWh: result.ActualWh,
 		Ratio: result.Ratio, Confidence: result.Confidence, Evidence: result.Evidence, Qualifying: result.Qualifying, AnalyzedAt: now.UTC()}
+	stage = "persistence"
 	if err := r.integration.AnalysisWriter.Save(ctx, persisted); err != nil {
 		return fmt.Errorf("save daily analysis: %w", err)
 	}
 	if r.integration.Alerts != nil {
+		stage = "alerts_evaluation"
 		if _, err := r.integration.Alerts.Evaluate(ctx, alerts.Input{At: now.UTC(), WeatherAvailable: weatherResult.Available,
 			TelemetryCoveragePct: daily.CoveragePct, AnalysisDay: persisted.Day, Analysis: &result}); err != nil {
 			return fmt.Errorf("evaluate daily alerts: %w", err)
@@ -341,13 +389,58 @@ func daylightHours(day time.Time, latitude, longitude float64, location *time.Lo
 }
 
 func (r *Runner) runIntegration(ctx context.Context) {
+	var workers sync.WaitGroup
+	if r.integration.Weather != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			r.runWeatherIntegration(ctx)
+		}()
+	}
+	if r.integration.Alerts != nil && r.integration.Events != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			r.runAlertIntegration(ctx)
+		}()
+	}
+	workers.Wait()
+}
+
+func (r *Runner) runAlertIntegration(ctx context.Context) {
 	var events <-chan collector.Event
 	stopEvents := func() {}
 	if r.integration.Events != nil {
-		events, stopEvents = r.integration.Events.Subscribe()
+		if buffered, ok := r.integration.Events.(bufferedEventSource); ok {
+			events, stopEvents = buffered.SubscribeBuffered(alertEventBurst)
+		} else {
+			events, stopEvents = r.integration.Events.Subscribe()
+		}
 	}
 	defer stopEvents()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			r.evaluateCollectorEventSafely(ctx, event)
+		}
+	}
+}
+
+func (r *Runner) runWeatherIntegration(ctx context.Context) {
+	nextDelay := time.Hour
 	refresh := func() {
+		nextDelay = time.Hour
+		defer func() {
+			if recover() != nil {
+				r.setWeatherUnavailable("panic", r.clock.Now())
+				nextDelay = retryDelay
+			}
+		}()
 		settings, location, err := r.loadSettings(ctx)
 		if err != nil {
 			r.setWeatherUnavailable("settings", r.clock.Now())
@@ -363,20 +456,14 @@ func (r *Runner) runIntegration(ctx context.Context) {
 		r.setWeatherResult(result, r.clock.Now())
 	}
 	refresh()
-	timer := r.clock.After(time.Hour)
+	timer := r.clock.After(nextDelay)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case event, ok := <-events:
-			if !ok {
-				events = nil
-				continue
-			}
-			r.evaluateCollectorEvent(ctx, event)
 		case <-timer:
 			refresh()
-			timer = r.clock.After(time.Hour)
+			timer = r.clock.After(nextDelay)
 		}
 	}
 }
@@ -402,9 +489,26 @@ func (r *Runner) setWeatherResult(result weather.Result, at time.Time) {
 	r.mu.Unlock()
 }
 
-func (r *Runner) evaluateCollectorEvent(ctx context.Context, event collector.Event) {
-	if r.integration.Alerts == nil {
+func (r *Runner) evaluateCollectorEventSafely(ctx context.Context, event collector.Event) {
+	defer func() {
+		if recover() != nil {
+			r.setAlertStatus("unavailable", "panic", r.clock.Now())
+		}
+	}()
+	if err := r.evaluateCollectorEvent(ctx, event); err != nil {
+		class := "evaluation"
+		if errors.Is(err, errAlertSettings) {
+			class = "settings"
+		}
+		r.setAlertStatus("unavailable", class, r.clock.Now())
 		return
+	}
+	r.setAlertStatus("available", "", r.clock.Now())
+}
+
+func (r *Runner) evaluateCollectorEvent(ctx context.Context, event collector.Event) error {
+	if r.integration.Alerts == nil {
+		return nil
 	}
 	r.mu.RLock()
 	weatherResult := r.weatherResult
@@ -423,8 +527,8 @@ func (r *Runner) evaluateCollectorEvent(ctx context.Context, event collector.Eve
 		input.PV2Active = snapshot.PV2.Active
 		input.TelemetryCoveragePct = 100
 	}
-	settings, err := r.settings(ctx)
-	if err == nil {
+	settings, settingsErr := r.settings(ctx)
+	if settingsErr == nil {
 		input.SolarElevationDeg = solar.Elevation(input.At, settings.Latitude, settings.Longitude)
 	}
 	for _, hour := range weatherResult.Hours {
@@ -433,7 +537,25 @@ func (r *Runner) evaluateCollectorEvent(ctx context.Context, event collector.Eve
 			break
 		}
 	}
-	_, _ = r.integration.Alerts.Evaluate(ctx, input)
+	if _, err := r.integration.Alerts.Evaluate(ctx, input); err != nil {
+		return err
+	}
+	if settingsErr != nil {
+		return fmt.Errorf("%w: %v", errAlertSettings, settingsErr)
+	}
+	return nil
+}
+
+func (r *Runner) setAlertStatus(state, class string, at time.Time) {
+	r.mu.Lock()
+	r.integrationStatus.Alerts = WorkerStatus{State: state, UpdatedAt: at.UTC(), ErrorClass: class}
+	r.mu.Unlock()
+}
+
+func (r *Runner) setAnalysisStatus(state, class string, at time.Time) {
+	r.mu.Lock()
+	r.integrationStatus.Analysis = WorkerStatus{State: state, UpdatedAt: at.UTC(), ErrorClass: class}
+	r.mu.Unlock()
 }
 
 func (r *Runner) loadSettings(ctx context.Context) (domain.Settings, *time.Location, error) {

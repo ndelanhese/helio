@@ -153,7 +153,7 @@ func applyAlertTransition(ctx context.Context, tx *sql.Tx, transition alerts.Tra
 			return false, fmt.Errorf("open alert %s: %w", transition.Rule, err)
 		}
 	case alerts.TransitionResolved:
-		result, err = tx.ExecContext(ctx, `UPDATE alerts SET state='resolved',resolved_at=? WHERE rule=? AND state='open'`, formatTime(transition.At), transition.Rule)
+		result, err = tx.ExecContext(ctx, `UPDATE alerts SET state='resolved',resolved_at=?,evidence_json=? WHERE rule=? AND state='open'`, formatTime(transition.At), string(encoded), transition.Rule)
 		if err != nil {
 			return false, fmt.Errorf("resolve alert %s: %w", transition.Rule, err)
 		}
@@ -197,7 +197,7 @@ func (r *AlertRepository) List(ctx context.Context, state string) ([]AlertRecord
 		query += ` WHERE state=?`
 		args = append(args, state)
 	}
-	query += ` ORDER BY opened_at,id`
+	query += ` ORDER BY COALESCE(resolved_at,opened_at) DESC,id DESC LIMIT 100`
 	rows, err := r.db.sql.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query alerts: %w", err)

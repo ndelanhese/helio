@@ -24,12 +24,13 @@ type Event struct {
 
 // Hub fans events out without allowing a slow subscriber to block a publisher.
 type Hub struct {
-	mu          sync.Mutex
-	subscribers map[chan Event]struct{}
+	mu                  sync.Mutex
+	subscribers         map[chan Event]struct{}
+	bufferedSubscribers map[chan Event]chan struct{}
 }
 
 func NewHub() *Hub {
-	return &Hub{subscribers: make(map[chan Event]struct{})}
+	return &Hub{subscribers: make(map[chan Event]struct{}), bufferedSubscribers: make(map[chan Event]chan struct{})}
 }
 
 func (h *Hub) Subscribe() (<-chan Event, func()) {
@@ -52,6 +53,34 @@ func (h *Hub) Subscribe() (<-chan Event, func()) {
 	}
 }
 
+// SubscribeBuffered preserves event order for consumers that must evaluate every
+// collector transition. The subscriber chooses the bounded burst capacity; once
+// full, Publish applies backpressure instead of silently replacing an event.
+func (h *Hub) SubscribeBuffered(capacity int) (<-chan Event, func()) {
+	if capacity < 1 {
+		capacity = 1
+	}
+	ch := make(chan Event, capacity)
+	done := make(chan struct{})
+	h.mu.Lock()
+	if h.bufferedSubscribers == nil {
+		h.bufferedSubscribers = make(map[chan Event]chan struct{})
+	}
+	h.bufferedSubscribers[ch] = done
+	h.mu.Unlock()
+
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			close(done)
+			h.mu.Lock()
+			delete(h.bufferedSubscribers, ch)
+			close(ch)
+			h.mu.Unlock()
+		})
+	}
+}
+
 func (h *Hub) Publish(event Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -65,6 +94,12 @@ func (h *Hub) Publish(event Event) {
 			default:
 			}
 			subscriber <- latest
+		}
+	}
+	for subscriber, done := range h.bufferedSubscribers {
+		select {
+		case subscriber <- cloneEvent(event):
+		case <-done:
 		}
 	}
 }
