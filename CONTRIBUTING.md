@@ -10,7 +10,7 @@ Thanks for helping build a trustworthy local solar monitor.
 - Never post logger serials, credentials, public IPs, tokens, or private protocol captures.
 - Read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).
 
-## Good contributions during design phase
+## Good contributions
 
 - SOFAR and Solarman protocol documentation
 - Sanitized read-only frame captures with hardware metadata
@@ -25,8 +25,10 @@ Thanks for helping build a trustworthy local solar monitor.
 2. Keep changes focused.
 3. Add tests for behavior changes.
 4. Update user-facing documentation.
-5. Use clear commits and complete the pull-request template.
-6. Confirm no secrets or device identifiers entered Git history.
+5. Make small, reviewable commits with imperative subjects and no unrelated changes.
+6. Rebase or merge the latest `main`, then complete the pull-request template.
+7. Confirm no secrets or device identifiers entered Git history.
+8. Wait for the required checks—`backend`, `frontend`, `e2e`, `container`, and `codeql`—and address every failure before requesting final review.
 
 All contributions are submitted under Apache License 2.0. By opening a pull request, you confirm you have the right to contribute the material under that license.
 
@@ -39,5 +41,25 @@ All contributions are submitted under Apache License 2.0. By opening a pull requ
 
 ## Development setup
 
-Implementation has not started. Exact build, lint, and test commands will be added with initial scaffold. Until then, design changes must keep Markdown links valid and specifications internally consistent.
+Use Go 1.26.5, Node 24.17.0, npm, Docker with BuildKit, and Ruby (for the dependency-free workflow contract test). Install frontend dependencies from the lockfile:
 
+```sh
+npm --prefix web ci
+```
+
+Before opening or updating a pull request, run the same gates as CI:
+
+```sh
+go test -race ./...
+go vet ./...
+npm --prefix web test -- --run
+npm --prefix web run typecheck
+npm --prefix web run lint
+npm --prefix web run build
+npx --prefix web playwright install --with-deps chromium webkit
+make test-e2e
+make workflow-check
+HELIO_IMAGE=helio:local IMAGE=helio:local make smoke
+```
+
+Browser installation is a one-time local prerequisite. `make workflow-check` uses the repository's digest-pinned actionlint image. Do not commit generated reports, browser traces, credentials, or deployment data.

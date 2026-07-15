@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify workflow contracts
+        run: ruby scripts/workflow_contract_test.rb
+      - name: Test with race detector
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.17.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test -- --run
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.17.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked dependencies
+        run: npm --prefix web ci
+      - name: Install Chromium and system dependencies
+        working-directory: web
+        run: npx playwright install --with-deps chromium webkit
+      - name: Run browser acceptance tests
+        run: make test-e2e
+      - name: Redact and scan failed browser artifacts
+        id: privacy-scan
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          results=web/test-results
+          [ -d "$results" ] || exit 0
+          pattern='password|authorization|cookie|csrf|token|logger.?serial|192\.168\.|10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+'
+          scan_dir="$(mktemp -d)"
+          trap 'rm -rf "$scan_dir"' EXIT
+          trace_index=0
+          while IFS= read -r -d '' trace; do
+            trace_index=$((trace_index + 1))
+            extracted="$scan_dir/trace-$trace_index.txt"
+            unzip -p "$trace" > "$extracted"
+            if LC_ALL=C grep -aEiq "$pattern" "$extracted"; then
+              rm -f "$trace"
+            fi
+          done < <(find "$results" -type f -name 'trace.zip' -print0)
+          if LC_ALL=C grep -RInaE "$pattern" "$results"; then
+            echo "E2E artifact privacy scan failed" >&2
+            exit 1
+          fi
+      - name: Upload privacy-scanned failure artifacts
+        if: failure() && steps.privacy-scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and smoke test
+        run: HELIO_IMAGE=helio:ci IMAGE=helio:ci make smoke

@@ -1,6 +1,6 @@
 IMAGE ?= helio:local
 
-.PHONY: build container container-down container-up hardware-test smoke test test-e2e web
+.PHONY: build container container-down container-up hardware-test smoke test test-e2e web workflow-check workflow-contract
 
 build: web
 	go build ./cmd/helio
@@ -29,3 +29,9 @@ smoke: container
 
 web:
 	npm --prefix web run build
+
+workflow-contract:
+	ruby scripts/workflow_contract_test.rb
+
+workflow-check: workflow-contract
+	docker run --rm -v "$(CURDIR):/repo" -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color

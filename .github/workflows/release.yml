@@ -1,0 +1,119 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Require a strict stable SemVer tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.17.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Backend tests
+        run: go test -race ./...
+      - name: Backend vet
+        run: go vet ./...
+      - name: Install locked frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Frontend tests
+        working-directory: web
+        run: npm test -- --run
+      - name: Frontend typecheck
+        working-directory: web
+        run: npm run typecheck
+      - name: Frontend lint
+        working-directory: web
+        run: npm run lint
+      - name: Frontend build
+        working-directory: web
+        run: npm run build
+      - name: Install browser dependencies
+        working-directory: web
+        run: npx playwright install --with-deps chromium webkit
+      - name: Browser acceptance tests
+        run: make test-e2e
+      - name: Container build and smoke test
+        run: HELIO_IMAGE=helio:release-verify IMAGE=helio:release-verify make smoke
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      IMAGE_NAME: ghcr.io/ndelanhese/helio
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Derive release tags
+        id: metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - name: Publish multi-architecture image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign published digest with GitHub OIDC
+        shell: bash
+        run: cosign sign --yes "${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Create release from changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "Helio $GITHUB_REF_NAME" --notes-file CHANGELOG.md
+      - name: Report immutable image digest
+        env:
+          IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          printf 'Published image digest: **%s**\n' "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
