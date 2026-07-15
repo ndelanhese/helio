@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/storage"
 )
 
@@ -100,6 +101,16 @@ type Principal struct {
 }
 
 func (m *Manager) Bootstrap(ctx context.Context, username, password string) (*Credentials, error) {
+	return m.bootstrap(ctx, username, password, nil, false)
+}
+
+// BootstrapWithSettings atomically creates the initial administrator, session,
+// and normalized settings document.
+func (m *Manager) BootstrapWithSettings(ctx context.Context, username, password string, settings domain.Settings, allowPublicLogger bool) (*Credentials, error) {
+	return m.bootstrap(ctx, username, password, &settings, allowPublicLogger)
+}
+
+func (m *Manager) bootstrap(ctx context.Context, username, password string, settings *domain.Settings, allowPublicLogger bool) (*Credentials, error) {
 	hash, err := hashPassword(password, m.random)
 	if err != nil {
 		return nil, err
@@ -113,7 +124,18 @@ func (m *Manager) Bootstrap(ctx context.Context, username, password string) (*Cr
 	if err != nil {
 		return nil, err
 	}
-	err = m.store.Bootstrap(ctx, storage.User{ID: userID, Username: username, PasswordHash: hash, CreatedAt: now}, session)
+	user := storage.User{ID: userID, Username: username, PasswordHash: hash, CreatedAt: now}
+	if settings == nil {
+		err = m.store.Bootstrap(ctx, user, session)
+	} else {
+		store, ok := m.store.(interface {
+			BootstrapWithSettings(context.Context, storage.User, storage.Session, domain.Settings, ...bool) error
+		})
+		if !ok {
+			return nil, errors.New("bootstrap settings transaction is unavailable")
+		}
+		err = store.BootstrapWithSettings(ctx, user, session, *settings, allowPublicLogger)
+	}
 	if errors.Is(err, storage.ErrBootstrapClosed) {
 		return nil, ErrBootstrapClosed
 	}

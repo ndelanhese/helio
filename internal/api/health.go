@@ -1,0 +1,39 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/ndelanhese/helio/internal/collector"
+)
+
+type ComponentStatus struct {
+	Database    string `json:"database"`
+	Logger      string `json:"logger"`
+	Collector   string `json:"collector"`
+	LastSuccess string `json:"lastSuccess,omitempty"`
+}
+
+func (a *API) componentHealth(w http.ResponseWriter, r *http.Request) {
+	status := ComponentStatus{Database: "ok", Logger: "unknown", Collector: "idle"}
+	if a.dependencies.Components != nil {
+		status = a.dependencies.Components(r.Context())
+	} else {
+		state := a.dependencies.Latest()
+		status = componentStatusFromState(status, state)
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func componentStatusFromState(status ComponentStatus, state collector.State) ComponentStatus {
+	if state.Snapshot != nil {
+		status.Collector = "running"
+		status.Logger = "online"
+	}
+	if state.Stale || state.LastError != "" {
+		status.Logger = "offline"
+	}
+	if !state.LastSuccess.IsZero() {
+		status.LastSuccess = state.LastSuccess.UTC().Format("2006-01-02T15:04:05Z07:00")
+	}
+	return status
+}

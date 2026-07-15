@@ -123,6 +123,39 @@ func (r *TelemetryRepository) History(ctx context.Context, from, to time.Time) (
 	return history(ctx, r.db.sql, from, to)
 }
 
+// HistorySnapshots returns the persisted export columns in chronological order.
+func (r *TelemetryRepository) HistorySnapshots(ctx context.Context, from, to time.Time) ([]domain.TelemetrySnapshot, error) {
+	if !from.Before(to) {
+		return nil, errors.New("telemetry history: from must be before to")
+	}
+	rows, err := r.db.sql.QueryContext(ctx, `
+		SELECT observed_at, ac_power_w, energy_today_wh, status
+		FROM telemetry_minute WHERE observed_at >= ? AND observed_at < ? ORDER BY observed_at`,
+		formatTime(from), formatTime(to))
+	if err != nil {
+		return nil, fmt.Errorf("query telemetry export: %w", err)
+	}
+	defer rows.Close()
+	snapshots := make([]domain.TelemetrySnapshot, 0)
+	for rows.Next() {
+		var raw string
+		var snapshot domain.TelemetrySnapshot
+		if err := rows.Scan(&raw, &snapshot.ACPowerW, &snapshot.EnergyTodayWh, &snapshot.Status); err != nil {
+			return nil, fmt.Errorf("scan telemetry export: %w", err)
+		}
+		snapshot.ObservedAt, err = time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse telemetry export time: %w", err)
+		}
+		snapshot.ObservedAt = snapshot.ObservedAt.UTC()
+		snapshots = append(snapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate telemetry export: %w", err)
+	}
+	return snapshots, nil
+}
+
 func history(ctx context.Context, queryer telemetryQueryer, from, to time.Time) ([]domain.HistoryPoint, error) {
 	if !from.Before(to) {
 		return nil, errors.New("telemetry history: from must be before to")

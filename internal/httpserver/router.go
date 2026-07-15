@@ -10,7 +10,10 @@ import (
 	"github.com/ndelanhese/helio/internal/webui"
 )
 
-type Dependencies struct{ Ready func() error }
+type Dependencies struct {
+	Ready func() error
+	API   http.Handler
+}
 
 func New(d Dependencies) http.Handler {
 	mux := http.NewServeMux()
@@ -24,6 +27,12 @@ func New(d Dependencies) http.Handler {
 		}
 		jsonResponse(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
+	if d.API != nil {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+			mux.Handle(method+" /api/", d.API)
+		}
+		mux.Handle("GET /health/components", d.API)
+	}
 	assets, err := fs.Sub(webui.Assets, "dist")
 	if err != nil {
 		panic(err)
