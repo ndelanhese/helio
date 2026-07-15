@@ -33,6 +33,16 @@ func TestBuildReadRequest(t *testing.T) {
 	}
 }
 
+func TestBuildReadRequestUsesV5WireControlCode(t *testing.T) {
+	got, err := BuildReadRequest(123456789, 7, 1, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[3] != 0x10 || got[4] != 0x45 {
+		t.Fatalf("control bytes = %02x %02x, want 10 45", got[3], got[4])
+	}
+}
+
 func TestBuildReadRequestRejectsInvalidCount(t *testing.T) {
 	for _, count := range []uint16{0, 126} {
 		if _, err := BuildReadRequest(123456789, 7, 1, 0, count); !errors.Is(err, ErrMalformedFrame) {
@@ -43,6 +53,21 @@ func TestBuildReadRequestRejectsInvalidCount(t *testing.T) {
 
 func TestParseReadResponse(t *testing.T) {
 	got, err := ParseReadResponse(fixture(t, "read_holding_response.hex"), 123456789, 7, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != 0x1234 {
+		t.Fatalf("got %04x, want [1234]", got)
+	}
+}
+
+func TestParseAcceptsLoggerManagedSecondSequenceByte(t *testing.T) {
+	frame := fixture(t, "read_holding_response.hex")
+	frame[3], frame[4] = 0x10, 0x15
+	frame[6] = 0x42
+	refreshFrameChecksum(frame)
+
+	got, err := ParseReadResponse(frame, 123456789, 7, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +211,7 @@ func responseFrame(modbus []byte) []byte {
 	frame := make([]byte, 11, 11+len(payload)+2)
 	frame[0] = 0xA5
 	binary.LittleEndian.PutUint16(frame[1:3], uint16(len(payload)))
-	binary.LittleEndian.PutUint16(frame[3:5], 0x1015)
+	binary.LittleEndian.PutUint16(frame[3:5], 0x1510)
 	binary.LittleEndian.PutUint16(frame[5:7], 7)
 	binary.LittleEndian.PutUint32(frame[7:11], 123456789)
 	frame = append(frame, payload...)

@@ -28,7 +28,7 @@ type Client struct {
 	gate     chan struct{}
 	config   Config
 	dialer   Dialer
-	sequence uint16
+	sequence byte
 	conn     RoundTripper
 }
 
@@ -63,7 +63,7 @@ func (c *Client) ReadHoldingRegisters(ctx context.Context, slave byte, start, co
 			return nil, err
 		}
 		sequence := c.nextSequence()
-		request, err := BuildReadRequest(c.config.Serial, sequence, slave, start, count)
+		request, err := BuildReadRequest(c.config.Serial, uint16(sequence), slave, start, count)
 		if err != nil {
 			return nil, err
 		}
@@ -77,7 +77,7 @@ func (c *Client) ReadHoldingRegisters(ctx context.Context, slave byte, start, co
 		response, err := c.conn.RoundTrip(requestCtx, request)
 		if err == nil {
 			var registers []uint16
-			registers, err = ParseReadResponse(response, c.config.Serial, sequence, slave, count)
+			registers, err = ParseReadResponse(response, c.config.Serial, uint16(sequence), slave, count)
 			if err == nil {
 				return registers, nil
 			}
@@ -91,7 +91,7 @@ func (c *Client) ReadHoldingRegisters(ctx context.Context, slave byte, start, co
 	return nil, lastErr
 }
 
-func (c *Client) nextSequence() uint16 {
+func (c *Client) nextSequence() byte {
 	c.sequence++
 	if c.sequence == 0 {
 		c.sequence++
