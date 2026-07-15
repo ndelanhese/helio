@@ -5,7 +5,7 @@
 
 html { background: var(--canvas); color: var(--text); font-family: var(--font-body); scrollbar-gutter: stable; }
 
-body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--canvas); }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--canvas); color: var(--text); }
 
 button, input, select, textarea { color: inherit; font: inherit; }
 

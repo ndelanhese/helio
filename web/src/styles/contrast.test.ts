@@ -5,11 +5,13 @@ describe('editorial contrast tokens', () => {
   it('uses an accessible dark semantic eyebrow in light mode and sun only on dark/masthead contexts', () => {
     const tokens = readFileSync('src/styles/tokens.css', 'utf8')
     const components = readFileSync('src/styles/components.css', 'utf8')
+    const global = readFileSync('src/styles/global.css', 'utf8')
 
     expect(tokens).toMatch(/:root\s*{[^}]*--eyebrow:\s*#173B2D/s)
     expect(tokens).toMatch(/data-theme='dark'[^}]*--eyebrow:\s*#F0C75E/s)
     expect(components).toMatch(/\.eyebrow\s*{[^}]*color:\s*var\(--eyebrow\)/s)
     expect(components).toMatch(/\.access-masthead p\s*{[^}]*color:\s*var\(--sun\)/s)
+    expect(global).toMatch(/body\s*{[^}]*color:\s*var\(--text\)/s)
     expect(contrast('#173B2D', '#F3F1E8')).toBeGreaterThanOrEqual(4.5)
   })
 })
