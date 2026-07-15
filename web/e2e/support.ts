@@ -1,19 +1,14 @@
-import { expect, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+import { expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { join } from 'node:path'
 
-// Public, deterministic TEST identifiers. They are intentionally unrelated to a real Helio installation.
 export const TEST_ADMIN = 'TEST_ADMIN'
 export const TEST_PASSWORD = 'Helio-TEST-2026!'
 export const TEST_LOGGER_HOST = '192.0.2.44'
 export const TEST_LOGGER_SERIAL = '42424242'
+export const TEST_CONTROL_TOKEN = 'HELIO-E2E-CONTROL-v1'
 export const FIXED_NOW = new Date('2026-07-14T15:43:00.000Z')
 
 export type TestTheme = 'system' | 'light' | 'dark'
-
-export async function resetScenario(request: APIRequestContext, scenario = 'default') {
-  const response = await request.post('/__test/scenario', { data: { name: scenario } })
-  expect(response.ok()).toBeTruthy()
-}
 
 export async function preparePage(page: Page, theme: TestTheme = 'light') {
   await page.clock.install({ time: FIXED_NOW })
@@ -39,16 +34,21 @@ export async function expectNoHorizontalOverflow(page: Page) {
 }
 
 export async function expectTouchTargets(page: Page) {
-  for (const role of ['button', 'link'] as const) {
-    const controls = page.getByRole(role)
-    for (let index = 0; index < await controls.count(); index += 1) {
-      const control = controls.nth(index)
-      if (!(await control.isVisible())) continue
-      const box = await control.boundingBox()
-      expect(box?.height, `${role} ${await control.getAttribute('aria-label') ?? await control.innerText()}`).toBeGreaterThanOrEqual(44)
-      expect(box?.width, `${role} ${await control.getAttribute('aria-label') ?? await control.innerText()}`).toBeGreaterThanOrEqual(44)
-    }
-  }
+  const undersized = await page.evaluate(() => {
+    const selector = 'button,a[href],input,select,textarea,[role="checkbox"],[role="radio"],[role="switch"]'
+    return [...document.querySelectorAll<HTMLElement>(selector)].flatMap((element) => {
+      const style = getComputedStyle(element)
+      const hidden = element.hidden || element.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden'
+        || (element instanceof HTMLInputElement && element.type === 'hidden')
+      if (hidden || element.getClientRects().length === 0) return []
+      let target = element
+      if (element instanceof HTMLInputElement && (element.type === 'checkbox' || element.type === 'radio')) target = element.closest('label') ?? element
+      const box = target.getBoundingClientRect()
+      if (box.width >= 44 && box.height >= 44) return []
+      return [{ height: Math.round(box.height), html: element.outerHTML.slice(0, 180), width: Math.round(box.width) }]
+    })
+  })
+  expect(undersized).toEqual([])
 }
 
 export async function expectAccessible(page: Page) {
@@ -61,6 +61,45 @@ export async function expectAccessible(page: Page) {
   expect(violations).toEqual([])
 }
 
-export async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
-  await testInfo.attach(name, { body: await page.screenshot({ animations: 'disabled', fullPage: true }), contentType: 'image/png' })
+export async function expectPageGate(page: Page) {
+  await expectNoHorizontalOverflow(page)
+  await expectTouchTargets(page)
+  await expectAccessible(page)
+}
+
+export async function startKeyboard(page: Page) {
+  await page.locator('body').waitFor({ state: 'attached' })
+  await page.evaluate(() => {
+    document.body.tabIndex = -1
+    document.body.focus()
+  })
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBeTruthy()
+}
+
+export async function tabUntil(page: Page, target: Locator, projectName: string, direction: 'forward' | 'backward' = 'forward') {
+  const visited: string[] = []
+  const base = projectName === 'mobile-webkit' ? 'Alt+Tab' : 'Tab'
+  const key = direction === 'backward' ? `Shift+${base}` : base
+  for (let index = 0; index < 80; index += 1) {
+    await page.keyboard.press(key)
+    const state = await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null
+      return { label: active?.getAttribute('aria-label') || active?.textContent?.trim() || active?.getAttribute('name') || active?.tagName || '', visible: active?.matches(':focus-visible') ?? false }
+    })
+    visited.push(state.label.replace(/\s+/g, ' ').slice(0, 100))
+    if (await target.evaluate((element) => element === document.activeElement)) {
+      await expect(target).toBeFocused()
+      expect(state.visible).toBeTruthy()
+      return visited
+    }
+  }
+  throw new Error(`Keyboard traversal did not reach target. Visited: ${visited.join(' → ')}`)
+}
+
+export function screenshotOptions() {
+  return { animations: 'disabled' as const, caret: 'hide' as const, fullPage: true }
+}
+
+export function isScreenshotProject(testInfo: TestInfo) {
+  return testInfo.project.name === 'desktop-chromium'
 }

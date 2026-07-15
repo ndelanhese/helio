@@ -1,17 +1,32 @@
-import { expect, test } from '@playwright/test'
-import { attachScreenshot, expectAccessible, expectNoHorizontalOverflow, preparePage, resetScenario } from './support'
+import { readFile } from 'node:fs/promises'
+import { test, expect } from './fixtures'
+import { isScreenshotProject, preparePage, screenshotOptions, startKeyboard, tabUntil } from './support'
 
-test('history exposes an explicit gap and exports the selected range', async ({ page, request }, testInfo) => {
-  await resetScenario(request, 'history-gap')
+test('history exposes a gap and exports the exact selected range by keyboard', async ({ page, setScenario }, testInfo) => {
+  await setScenario('history-gap')
   await preparePage(page)
   await page.goto('/history')
   await expect(page.getByRole('heading', { name: 'Histórico solar' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Sem dados entre/ })).toBeVisible()
-  await expectNoHorizontalOverflow(page)
-  await expectAccessible(page)
+  const selected = new URL(page.url()).searchParams
+  await startKeyboard(page)
+  const exportLink = page.getByRole('link', { name: 'Baixar CSV' })
+  await tabUntil(page, exportLink, testInfo.project.name)
+  const exportURL = new URL(await exportLink.getAttribute('href') ?? '', page.url())
+  const downloadPromise = page.waitForEvent('download')
+  await page.keyboard.press('Enter')
+  const download = await downloadPromise
+  const exported = exportURL.searchParams
+  expect(exported.get('from')).toBe(selected.get('from'))
+  expect(exported.get('to')).toBe(selected.get('to'))
+  expect(await readFile(await download.path(), 'utf8')).toBe('timestamp,power_w,energy_wh,status\n2026-07-14T12:00:00Z,2070,3450,ok\n')
+})
 
-  const download = page.waitForEvent('download')
-  await page.getByRole('link', { name: 'Baixar CSV' }).press('Enter')
-  await expect((await download).suggestedFilename()).toBe('helio-history.csv')
-  if (testInfo.project.name === 'desktop-chromium') await attachScreenshot(page, testInfo, 'history-gap')
+test('@screenshot History gap desktop', async ({ page, setScenario }, testInfo) => {
+  test.skip(!isScreenshotProject(testInfo))
+  await setScenario('history-gap')
+  await preparePage(page)
+  await page.goto('/history')
+  await expect(page.getByRole('heading', { name: 'Histórico solar' })).toBeVisible()
+  await expect(page).toHaveScreenshot('history-gap-desktop.png', screenshotOptions())
 })

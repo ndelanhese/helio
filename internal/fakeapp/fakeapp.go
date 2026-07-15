@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -46,13 +45,19 @@ type liveState struct {
 	Stale       bool          `json:"stale"`
 }
 
+type fakeSession struct {
+	CSRF     string
+	Username string
+}
+
 type fixtureServer struct {
 	mu            sync.Mutex
 	bootstrapOpen bool
-	authenticated bool
 	settings      map[string]any
 	live          liveState
 	subscribers   map[chan []byte]struct{}
+	sessions      map[string]fakeSession
+	sessionSerial uint64
 }
 
 func main() {
@@ -62,7 +67,7 @@ func main() {
 }
 
 func newFixtureServer() *fixtureServer {
-	s := &fixtureServer{subscribers: make(map[chan []byte]struct{})}
+	s := &fixtureServer{subscribers: make(map[chan []byte]struct{}), sessions: make(map[string]fakeSession)}
 	s.reset("default")
 	return s
 }
@@ -76,17 +81,17 @@ func (s *fixtureServer) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/bootstrap/status", s.bootstrapStatus)
 	mux.HandleFunc("POST /api/v1/bootstrap", s.bootstrap)
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
-	mux.HandleFunc("GET /api/v1/auth/session", s.session)
-	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
-	mux.HandleFunc("GET /api/v1/live", s.getLive)
-	mux.HandleFunc("GET /api/v1/live/events", s.events)
-	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
-	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
-	mux.HandleFunc("GET /api/v1/history", s.history)
-	mux.HandleFunc("GET /api/v1/history.csv", s.historyCSV)
-	mux.HandleFunc("GET /api/v1/insights", s.insights)
-	mux.HandleFunc("GET /api/v1/alerts", s.alerts)
-	mux.HandleFunc("GET /api/v1/data/backup", s.backup)
+	mux.HandleFunc("GET /api/v1/auth/session", s.protected(false, s.session))
+	mux.HandleFunc("POST /api/v1/auth/logout", s.protected(true, s.logout))
+	mux.HandleFunc("GET /api/v1/live", s.protected(false, s.getLive))
+	mux.HandleFunc("GET /api/v1/live/events", s.protected(false, s.events))
+	mux.HandleFunc("GET /api/v1/settings", s.protected(false, s.getSettings))
+	mux.HandleFunc("PUT /api/v1/settings", s.protected(true, s.putSettings))
+	mux.HandleFunc("GET /api/v1/history", s.protected(false, s.history))
+	mux.HandleFunc("GET /api/v1/history.csv", s.protected(false, s.historyCSV))
+	mux.HandleFunc("GET /api/v1/insights", s.protected(false, s.insights))
+	mux.HandleFunc("GET /api/v1/alerts", s.protected(false, s.alerts))
+	mux.HandleFunc("GET /api/v1/data/backup", s.protected(false, s.backup))
 	mux.HandleFunc("GET /health/components", s.components)
 	mux.Handle("GET /", productionAssets())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +124,8 @@ func (s *fixtureServer) reset(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bootstrapOpen = name == "bootstrap-open"
-	s.authenticated = !s.bootstrapOpen
+	s.sessions = make(map[string]fakeSession)
+	s.sessionSerial = 0
 	if name == "default" || name == "bootstrap-open" || name == "history-gap" {
 		s.settings = defaultSettings()
 		s.live = liveState{Snapshot: baseSnapshot(2070, fixedTimestamp), LastSuccess: fixedTimestamp, Stale: false}
@@ -139,6 +145,10 @@ func (s *fixtureServer) reset(name string) {
 }
 
 func (s *fixtureServer) scenario(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Helio-Test-Token") != "HELIO-E2E-CONTROL-v1" {
+		writeError(w, http.StatusForbidden, "forbidden", "test control token is invalid")
+		return
+	}
 	var body struct {
 		Name string `json:"name"`
 	}
@@ -151,8 +161,29 @@ func (s *fixtureServer) scenario(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_scenario", "unknown deterministic scenario")
 		return
 	}
-	s.reset(body.Name)
+	if body.Name == "default" || body.Name == "bootstrap-open" || body.Name == "history-gap" {
+		s.reset(body.Name)
+	} else {
+		s.transition(body.Name)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *fixtureServer) transition(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch name {
+	case "next-snapshot":
+		s.live = liveState{Snapshot: baseSnapshot(2310, "2026-07-14T15:42:30Z"), LastSuccess: "2026-07-14T15:42:30Z", Stale: false}
+	case "logger-outage":
+		s.live.Stale = true
+		s.live.LastError = "TEST logger unavailable"
+		s.live.LastErrorAt = fixedRecoveryAt
+		s.live.ErrorClass = "communication"
+	case "recovery":
+		s.live = liveState{Snapshot: baseSnapshot(2450, fixedRecoveryAt), LastSuccess: fixedRecoveryAt, Stale: false}
+	}
+	s.broadcastLocked(name)
 }
 
 func (s *fixtureServer) broadcastLocked(name string) {
@@ -197,9 +228,10 @@ func (s *fixtureServer) bootstrap(w http.ResponseWriter, r *http.Request) {
 	if settings, ok := body["settings"].(map[string]any); ok {
 		s.settings = settings
 	}
-	s.bootstrapOpen, s.authenticated = false, true
+	s.bootstrapOpen = false
+	credentials := s.issueSessionLocked(w, testAdmin)
 	s.mu.Unlock()
-	writeJSON(w, http.StatusCreated, credentials())
+	writeJSON(w, http.StatusCreated, credentials)
 }
 
 func (s *fixtureServer) login(w http.ResponseWriter, r *http.Request) {
@@ -216,30 +248,69 @@ func (s *fixtureServer) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.authenticated = true
-	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, credentials())
-}
-
-func credentials() map[string]any {
-	return map[string]any{"csrfToken": "TEST-CSRF", "expiresAt": "2026-07-15T15:43:00Z", "userId": "TEST-USER", "username": testAdmin}
-}
-
-func (s *fixtureServer) session(w http.ResponseWriter, _ *http.Request) {
-	s.mu.Lock()
-	authenticated := s.authenticated
-	s.mu.Unlock()
-	if !authenticated {
-		writeError(w, 401, "unauthorized", "authentication required")
+	if s.bootstrapOpen {
+		s.mu.Unlock()
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "username or password is invalid")
 		return
 	}
-	writeJSON(w, http.StatusOK, credentials())
+	credentials := s.issueSessionLocked(w, body.Username)
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, credentials)
 }
 
-func (s *fixtureServer) logout(w http.ResponseWriter, _ *http.Request) {
+func (s *fixtureServer) issueSessionLocked(w http.ResponseWriter, username string) map[string]any {
+	s.sessionSerial++
+	token := fmt.Sprintf("TEST-OPAQUE-%06d", s.sessionSerial)
+	csrf := fmt.Sprintf("TEST-CSRF-%06d", s.sessionSerial)
+	s.sessions[token] = fakeSession{CSRF: csrf, Username: username}
+	http.SetCookie(w, &http.Cookie{Name: "helio_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Expires: time.Date(2026, 7, 15, 15, 43, 0, 0, time.UTC)})
+	return map[string]any{"csrfToken": csrf, "expiresAt": "2026-07-15T15:43:00Z", "userId": "TEST-USER", "username": username}
+}
+
+func (s *fixtureServer) protected(csrf bool, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		open := s.bootstrapOpen
+		cookie, err := r.Cookie("helio_session")
+		session, authenticated := s.sessions[cookieValue(cookie, err)]
+		s.mu.Unlock()
+		if !authenticated {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+			return
+		}
+		if open {
+			writeError(w, http.StatusServiceUnavailable, "bootstrap_required", "initial setup is required")
+			return
+		}
+		if csrf && (r.Header.Get("X-CSRF-Token") != session.CSRF || r.Header.Get("Origin") != "http://"+r.Host) {
+			writeError(w, http.StatusForbidden, "forbidden", "request origin or CSRF token is invalid")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func cookieValue(cookie *http.Cookie, err error) string {
+	if err != nil || cookie == nil {
+		return ""
+	}
+	return cookie.Value
+}
+
+func (s *fixtureServer) session(w http.ResponseWriter, r *http.Request) {
+	cookie, _ := r.Cookie("helio_session")
 	s.mu.Lock()
-	s.authenticated = false
+	session := s.sessions[cookie.Value]
 	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"csrfToken": session.CSRF, "expiresAt": "2026-07-15T15:43:00Z", "userId": "TEST-USER", "username": session.Username})
+}
+
+func (s *fixtureServer) logout(w http.ResponseWriter, r *http.Request) {
+	cookie, _ := r.Cookie("helio_session")
+	s.mu.Lock()
+	delete(s.sessions, cookie.Value)
+	s.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "helio_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -322,13 +393,16 @@ func (s *fixtureServer) history(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"from": from.UTC().Format(time.RFC3339), "to": to, "resolution": resolution, "points": points})
 }
 
-func (s *fixtureServer) historyCSV(w http.ResponseWriter, _ *http.Request) {
+func (s *fixtureServer) historyCSV(w http.ResponseWriter, r *http.Request) {
+	from, fromErr := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	to, toErr := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if fromErr != nil || toErr != nil || !from.Before(to) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_range", "from and to must define an increasing RFC3339 range")
+		return
+	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="helio-history.csv"`)
-	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"timestamp", "power_w", "energy_today_wh", "status"})
-	_ = writer.Write([]string{fixedTimestamp, "2070", "12340", "normal"})
-	writer.Flush()
+	_, _ = w.Write([]byte("timestamp,power_w,energy_wh,status\n2026-07-14T12:00:00Z,2070,3450,ok\n"))
 }
 
 func (s *fixtureServer) insights(w http.ResponseWriter, _ *http.Request) {

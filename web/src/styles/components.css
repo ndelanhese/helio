@@ -68,13 +68,14 @@
   gap: var(--space-6);
   padding: var(--space-5) var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border);
-  background: var(--text);
-  color: var(--canvas);
+  background: #173B2D;
+  color: #F3F1E8;
 }
 
 .access-wordmark {
   display: flex;
   width: fit-content;
+  min-height: 44px;
   align-items: baseline;
   gap: var(--space-3);
   font-family: var(--font-editorial);
@@ -102,7 +103,7 @@
 .eyebrow { color: var(--eyebrow); }
 .access-masthead p { color: var(--sun); }
 .access-masthead strong { font-family: var(--font-editorial); font-size: clamp(1.65rem, 7vw, 3.3rem); font-weight: 400; line-height: 1.04; letter-spacing: -.04em; }
-.access-masthead small { color: color-mix(in srgb, var(--canvas) 70%, var(--text)); font-size: .75rem; }
+.access-masthead small { color: #C8D3CA; font-size: .75rem; }
 .access-content { width: min(100%, 780px); padding: clamp(32px, 7vw, 72px) var(--space-5) var(--space-8); }
 
 .onboarding-progress { margin-bottom: var(--space-7); }
@@ -433,7 +434,7 @@
 .settings-section-body { min-width: 0; }
 .settings-section .form-field input { background: transparent; }
 .settings-section .capacity-output { margin-top: var(--space-2); }
-.component-health { display: grid; gap: var(--space-5); margin-top: var(--space-7); padding-top: var(--space-5); border-top: 1px solid var(--text); }
+.component-health { display: grid; gap: var(--space-5); margin-top: var(--space-7); padding-top: var(--space-5); border-top: 1px solid var(--text); color: var(--text); }
 .component-health-heading h3 { margin: 0; font-family: var(--font-editorial); font-size: 1.65rem; font-weight: 400; }
 .component-health-heading p, .component-health > p, .inline-retry p { max-width: 50ch; margin: var(--space-2) 0 0; color: var(--muted); font-size: .78rem; line-height: 1.55; }
 .component-health dl { display: grid; margin: 0; border-top: 1px solid var(--border); }

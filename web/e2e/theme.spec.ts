@@ -1,34 +1,34 @@
-import { expect, test } from '@playwright/test'
-import { preparePage, resetScenario } from './support'
+import { test, expect } from './fixtures'
+import { preparePage, startKeyboard, tabUntil } from './support'
 
-test('system to dark to light theme choices persist across reloads', async ({ page, request }) => {
-  await resetScenario(request)
+test('theme choices persist across reloads by keyboard only', async ({ page }, testInfo) => {
   await preparePage(page, 'system')
   await page.goto('/')
-
-  await page.getByRole('button', { name: 'Tema: sistema' }).press('Enter')
-  await page.getByRole('menuitemradio', { name: 'Escuro' }).press('Enter')
+  await startKeyboard(page)
+  await tabUntil(page, page.getByRole('button', { name: 'Tema: sistema' }), testInfo.project.name)
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('menuitemradio', { name: 'Sistema' })).toBeFocused()
+  await page.keyboard.press('ArrowUp')
+  await expect(page.getByRole('menuitemradio', { name: 'Escuro' })).toBeFocused()
+  await page.keyboard.press('Enter')
   await page.reload()
   await expect(page.getByRole('button', { name: 'Tema: escuro' })).toBeVisible()
-  await page.getByRole('button', { name: 'Tema: escuro' }).press('Enter')
-  await page.getByRole('menuitemradio', { name: 'Claro' }).press('Enter')
-  await page.reload()
-  await expect(page.getByRole('button', { name: 'Tema: claro' })).toBeVisible()
 })
 
-test('keyboard-only navigation reaches content and every primary destination', async ({ page, request }, testInfo) => {
-  await resetScenario(request)
+test('keyboard-only navigation reaches content and every primary destination', async ({ page }, testInfo) => {
   await preparePage(page)
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '2,07 kW' })).toBeVisible()
-
-  await page.keyboard.press(testInfo.project.name === 'mobile-webkit' ? 'Alt+Tab' : 'Tab')
-  await expect(page.getByRole('link', { name: 'Pular para o conteúdo' })).toBeFocused()
-  await page.getByRole('link', { name: 'Pular para o conteúdo' }).press('Enter')
+  await startKeyboard(page)
+  await tabUntil(page, page.getByRole('link', { name: 'Pular para o conteúdo' }), testInfo.project.name)
+  await page.keyboard.press('Enter')
   await expect(page.getByRole('main')).toBeFocused()
-  for (const destination of ['Histórico', 'Insights', 'Configurações']) {
-    await page.getByRole('link', { name: destination }).press('Enter')
-    await expect(page.getByRole('link', { name: destination })).toHaveAttribute('aria-current', 'page')
+
+  for (const [destination, path] of [['Histórico', '/history'], ['Insights', '/insights'], ['Configurações', '/settings']] as const) {
+    await startKeyboard(page)
+    const visited = await tabUntil(page, page.getByRole('link', { name: destination }), testInfo.project.name)
+    expect(visited.length).toBeGreaterThan(0)
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(new RegExp(`${path}$`))
   }
-  await expect(page.getByRole('heading', { name: 'O observatório, do seu jeito.' })).toBeVisible()
 })

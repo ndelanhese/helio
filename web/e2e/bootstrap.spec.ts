@@ -1,26 +1,44 @@
-import { expect, test } from '@playwright/test'
-import { expectAccessible, preparePage, resetScenario, TEST_ADMIN, TEST_LOGGER_HOST, TEST_LOGGER_SERIAL, TEST_PASSWORD } from './support'
+import { test, expect } from './fixtures'
+import { expectAccessible, preparePage, startKeyboard, tabUntil, TEST_ADMIN, TEST_LOGGER_HOST, TEST_LOGGER_SERIAL, TEST_PASSWORD } from './support'
 
-test('first bootstrap completes the five-step local setup with the keyboard', async ({ page, request }) => {
-  await resetScenario(request, 'bootstrap-open')
+test('first bootstrap completes every accessible step by keyboard only', async ({ page, setScenario }, testInfo) => {
+  await setScenario('bootstrap-open')
   await preparePage(page)
   await page.goto('/history')
   await expect(page).toHaveURL(/\/bootstrap$/)
-  await expect(page.getByRole('heading', { name: 'Crie a conta local' })).toBeVisible()
   await expectAccessible(page)
 
-  await page.getByLabel('Usuário administrador').fill(TEST_ADMIN)
-  await page.getByLabel('Senha', { exact: true }).fill(TEST_PASSWORD)
-  await page.getByLabel('Confirmar senha').fill(TEST_PASSWORD)
-  await page.getByRole('button', { name: 'Continuar para o logger' }).press('Enter')
-  await page.getByLabel('Endereço IP do logger').fill(TEST_LOGGER_HOST)
-  await page.getByLabel('Número de série do logger').fill(TEST_LOGGER_SERIAL)
-  await page.getByRole('button', { name: 'Continuar para os painéis' }).press('Enter')
-  await expect(page.getByRole('heading', { name: 'Descreva os painéis' })).toBeVisible()
-  await page.getByRole('button', { name: 'Continuar para local e tarifa' }).press('Enter')
-  await page.getByRole('button', { name: 'Revisar configuração' }).press('Enter')
-  await expect(page.getByRole('region', { name: 'Revisão da configuração' })).toBeVisible()
-  await page.getByRole('button', { name: 'Criar Helio' }).press('Enter')
+  await startKeyboard(page)
+  await tabUntil(page, page.getByLabel('Usuário administrador'), testInfo.project.name)
+  await page.keyboard.type(TEST_ADMIN)
+  await tabUntil(page, page.getByLabel('Senha', { exact: true }), testInfo.project.name)
+  await page.keyboard.type(TEST_PASSWORD)
+  await tabUntil(page, page.getByLabel('Confirmar senha'), testInfo.project.name)
+  await page.keyboard.type(TEST_PASSWORD)
+  await tabUntil(page, page.getByRole('button', { name: 'Continuar para o logger' }), testInfo.project.name)
+  await page.keyboard.press('Enter')
+
+  await expect(page.getByRole('heading', { name: 'Conecte o logger' })).toBeVisible()
+  await expectAccessible(page)
+  await startKeyboard(page)
+  await tabUntil(page, page.getByLabel('Endereço IP do logger'), testInfo.project.name)
+  await page.keyboard.type(TEST_LOGGER_HOST)
+  await tabUntil(page, page.getByLabel('Número de série do logger'), testInfo.project.name)
+  await page.keyboard.type(TEST_LOGGER_SERIAL)
+  await tabUntil(page, page.getByRole('button', { name: 'Continuar para os painéis' }), testInfo.project.name)
+  await page.keyboard.press('Enter')
+
+  for (const [heading, button] of [
+    ['Descreva os painéis', 'Continuar para local e tarifa'],
+    ['Local e tarifa', 'Revisar configuração'],
+    ['Tudo pronto para começar', 'Criar Helio'],
+  ] as const) {
+    await expect(page.getByRole('heading', { name: heading })).toBeVisible()
+    await expectAccessible(page)
+    await startKeyboard(page)
+    await tabUntil(page, page.getByRole('button', { name: button }), testInfo.project.name)
+    await page.keyboard.press('Enter')
+  }
 
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('heading', { name: '2,07 kW' })).toBeVisible()
