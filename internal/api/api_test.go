@@ -173,6 +173,31 @@ func TestSettingsPresenceRangeHistoryCSVAndBackup(t *testing.T) {
 	}
 }
 
+func TestHistoryResolutionCoalescesPointsIntoUTCBuckets(t *testing.T) {
+	f := newFixture(t)
+	cookie, _ := bootstrap(t, f)
+	base := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	for minute, power := range []float64{100, 200} {
+		if err := f.repo.SaveMinute(context.Background(), domain.TelemetrySnapshot{ObservedAt: base.Add(time.Duration(minute) * time.Minute), ACPowerW: power}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := "/api/v1/history?from=" + base.Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339) + "&resolution=hour"
+	rec := request(t, f.handler, http.MethodGet, target, "", cookie, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history: %d %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Points []domain.HistoryPoint `json:"points"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Points) != 1 || response.Points[0].PowerW != 150 || !response.Points[0].At.Equal(base) {
+		t.Fatalf("hour points: %#v", response.Points)
+	}
+}
+
 func TestSSEInitialStateSnapshotAndCancellation(t *testing.T) {
 	f := newFixture(t)
 	cookie, _ := bootstrap(t, f)
