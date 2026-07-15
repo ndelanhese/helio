@@ -375,12 +375,13 @@ func TestComponentHealthWeatherUsesOnlyPublicAvailabilityEnum(t *testing.T) {
 }
 
 func TestComponentHealthIncludesCurrentWeatherReadings(t *testing.T) {
-	cloudCover, irradiance := 43.0, 612.0
+	temperature, precipitation, cloudCover, windSpeed, irradiance := 22.4, 0.3, 43.0, 14.2, 645.8
+	weatherCode := 61
 	handler := api.New(api.Dependencies{Components: func(context.Context) api.ComponentStatus {
-		return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: "available", CloudCoverPct: &cloudCover, IrradianceWM2: &irradiance}
+		return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: "available", TemperatureC: &temperature, PrecipitationMM: &precipitation, WeatherCode: &weatherCode, CloudCoverPct: &cloudCover, WindSpeedKMH: &windSpeed, IrradianceWM2: &irradiance}
 	}})
 	rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"cloudCoverPct":43`) || !strings.Contains(rec.Body.String(), `"irradianceWM2":612`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"temperatureC":22.4`) || !strings.Contains(rec.Body.String(), `"precipitationMM":0.3`) || !strings.Contains(rec.Body.String(), `"weatherCode":61`) || !strings.Contains(rec.Body.String(), `"cloudCoverPct":43`) || !strings.Contains(rec.Body.String(), `"windSpeedKMH":14.2`) || !strings.Contains(rec.Body.String(), `"irradianceWM2":645.8`) {
 		t.Fatalf("weather readings: %d %s", rec.Code, rec.Body.String())
 	}
 }

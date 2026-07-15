@@ -32,7 +32,7 @@ export function NowPage() {
       <HeroPower snapshot={snapshot} updatedAt={live.data?.lastSuccess ?? snapshot.observedAt} timezone={settings.data?.timezone} />
       <MetricStrip snapshot={snapshot} />
       <PVFlow snapshot={snapshot} settings={settings.data} />
-      <div className="context-panels"><HealthPanel snapshot={snapshot} /><WeatherContext /></div>
+      <div className="context-panels"><HealthPanel snapshot={snapshot} /><WeatherContext snapshot={snapshot} settings={settings.data} /></div>
     </article>
   )
 }

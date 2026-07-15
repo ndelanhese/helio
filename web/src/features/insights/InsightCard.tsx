@@ -1,4 +1,5 @@
-import { CircleGauge, History } from 'lucide-react'
+import { CircleGauge, History, Info } from 'lucide-react'
+import { useState } from 'react'
 
 import type { InsightsResponse } from '../../api/types'
 
@@ -11,6 +12,7 @@ function formatEvidence(value: number, unit: string) {
 }
 
 export function InsightCard({ insight }: { insight: InsightsResponse }) {
+	const [showModelNote, setShowModelNote] = useState(false)
   const insufficient = insight.observationWindow.qualifyingDays < insight.observationWindow.minimumDays
   const nonqualifying = !insight.qualifying
   const conclusion = nonqualifying
@@ -26,7 +28,7 @@ export function InsightCard({ insight }: { insight: InsightsResponse }) {
       {nonqualifying ? <p className="insight-qualification-note">Este dia não reuniu dados qualificáveis para uma conclusão. A confiança e as evidências abaixo explicam a limitação da telemetria.</p> : null}
       <dl className="insight-measures">
         <div><dt>Energia medida</dt><dd>{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(insight.actualWh / 1000)} kWh</dd></div>
-        <div><dt>Referência estimada</dt><dd>{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(insight.expectedWh / 1000)} kWh</dd></div>
+        <div><dt>Referência estimada <button aria-describedby={showModelNote ? 'insight-model-note' : undefined} aria-label="Como a referência estimada usa radiação solar" className="model-tooltip-trigger" onBlur={() => setShowModelNote(false)} onFocus={() => setShowModelNote(true)} onMouseEnter={() => setShowModelNote(true)} onMouseLeave={() => setShowModelNote(false)} type="button"><Info aria-hidden="true" /></button></dt><dd>{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(insight.expectedWh / 1000)} kWh</dd>{showModelNote && <p className="model-tooltip" id="insight-model-note" role="tooltip">Referência combina histórico do sistema e radiação modelada. Não substitui medição no painel nem confirma falha isolada.</p>}</div>
       </dl>
       <div className="insight-evidence">
         <h3>Evidências da análise</h3>

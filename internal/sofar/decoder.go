@@ -77,12 +77,12 @@ func (r *Reader) ReadSnapshot(ctx context.Context) (domain.TelemetrySnapshot, er
 		FaultCodes: decodeFaultCodes(statusFault[faultFirstOffset : faultFirstOffset+faultWordCount]),
 	}
 
-	// SOFAR stores each 32-bit counter low word first at the lower register.
-	snapshot.EnergyTodayWh = float64(joinLowHigh(
-		energy[energyTodayLowOffset], energy[energyTodayHighOffset],
+	// SOFAR stores each 32-bit energy counter high word first.
+	snapshot.EnergyTodayWh = float64(joinHighLow(
+		energy[energyTodayHighOffset], energy[energyTodayLowOffset],
 	)) * 10
-	snapshot.EnergyLifetimeWh = float64(joinLowHigh(
-		energy[energyLifetimeLowOffset], energy[energyLifetimeHighOffset],
+	snapshot.EnergyLifetimeWh = float64(joinHighLow(
+		energy[energyLifetimeHighOffset], energy[energyLifetimeLowOffset],
 	)) * 100
 
 	if err := validateSnapshot(snapshot); err != nil {
@@ -99,7 +99,7 @@ func scaledSigned16(value uint16, scale float64) float64 {
 	return float64(int16(value)) * scale
 }
 
-func joinLowHigh(low, high uint16) uint32 {
+func joinHighLow(high, low uint16) uint32 {
 	return uint32(high)<<16 | uint32(low)
 }
 

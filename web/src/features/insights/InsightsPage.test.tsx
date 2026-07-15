@@ -31,6 +31,8 @@ describe('InsightsPage', () => {
       generatedEnergyValue: { minor: 684, currency: 'BRL', label: 'valor estimado da energia gerada', estimate: true },
     }} />)
     expect(screen.getByText(label)).toBeVisible()
+		const modelInfo = screen.getByRole('button', { name: 'Como a referência estimada usa radiação solar' })
+    expect(modelInfo).toBeVisible()
   })
 
   it('never compares a nonqualifying day against the learned reference', () => {

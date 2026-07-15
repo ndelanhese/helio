@@ -42,6 +42,30 @@ func TestOpenMeteoMapsHourlyUTCAndExactQuery(t *testing.T) {
 	}
 }
 
+func TestOpenMeteoMapsCurrentConditions(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if got, want := q.Get("current"), "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,shortwave_radiation"; got != want {
+			t.Errorf("current = %q, want %q", got, want)
+		}
+		if q.Get("latitude") != "-23.5505" || q.Get("longitude") != "-46.6333" || q.Get("timezone") != "UTC" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"current_units":{"time":"iso8601","interval":"seconds","temperature_2m":"°C","precipitation":"mm","weather_code":"wmo code","cloud_cover":"%","wind_speed_10m":"km/h","shortwave_radiation":"W/m²"},"current":{"time":"2024-06-21T12:15","interval":900,"temperature_2m":22.4,"precipitation":0.3,"weather_code":61,"cloud_cover":78,"wind_speed_10m":14.2,"shortwave_radiation":645.8}}`)
+	}))
+	defer server.Close()
+
+	current, err := NewOpenMeteo(server.URL, server.Client(), time.Now).Current(context.Background(), Request{Latitude: -23.5505, Longitude: -46.6333})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !current.At.Equal(time.Date(2024, 6, 21, 12, 15, 0, 0, time.UTC)) || current.TemperatureC != 22.4 || current.PrecipitationMM != 0.3 || current.WeatherCode != 61 || current.CloudCoverPct != 78 || current.WindSpeedKMH != 14.2 || current.IrradianceWM2 != 645.8 {
+		t.Fatalf("current = %#v", current)
+	}
+}
+
 func TestOpenMeteoRejectsUnsafeResponsesAndBounds(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

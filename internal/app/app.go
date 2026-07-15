@@ -123,7 +123,11 @@ func New(cfg config.Config) *App {
 				if !weatherStatus.FetchedAt.IsZero() {
 					status.WeatherFetchedAt = weatherStatus.FetchedAt.UTC().Format(time.RFC3339)
 				}
+				status.TemperatureC = weatherStatus.TemperatureC
+				status.PrecipitationMM = weatherStatus.PrecipitationMM
+				status.WeatherCode = weatherStatus.WeatherCode
 				status.CloudCoverPct = weatherStatus.CloudCoverPct
+				status.WindSpeedKMH = weatherStatus.WindSpeedKMH
 				status.IrradianceWM2 = weatherStatus.IrradianceWM2
 			}
 			if integrationRuntime, ok := a.jobRunner.(integrationJobRuntime); ok {

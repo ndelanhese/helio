@@ -22,7 +22,11 @@ type ComponentStatus struct {
 	DatabaseUpdatedAt  string   `json:"databaseUpdatedAt,omitempty"`
 	WeatherUpdatedAt   string   `json:"weatherUpdatedAt,omitempty"`
 	WeatherFetchedAt   string   `json:"weatherFetchedAt,omitempty"`
+	TemperatureC       *float64 `json:"temperatureC,omitempty"`
+	PrecipitationMM    *float64 `json:"precipitationMM,omitempty"`
+	WeatherCode        *int     `json:"weatherCode,omitempty"`
 	CloudCoverPct      *float64 `json:"cloudCoverPct,omitempty"`
+	WindSpeedKMH       *float64 `json:"windSpeedKMH,omitempty"`
 	IrradianceWM2      *float64 `json:"irradianceWM2,omitempty"`
 	AlertsUpdatedAt    string   `json:"alertsUpdatedAt,omitempty"`
 	AnalysisUpdatedAt  string   `json:"analysisUpdatedAt,omitempty"`

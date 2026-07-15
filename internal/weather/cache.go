@@ -26,11 +26,16 @@ type Repository interface {
 
 type Result struct {
 	Hours      []Hour
+	Current    *Current
 	Source     string
 	FetchedAt  time.Time
 	Stale      bool
 	Available  bool
 	ErrorClass string
+}
+
+type currentProvider interface {
+	Current(context.Context, Request) (Current, error)
 }
 
 type Service struct {
@@ -50,25 +55,25 @@ func (s *Service) Get(ctx context.Context, request Request) Result {
 	now := s.now().UTC()
 	cache, cacheErr := s.repository.Load(ctx, request.Start.UTC(), request.End.UTC())
 	if cacheErr == nil && completeCoverage(cache.Hours, request.Start, request.End) && allYoungerThan(cache.Hours, now, freshFor) {
-		return resultFromHours(cache.Hours, false, "")
+		return s.withCurrent(ctx, request, resultFromHours(cache.Hours, false, ""))
 	}
 
 	refreshed, providerErr := s.provider.Hourly(ctx, request)
 	if providerErr == nil && completeCoverage(refreshed, request.Start, request.End) {
 		source := providerSource(s.provider)
 		if err := s.repository.Upsert(ctx, refreshed, source, now); err != nil {
-			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
+			return s.withCurrent(ctx, request, resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache))
 		}
 		persisted, err := s.repository.Load(ctx, request.Start.UTC(), request.End.UTC())
 		if err != nil {
-			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
+			return s.withCurrent(ctx, request, resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache))
 		}
 		completedAt := s.now().UTC()
 		if hasMaterialFutureTimestamp(persisted.Hours, completedAt) {
-			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
+			return s.withCurrent(ctx, request, resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache))
 		}
 		stale := !completeCoverage(persisted.Hours, request.Start, request.End) || !allYoungerThan(persisted.Hours, completedAt, freshFor)
-		return resultFromHours(persisted.Hours, stale, "")
+		return s.withCurrent(ctx, request, resultFromHours(persisted.Hours, stale, ""))
 	}
 
 	usable := make([]Hour, 0, len(cache.Hours))
@@ -79,13 +84,25 @@ func (s *Service) Get(ctx context.Context, request Request) Result {
 		}
 	}
 	if len(usable) > 0 {
-		return resultFromHours(usable, true, ErrorClassProvider)
+		return s.withCurrent(ctx, request, resultFromHours(usable, true, ErrorClassProvider))
 	}
 	errorClass := ErrorClassProvider
 	if cacheErr != nil {
 		errorClass = ErrorClassCache
 	}
-	return Result{ErrorClass: errorClass}
+	return s.withCurrent(ctx, request, Result{ErrorClass: errorClass})
+}
+
+func (s *Service) withCurrent(ctx context.Context, request Request, result Result) Result {
+	provider, ok := s.provider.(currentProvider)
+	if !ok {
+		return result
+	}
+	current, err := provider.Current(ctx, request)
+	if err == nil {
+		result.Current = &current
+	}
+	return result
 }
 
 func hasMaterialFutureTimestamp(hours []Hour, completedAt time.Time) bool {

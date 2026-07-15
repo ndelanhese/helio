@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -97,16 +98,31 @@ describe('NowPage', () => {
 	expect(screen.getByText('Confiança meteorológica reduzida')).toBeVisible()
   })
 
-	it('shows current hourly weather readings when available', async () => {
+	it('shows current weather conditions with live solar radiation', async () => {
 		useFixture()
 		server.use(http.get('/health/components', () => HttpResponse.json({
 			database: 'ok', logger: 'online', collector: 'running', weather: 'available',
-			cloudCoverPct: 43, irradianceWM2: 612, weatherFetchedAt: '2026-07-14T15:40:00Z',
+			temperatureC: 22.4, precipitationMM: 0.3, weatherCode: 61, cloudCoverPct: 78, windSpeedKMH: 14.2, irradianceWM2: 645.8, weatherFetchedAt: '2026-07-14T13:40:00Z', weatherUpdatedAt: '2026-07-14T15:40:00Z',
 		})))
 		renderApp(<NowPage />)
-		expect(await screen.findByRole('heading', { name: '43% de nuvens' })).toBeVisible()
-		expect(screen.getByText('612 W/m²')).toBeVisible()
-		expect(screen.getByText('Leitura horária da previsão para sua localização.')).toBeVisible()
+		expect(await screen.findByRole('heading', { name: '22,4 °C' })).toBeVisible()
+		expect(screen.getByText('Chuva')).toBeVisible()
+		expect(screen.getByText('0,3 mm')).toBeVisible()
+		expect(screen.getByText('Vento')).toBeVisible()
+		expect(screen.getByText('14,2 km/h')).toBeVisible()
+		expect(screen.getByText('Nuvens')).toBeVisible()
+		expect(screen.getByText('78%')).toBeVisible()
+		expect(screen.getByText('Radiação solar')).toBeVisible()
+		expect(screen.getByText('646 W/m²')).toBeVisible()
+		expect(screen.getByText('Potencial solar')).toBeVisible()
+		expect(screen.getByText('2,76 kW')).toBeVisible()
+		expect(screen.getByText('75% do potencial')).toBeVisible()
+		const modelInfo = screen.getByRole('button', { name: 'Como este potencial é estimado' })
+		expect(modelInfo).toBeVisible()
+		await userEvent.hover(modelInfo)
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Radiação modelada para sua localização')
+		expect(screen.getByText('Chuva moderada')).toBeVisible()
+		expect(screen.getByText('Atualizados há 2 minutos.')).toBeVisible()
 	})
 
   it('keeps the last measurement visible when it becomes stale', async () => {

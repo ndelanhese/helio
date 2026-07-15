@@ -152,3 +152,55 @@ func TestMigrationV6ClearsLegacyResolvedOpeningEvidence(t *testing.T) {
 		t.Fatalf("legacy resolved evidence=%s", evidence)
 	}
 }
+
+func TestMigrationV7CorrectsEnergyCounterWordOrder(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "helio-v6.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) < 7 {
+		t.Fatal("migration 0007 is missing")
+	}
+	for _, migration := range migrations[:6] {
+		if _, err := raw.ExecContext(ctx, migration.sql); err != nil {
+			t.Fatalf("apply v%d: %v", migration.version, err)
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for version := 1; version <= 6; version++ {
+		if _, err := raw.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(?,CURRENT_TIMESTAMP)`, version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `INSERT INTO telemetry_minute(
+		observed_at, observed_at_utc, ac_power_w, energy_today_wh, energy_lifetime_wh,
+		pv1_voltage_v, pv1_current_a, pv1_power_w, pv2_active, pv2_voltage_v,
+		pv2_current_a, pv2_power_w, grid_voltage_v, grid_frequency_hz, status, fault_codes_json
+	) VALUES ('2026-07-15T18:53:00.000000000Z', '2026-07-15T18:53:00.000000000Z', 1790, 1000734720, 99490201700, 0, 0, 0, 0, 0, 0, 0, 0, 60, 'normal', '[]')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var today, lifetime float64
+	if err := db.sql.QueryRowContext(ctx, `SELECT energy_today_wh, energy_lifetime_wh FROM telemetry_minute`).Scan(&today, &lifetime); err != nil {
+		t.Fatal(err)
+	}
+	if today != 15270 || lifetime != 8071700 {
+		t.Fatalf("energy today=%v lifetime=%v, want 15270 and 8071700", today, lifetime)
+	}
+}
