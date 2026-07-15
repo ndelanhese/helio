@@ -268,7 +268,6 @@ func (auditFailStore) RecordAudit(context.Context, string, string, any) error {
 
 type backupFailStore struct{ *storage.DB }
 
-func (backupFailStore) Backup(context.Context, io.Writer) error { return errors.New("backup failed") }
 func (backupFailStore) PrepareBackup(context.Context) (io.ReadCloser, error) {
 	return nil, errors.New("backup failed")
 }

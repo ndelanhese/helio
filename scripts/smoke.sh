@@ -19,8 +19,11 @@ container_name="helio-smoke-${suffix}"
 volume_name="helio-smoke-${suffix}"
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/helio-smoke.XXXXXX")"
 cookie_jar="$temp_dir/cookies"
+csrf_config="$temp_dir/curl-csrf.conf"
 touch "$cookie_jar"
 chmod 0600 "$cookie_jar"
+touch "$csrf_config"
+chmod 0600 "$csrf_config"
 
 cleanup() {
   status=$?
@@ -59,6 +62,10 @@ start_container() {
 }
 
 docker volume create "$volume_name" >/dev/null
+if [[ "${HELIO_SMOKE_FAIL_AFTER_VOLUME:-0}" == "1" ]]; then
+  printf 'smoke: forced safe failure after volume creation\n' >&2
+  exit 86
+fi
 CGO_ENABLED=0 GOOS=linux GOARCH="$architecture" go build -tags smoke -trimpath -o "$temp_dir/fixture-linux" ./scripts/smokefixture
 CGO_ENABLED=0 go build -tags smoke -trimpath -o "$temp_dir/fixture-host" ./scripts/smokefixture
 chmod 0555 "$temp_dir/fixture-linux" "$temp_dir/fixture-host"
@@ -85,13 +92,16 @@ if [[ "$bootstrap_status" != "201" ]]; then
 fi
 csrf="$(sed -n 's/.*"csrfToken":"\([^"]*\)".*/\1/p' "$temp_dir/bootstrap-response.json")"
 [[ -n "$csrf" ]]
+printf 'header = "X-CSRF-Token: %s"\n' "$csrf" >"$csrf_config"
+chmod 0600 "$csrf_config"
 rm -f "$temp_dir/bootstrap.json" "$temp_dir/bootstrap-response.json"
+unset csrf
 unset password
 printf 'smoke: bootstrap complete\n'
 
 printf '%s' '{"loggerHost":"127.0.0.1","loggerSerial":"123456789","loggerPort":8899,"modbusSlave":1,"panelCount":7,"panelWattage":610,"activeMPPT":[1],"latitude":-23.5,"longitude":-46.6,"timezone":"America/Sao_Paulo","currency":"BRL","tariffMinorPerKWh":96,"retentionDays":730}' >"$temp_dir/settings-update.json"
 settings_status="$(curl --silent --show-error --output "$temp_dir/settings-put.json" --write-out '%{http_code}' \
-  --cookie "$cookie_jar" --header "Origin: $base_url" --header "X-CSRF-Token: $csrf" \
+  --cookie "$cookie_jar" --header "Origin: $base_url" --config "$csrf_config" \
   --header 'Content-Type: application/json' --request PUT --data-binary "@$temp_dir/settings-update.json" \
   "$base_url/api/v1/settings")"
 if [[ "$settings_status" != "200" ]]; then
@@ -112,6 +122,9 @@ curl --silent --show-error --fail --cookie "$cookie_jar" "$base_url/api/v1/auth/
 grep -q '"username":"SmokeAdmin"' "$temp_dir/session.json"
 csrf="$(sed -n 's/.*"csrfToken":"\([^"]*\)".*/\1/p' "$temp_dir/session.json")"
 [[ -n "$csrf" ]]
+printf 'header = "X-CSRF-Token: %s"\n' "$csrf" >"$csrf_config"
+chmod 0600 "$csrf_config"
+unset csrf
 curl --silent --show-error --fail --cookie "$cookie_jar" "$base_url/api/v1/settings" >"$temp_dir/settings.json"
 grep -q '"tariffMinorPerKWh":96' "$temp_dir/settings.json"
 curl --silent --show-error --fail --cookie "$cookie_jar" \

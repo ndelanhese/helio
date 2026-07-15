@@ -24,6 +24,7 @@ hardware-test:
 	go run ./cmd/helio-hardware-test
 
 smoke: container
+	HELIO_IMAGE=$(IMAGE) ./scripts/smoke-cleanup-test.sh
 	HELIO_IMAGE=$(IMAGE) ./scripts/smoke.sh
 
 web:

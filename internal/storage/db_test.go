@@ -1,13 +1,12 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -156,7 +155,17 @@ func TestBackupCanBeReopened(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Backup(ctx, out); err != nil {
+	snapshot, err := db.PrepareBackup(ctx)
+	if err != nil {
+		_ = out.Close()
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(out, snapshot); err != nil {
+		_ = snapshot.Close()
+		_ = out.Close()
+		t.Fatal(err)
+	}
+	if err := snapshot.Close(); err != nil {
 		_ = out.Close()
 		t.Fatal(err)
 	}
@@ -180,22 +189,7 @@ func TestBackupCanBeReopened(t *testing.T) {
 	}
 }
 
-type firstWriteGate struct {
-	once    sync.Once
-	started chan struct{}
-	release chan struct{}
-	buffer  bytes.Buffer
-}
-
-func (w *firstWriteGate) Write(p []byte) (int, error) {
-	w.once.Do(func() {
-		close(w.started)
-		<-w.release
-	})
-	return w.buffer.Write(p)
-}
-
-func TestBackupIsAConsistentSnapshotDuringConcurrentInsert(t *testing.T) {
+func TestBackupUsesDedicatedConnectionWhileSnapshotIsRunning(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	db, err := Open(ctx, filepath.Join(dir, "helio.db"))
@@ -206,35 +200,67 @@ func TestBackupIsAConsistentSnapshotDuringConcurrentInsert(t *testing.T) {
 	if _, err := db.sql.ExecContext(ctx, `INSERT INTO telemetry_events(observed_at, kind, payload_json) VALUES ('2026-07-14T12:00:00Z', 'before', '{}')`); err != nil {
 		t.Fatal(err)
 	}
-
-	gate := &firstWriteGate{started: make(chan struct{}), release: make(chan struct{})}
-	backupDone := make(chan error, 1)
-	go func() { backupDone <- db.Backup(ctx, gate) }()
-	select {
-	case <-gate.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("backup did not start streaming")
-	}
-	insertDone := make(chan error, 1)
-	go func() {
-		_, err := db.sql.ExecContext(ctx, `INSERT INTO telemetry_events(observed_at, kind, payload_json) VALUES ('2026-07-14T12:01:00Z', 'during', '{}')`)
-		insertDone <- err
-	}()
-	select {
-	case err := <-insertDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("concurrent insert remained blocked after snapshot preparation")
-	}
-	close(gate.release)
-	if err := <-backupDone; err != nil {
+	if _, err := db.sql.ExecContext(ctx, `CREATE TABLE backup_filler(payload BLOB NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
+	for range 32 {
+		if _, err := db.sql.ExecContext(ctx, `INSERT INTO backup_filler(payload) VALUES (randomblob(1048576))`); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	started := make(chan (<-chan struct{}), 1)
+	release := make(chan struct{})
+	db.backupProgress = func(done <-chan struct{}) {
+		started <- done
+		<-release
+	}
+	t.Cleanup(func() { db.backupProgress = nil })
+	type prepared struct {
+		reader io.ReadCloser
+		err    error
+	}
+	backupDone := make(chan prepared, 1)
+	go func() {
+		reader, err := db.PrepareBackup(ctx)
+		backupDone <- prepared{reader: reader, err: err}
+	}()
+	var generationDone <-chan struct{}
+	select {
+	case generationDone = <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("backup generation did not expose progress")
+	}
+	operationContext, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if _, err := db.sql.ExecContext(operationContext, `INSERT INTO telemetry_events(observed_at, kind, payload_json) VALUES ('2026-07-14T12:01:00Z', 'during', '{}')`); err != nil {
+		t.Fatalf("writer blocked during backup generation: %v", err)
+	}
+	if err := db.Ready(operationContext); err != nil {
+		t.Fatalf("readiness-like query blocked during backup generation: %v", err)
+	}
+	select {
+	case <-generationDone:
+		t.Fatal("backup generation finished before concurrent writer/readiness assertions")
+	default:
+	}
+	close(release)
+	result := <-backupDone
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	defer result.reader.Close()
 
 	backupPath := filepath.Join(dir, "consistent.db")
-	if err := os.WriteFile(backupPath, gate.buffer.Bytes(), 0o600); err != nil {
+	out, err := os.OpenFile(backupPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(out, result.reader); err != nil {
+		_ = out.Close()
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := sql.Open("sqlite", backupPath)
@@ -248,6 +274,133 @@ func TestBackupIsAConsistentSnapshotDuringConcurrentInsert(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("snapshot row count=%d, want pre-insert set of 1", count)
+	}
+}
+
+func TestBackupStagingPermissionsAndPathIgnorePermissiveUmask(t *testing.T) {
+	dir := t.TempDir()
+	oldUmask := syscall.Umask(0)
+	defer syscall.Umask(oldUmask)
+	db, err := Open(context.Background(), filepath.Join(dir, "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	snapshot, err := db.PrepareBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	named, ok := snapshot.(interface{ Name() string })
+	if !ok {
+		t.Fatal("prepared snapshot does not expose its constrained staging path")
+	}
+	backupDir := filepath.Join(dir, ".helio-backups")
+	if filepath.Dir(named.Name()) != backupDir {
+		t.Fatalf("snapshot path=%q, want directory %q", named.Name(), backupDir)
+	}
+	for path, want := range map[string]os.FileMode{backupDir: 0o700, named.Name(): 0o600} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Fatalf("%s mode=%#o, want %#o", path, info.Mode().Perm(), want)
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) != os.Geteuid() {
+			t.Fatalf("%s owner uid=%d, want process uid=%d", path, stat.Uid, os.Geteuid())
+		}
+	}
+}
+
+func TestOpenCleansOnlyRegularBackupOrphans(t *testing.T) {
+	dir := t.TempDir()
+	backupDir := filepath.Join(dir, ".helio-backups")
+	if err := os.Mkdir(backupDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(backupDir, "helio-backup-123456.db")
+	unrelated := filepath.Join(backupDir, "keep.txt")
+	target := filepath.Join(dir, "symlink-target.db")
+	link := filepath.Join(backupDir, "helio-backup-654321.db")
+	for path := range map[string]struct{}{orphan: {}, unrelated: {}, target: {}} {
+		if err := os.WriteFile(path, []byte("keep"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(context.Background(), filepath.Join(dir, "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := os.Lstat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("regular crash orphan still exists: %v", err)
+	}
+	for _, path := range []string{unrelated, target, link} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("startup cleanup removed %s: %v", path, err)
+		}
+	}
+	info, err := os.Stat(backupDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("backup dir mode=%#o, want 0700", info.Mode().Perm())
+	}
+}
+
+func TestOpenRejectsSymlinkBackupDirectoryWithoutTouchingTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(target, "helio-backup-123456.db")
+	if err := os.WriteFile(keep, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, ".helio-backups")); err != nil {
+		t.Fatal(err)
+	}
+	if db, err := Open(context.Background(), filepath.Join(dir, "helio.db")); err == nil {
+		_ = db.Close()
+		t.Fatal("Open accepted symlink backup directory")
+	}
+	if contents, err := os.ReadFile(keep); err != nil || string(contents) != "keep" {
+		t.Fatalf("symlink target changed: %q err=%v", contents, err)
+	}
+}
+
+func TestCancelledBackupLeavesNoStagingFile(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(context.Background(), filepath.Join(dir, "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if snapshot, err := db.PrepareBackup(ctx); err == nil {
+		_ = snapshot.Close()
+		t.Fatal("cancelled backup succeeded")
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, ".helio-backups"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("cancelled backup left staging entries: %v", entries)
+	}
+}
+
+func TestOpenRejectsInMemoryDatabaseExplicitly(t *testing.T) {
+	if db, err := Open(context.Background(), ":memory:"); err == nil {
+		_ = db.Close()
+		t.Fatal("Open accepted in-memory database without a concurrency-safe backup strategy")
 	}
 }
 

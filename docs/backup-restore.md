@@ -6,6 +6,8 @@ Helio stores its durable state in one SQLite database, `/data/helio.db`. Treat a
 
 The authenticated **Download backup** action is safe while Helio is running. It creates a consistent SQLite snapshot and downloads a file named `helio-backup-YYYYMMDD-HHMMSS.db`. Keep the browser connected until the download completes.
 
+Online snapshot creation needs temporary free space on the `/data` volume of approximately the current database size. Check volume free space before starting a backup; a full volume causes the export to fail without changing the live database.
+
 Validate every downloaded file before relying on it:
 
 ```sh
@@ -20,7 +22,8 @@ For an offline filesystem copy, first stop the application and leave its contain
 
 ```sh
 docker compose stop helio
-container_id="$(docker compose ps -q helio)"
+container_id="$(docker compose ps --all --quiet helio)"
+test -n "$container_id"
 docker cp "$container_id:/data/helio.db" ./helio-offline.db
 chmod 600 ./helio-offline.db
 sqlite3 ./helio-offline.db 'PRAGMA integrity_check;'
