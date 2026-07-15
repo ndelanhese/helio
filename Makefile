@@ -33,6 +33,7 @@ web:
 workflow-contract:
 	ruby scripts/workflow_contract_test.rb
 	ruby scripts/release_preflight_test.rb
+	ruby scripts/finalize_release_aliases_test.rb
 	ruby scripts/validate_e2e_artifacts_test.rb
 
 workflow-check: workflow-contract

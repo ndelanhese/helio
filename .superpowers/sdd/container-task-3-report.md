@@ -20,11 +20,11 @@ Implemented Task 3 only from `docs/superpowers/plans/2026-07-14-helio-container-
 
 - CI has only top-level `contents: read`; it does not use secrets, `pull_request_target`, write permissions, or executable download pipelines.
 - CodeQL has only `contents: read` and `security-events: write` for this public repository.
-- Release starts with `permissions: {}`. Verification gets only `contents: read`; image publication gets `contents: read`, `packages: write`, and `id-token: write`; GitHub release creation is isolated to a final job with only `contents: write`.
+- Release starts with `permissions: {}`. Verification gets only `contents: read`; the environment-protected release job gets the job-scoped `contents`, `packages`, `id-token`, and `attestations` writes required to publish, attest, sign, and create the release.
 - Every action reference, including official GitHub actions, is a full 40-character commit SHA with its exact version recorded in a comment.
-- Action SHAs were resolved from their upstream exact version refs with `git ls-remote`. Pins use checkout v7.0.0, setup-go v6.5.0, setup-node v7.0.0, upload-artifact v7.0.1, CodeQL v4.37.0, Docker setup-qemu v4.2.0, setup-buildx v4.2.0, login v4.4.0, metadata v6.2.0, build-push v7.3.0, and Cosign installer v4.1.2.
+- Action SHAs were resolved from their upstream exact version refs with `git ls-remote`. Pins use checkout v7.0.0, setup-go v6.5.0, setup-node v7.0.0, upload-artifact v7.0.1, CodeQL v4.37.0, Docker setup-qemu v4.2.0, setup-buildx v4.2.0, login v4.4.0, build-push v7.3.0, attest-build-provenance v4.1.1, and Cosign installer v4.1.2.
 - actionlint v1.7.12 is pinned to the verified multi-platform index digest `sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667`.
-- E2E artifacts exist only after a test failure and a successful privacy scan. Sensitive trace archives are deleted before upload. The scan materializes archives before matching to avoid a `pipefail`/SIGPIPE false-negative.
+- E2E artifacts exist only after a test failure and successful structural validation. Invalid or sensitive archives fail validation and cannot be uploaded; the only upload path is the allowlisted Playwright `trace.zip` glob.
 - Fork-safe caches use only the built-in read-safe caches from setup-go and setup-node; no cache write tokens or custom secret-bearing keys are used.
 
 ## TDD evidence
@@ -59,10 +59,10 @@ The Important and Minor review findings were addressed in a second strict RED/GR
 ### Release trust and idempotency
 
 - Release checkout now fetches full history. The read-only verification job requires strict stable SemVer, an annotated tag object, local dereference equal to `GITHUB_SHA`, exact upstream `refs/tags/<tag>^{}` dereference equal to `GITHUB_SHA`, and release-commit ancestry from freshly fetched `origin/main`.
-- Release mutation is isolated behind the externally configured `release` environment. Per-tag concurrency is `release-${{ github.ref_name }}` with cancellation disabled.
+- Release mutation is isolated behind the externally configured `release` environment. Repository-global release concurrency is `release-${{ github.repository }}` with cancellation disabled, so different version tags cannot race moving aliases.
 - `scripts/release-preflight.sh` classifies immutable state before mutation. Neither object means a new release; both objects require one matching `Helio-Image-Digest` metadata line; either half-published state, digest mismatch, malformed metadata, or query/transport ambiguity fails closed.
-- An already complete release verifies the keyless Cosign image signature and signed SLSA v1 provenance, then skips every push, sign, release-create, and moving-tag mutation.
-- A new release first publishes only the immutable `vMAJOR.MINOR.PATCH` tag, creates SBOM and maximum BuildKit provenance, adds GitHub's signed provenance attestation, signs the digest keylessly, creates a non-overwriting GitHub Release with the digest in its notes, and only then advances the `MAJOR.MINOR` and `latest` aliases.
+- An already complete release verifies the keyless Cosign image signature and signed SLSA v1 provenance, skips immutable push/sign/release-create mutations, and continues to idempotent alias finalization so a prior alias failure is resumable.
+- A new release first publishes only the immutable `vMAJOR.MINOR.PATCH` tag, creates SBOM and maximum BuildKit provenance, adds GitHub's signed provenance attestation, signs the digest keylessly, creates a non-overwriting GitHub Release with the digest in its notes, and only then finalizes eligible `MAJOR.MINOR` and `latest` aliases.
 - The newly used `actions/attest-build-provenance` v4.1.1 pin `0f67c3f4856b2e3261c31976d6725780e5e4c373` was resolved from its exact upstream tag with `git ls-remote`.
 
 Dynamic preflight tests cover new, matching idempotent rerun, release-only, image-only, digest mismatch, missing digest metadata, and registry DNS/transport failure. The latter was observed RED against generic “not found” handling and turned GREEN by accepting only manifest-specific absence errors.
@@ -83,10 +83,38 @@ Dynamic preflight tests cover new, matching idempotent rerun, release-only, imag
 
 ### Remediation verification
 
-- `make workflow-check`: PASS — workflow contract 12 tests/335 assertions, release preflight 7 tests/32 assertions, artifact validator 12 tests/74 assertions, and digest-pinned actionlint with no diagnostics.
+- `make workflow-check`: PASS — workflow contract 12 tests/342 assertions, release preflight 10 tests/56 assertions, alias finalization 8 tests/51 assertions, artifact validator 12 tests/74 assertions, and digest-pinned actionlint with no diagnostics.
 - `go test -race ./...`: PASS — 426 tests across 21 packages.
 - `go vet ./...`: PASS.
 - `npm --prefix web ci`: PASS — zero reported vulnerabilities.
 - Frontend test/typecheck/lint/build: PASS — 167 tests, 97 linted files, production build complete.
 - `HELIO_IMAGE=helio:task3-review IMAGE=helio:task3-review make smoke`: PASS — build, cleanup, persistence, degraded readiness, and backup integrity.
 - Full browser execution was not repeated on the coordinator-known problematic host. Ubuntu CI installs Chromium/WebKit and executes `make test-e2e`; its workflow syntax, trace validator, and failure-upload gate are covered locally.
+
+## Re-review remediation — 2026-07-15
+
+The Critical and two Important re-review findings were addressed in a third strict RED/GREEN cycle.
+
+### Exact missing-state classification
+
+- RED reproduced gh 2.95.0's exact `release not found` and buildx 0.33.0's exact `ERROR: <queried-image>:<queried-tag>: not found`; the previous preflight rejected both real absence forms.
+- GREEN uses whole-message comparisons only. The buildx form is constructed from the exact queried reference. Known exact 404 and manifest-machine forms remain allowlisted.
+- DNS/lookup, timeout, authentication, rate-limit, and unrelated generic “not found” errors fail closed and cannot become `state=new`.
+- Read-only integration probes confirmed the fixtures on installed gh 2.95.0 against a guaranteed-missing `cli/cli` release and buildx 0.33.0 against a guaranteed-missing public Alpine tag. Both exited 1 with the exact expected messages; no external state was mutated.
+
+### Global serialization and resumable aliases
+
+- Release concurrency is constant for the repository (`release-${{ github.repository }}`) with `cancel-in-progress: false`, serializing every release tag.
+- `scripts/finalize-release-aliases.sh` runs after GitHub Release creation for new releases and after signature/provenance verification for existing releases. It always uses the verified immutable digest, and any `imagetools create` failure fails the workflow.
+- Alias eligibility is calculated from published, stable, non-draft, non-prerelease strict SemVer GitHub Releases. `latest` advances only when the current tag is the global numeric SemVer maximum. The `MAJOR.MINOR` alias advances only when the current tag is the maximum in that line.
+- Older/backfilled releases cannot regress aliases. Equal reruns idempotently ensure eligible aliases, allowing missing or partially updated aliases to recover after the immutable image and GitHub Release already exist.
+
+RED alias tests initially failed 8/8 because no finalizer existed. GREEN covers: newest release updates both aliases; `v0.1.1` after `v0.2.0` updates only `0.1`; `v0.1.1` after `v0.1.2` updates neither; equal rerun ensures aliases; draft/prerelease/unpublished/non-SemVer releases are ignored; `v1.10.0` sorts above `v1.9.9`; partial alias failure resumes on rerun; and the current tag must be a published stable release.
+
+### Final re-review verification
+
+- `make workflow-check`: PASS — 42 tests, 523 assertions, actionlint clean.
+- `go test -race ./...`: PASS — 426 tests; `go vet ./...`: PASS.
+- Frontend test/typecheck/lint/build: PASS — 167 tests and clean production build.
+- `HELIO_IMAGE=helio:task3-rereview IMAGE=helio:task3-rereview make smoke`: PASS.
+- Full browser execution remains delegated to Ubuntu CI because of the coordinator-known host issue; its installation, execution, validator, and trace-only failure upload are contract-covered.

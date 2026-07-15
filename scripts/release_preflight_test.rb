@@ -17,15 +17,22 @@ class ReleasePreflightTest < Minitest::Test
       write_fake(directory, "gh", <<~SH)
         case "${FAKE_RELEASE:-missing}" in
           missing) echo 'gh: release not found (HTTP 404)' >&2; exit 1 ;;
+          gh295) echo 'release not found' >&2; exit 1 ;;
           present) printf '%s\n' "${FAKE_RELEASE_BODY}" ;;
+          auth) echo 'HTTP 401: Bad credentials' >&2; exit 1 ;;
+          rate) echo 'HTTP 403: API rate limit exceeded' >&2; exit 1 ;;
+          generic) echo 'release index not found in cache' >&2; exit 1 ;;
           *) echo 'gh: network failure' >&2; exit 1 ;;
         esac
       SH
       write_fake(directory, "docker", <<~SH)
         case "${FAKE_IMAGE:-missing}" in
           missing) echo 'manifest unknown' >&2; exit 1 ;;
+          buildx033) echo 'ERROR: ghcr.io/ndelanhese/helio:v1.2.3: not found' >&2; exit 1 ;;
           present) printf '%s\n' "${FAKE_IMAGE_DIGEST}" ;;
           dns) echo 'dial tcp: lookup ghcr.io: host not found' >&2; exit 1 ;;
+          timeout) echo 'request canceled while waiting for connection: timeout' >&2; exit 1 ;;
+          generic) echo 'metadata cache entry not found' >&2; exit 1 ;;
           *) echo 'registry unavailable' >&2; exit 1 ;;
         esac
       SH
@@ -58,6 +65,16 @@ class ReleasePreflightTest < Minitest::Test
     assert status.success?, stderr
     assert_includes stdout, "state=new"
     refute_includes stdout, "digest="
+  end
+
+  def test_actual_gh_295_and_buildx_033_missing_messages_allow_new_release
+    stdout, stderr, status = run_preflight(
+      release: { state: :gh295 },
+      image: { state: :buildx033 }
+    )
+
+    assert status.success?, stderr
+    assert_includes stdout, "state=new"
   end
 
   def test_matching_release_and_image_are_an_idempotent_rerun
@@ -119,5 +136,27 @@ class ReleasePreflightTest < Minitest::Test
 
     refute status.success?
     assert_match(/registry query failed/i, stderr)
+  end
+
+  def test_auth_rate_limit_and_generic_release_errors_fail_closed
+    %i[auth rate generic].each do |state|
+      _stdout, stderr, status = run_preflight(
+        release: { state: state },
+        image: { state: :missing }
+      )
+      refute status.success?, state.to_s
+      assert_match(/GitHub Release query failed/i, stderr)
+    end
+  end
+
+  def test_timeout_and_generic_registry_errors_fail_closed
+    %i[timeout generic].each do |state|
+      _stdout, stderr, status = run_preflight(
+        release: { state: :missing },
+        image: { state: state }
+      )
+      refute status.success?, state.to_s
+      assert_match(/registry query failed/i, stderr)
+    end
   end
 end

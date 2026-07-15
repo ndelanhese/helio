@@ -7,7 +7,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -148,16 +148,11 @@ jobs:
           cp CHANGELOG.md "$notes"
           printf '\nHelio-Image-Digest: %s\n' "$IMAGE_DIGEST" >> "$notes"
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Helio $GITHUB_REF_NAME" --notes-file "$notes"
-      - name: Advance stable moving tags
-        if: steps.preflight.outputs.state == 'new'
+      - name: Finalize eligible stable aliases
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          minor="${version%.*}"
-          docker buildx imagetools create --tag "${IMAGE_NAME}:${minor}" --tag "${IMAGE_NAME}:latest" "${IMAGE_NAME}@${IMAGE_DIGEST}"
+          GH_TOKEN: ${{ github.token }}
+          IMMUTABLE_DIGEST: ${{ steps.preflight.outputs.digest || steps.build.outputs.digest }}
+        run: scripts/finalize-release-aliases.sh
       - name: Report immutable image digest
         env:
           EXISTING_DIGEST: ${{ steps.preflight.outputs.digest }}

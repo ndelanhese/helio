@@ -78,6 +78,7 @@ class WorkflowContractTest < Minitest::Test
     assert_includes backend, "go vet ./..."
     assert_includes backend, "ruby scripts/workflow_contract_test.rb"
     assert_includes backend, "ruby scripts/release_preflight_test.rb"
+    assert_includes backend, "ruby scripts/finalize_release_aliases_test.rb"
     assert_includes backend, "ruby scripts/validate_e2e_artifacts_test.rb"
     assert_includes frontend, "npm ci"
     assert_includes frontend, "npm test -- --run"
@@ -136,7 +137,7 @@ class WorkflowContractTest < Minitest::Test
     assert_equal "release", release["name"]
     assert_equal ["v*"], events.fetch("push").fetch("tags")
     assert_equal({}, release["permissions"])
-    assert_equal({ "group" => "release-${{ github.ref_name }}", "cancel-in-progress" => false }, release["concurrency"])
+    assert_equal({ "group" => "release-${{ github.repository }}", "cancel-in-progress" => false }, release["concurrency"])
     assert_equal %w[release verify], jobs.keys.sort
     assert_equal ["verify"], Array(jobs.dig("release", "needs"))
     assert_equal({ "contents" => "read" }, jobs.dig("verify", "permissions"))
@@ -170,21 +171,27 @@ class WorkflowContractTest < Minitest::Test
     assert_includes raw, "cosign verify-attestation --type https://slsa.dev/provenance/v1"
     assert_match(/gh release create[^\n]*--verify-tag[^\n]*--notes-file/, raw)
     assert_match(/Helio-Image-Digest:/, raw)
-    assert_match(/imagetools create/, raw)
+    assert_includes raw, "scripts/finalize-release-aliases.sh"
     refute_match(/gh release (?:edit|delete)|--force|--overwrite/, raw)
     release_steps = steps(release, "release")
     preflight_index = release_steps.index { |step| step["id"] == "preflight" }
     existing_verifier = release_steps.find { |step| step["run"]&.include?("cosign verify-attestation") }
     assert_equal "steps.preflight.outputs.state == 'existing'", existing_verifier["if"]
-    mutating_steps = release_steps.select do |step|
+    new_only_mutating_steps = release_steps.select do |step|
       step["uses"]&.match?(%r{(?:docker/build-push-action|actions/attest-build-provenance)@}) ||
-        step["run"]&.match?(/cosign sign|gh release create|imagetools create/)
+        step["run"]&.match?(/cosign sign|gh release create/)
     end
-    assert_equal 5, mutating_steps.length
-    mutating_steps.each do |step|
+    assert_equal 4, new_only_mutating_steps.length
+    new_only_mutating_steps.each do |step|
       assert_equal "steps.preflight.outputs.state == 'new'", step["if"]
       assert_operator preflight_index, :<, release_steps.index(step)
     end
+    alias_step = release_steps.find { |step| step["run"] == "scripts/finalize-release-aliases.sh" }
+    refute_nil alias_step
+    assert_nil alias_step["if"], "alias recovery must run for both new and existing immutable releases"
+    assert_operator release_steps.index { |step| step["run"]&.include?("gh release create") }, :<, release_steps.index(alias_step)
+    assert_includes alias_step.dig("env", "IMMUTABLE_DIGEST"), "steps.preflight.outputs.digest"
+    assert_includes alias_step.dig("env", "IMMUTABLE_DIGEST"), "steps.build.outputs.digest"
     steps(release, "verify").concat(release_steps).each do |step|
       refute_match(/\$\{\{\s*github\.(?:event|ref_name|sha)/, step["run"].to_s, "untrusted context must enter shell through environment variables")
     end
