@@ -152,6 +152,18 @@ class ValidateE2EArtifactsTest < Minitest::Test
     end
   end
 
+  def test_directory_named_trace_zip_is_rejected_even_with_known_playwright_children
+    Dir.mktmpdir("helio-e2e-artifacts") do |directory|
+      create_trace(directory, { "trace.trace" => "safe" })
+      disguised = File.join(directory, "evil", "trace.zip")
+      FileUtils.mkdir_p(disguised)
+      File.write(File.join(disguised, "error-context.md"), "# disguised directory payload\n")
+      _stdout, stderr, status = run_validator(directory)
+      refute status.success?
+      assert_match(/directory|trace\.zip|reject/i, stderr)
+    end
+  end
+
   def test_playwright_last_run_metadata_is_validated_but_not_treated_as_an_artifact
     Dir.mktmpdir("helio-e2e-artifacts") do |directory|
       File.write(File.join(directory, ".last-run.json"), JSON.generate({ status: "failed", failedTests: ["0123456789abcdef-test-id"] }))

@@ -74,7 +74,10 @@ local_output_files = 0
 local_output_bytes = 0
 for current, directories, files in os.walk(root, followlinks=False):
     for directory in directories:
-        if (Path(current) / directory).is_symlink():
+        candidate = Path(current) / directory
+        if directory == "trace.zip":
+            reject(f"trace.zip must be a regular validated archive, not a directory: {candidate.relative_to(root)}")
+        if candidate.is_symlink():
             reject("outer directory symlinks are forbidden")
     for filename in files:
         path = Path(current) / filename

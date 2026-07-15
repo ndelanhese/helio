@@ -100,7 +100,8 @@ class WorkflowContractTest < Minitest::Test
     )
     assert_equal "--ipc=host", job.fetch("container").fetch("options")
     refute_includes commands, "playwright install"
-    assert_includes commands, "make test-e2e"
+    assert_includes commands, "npm --prefix web run test:e2e"
+    refute_includes commands, "make test-e2e"
     scan_index = e2e_steps.index { |step| step["id"] == "artifact-validator" }
     upload_index = e2e_steps.index { |step| step["uses"]&.start_with?("actions/upload-artifact@") }
     refute_nil scan_index, "E2E failures must be scanned before upload"
