@@ -1,3 +1,3 @@
-export function replaceLocation(path: '/bootstrap' | '/login') {
+export function replaceLocation(path: string) {
   window.location.replace(path)
 }

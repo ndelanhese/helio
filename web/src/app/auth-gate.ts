@@ -21,3 +21,15 @@ export function resolveAppAccess(
   if (authenticated === null) return 'loading'
   return authenticated ? 'render' : '/login'
 }
+
+export function loginRedirect(destination: string) {
+  const safe = safeRedirectTarget(destination)
+  return safe === '/' ? '/login' : `/login?redirect=${encodeURIComponent(safe)}`
+}
+
+export function safeRedirectTarget(candidate: string | null | undefined) {
+  if (!candidate?.startsWith('/') || candidate.startsWith('//')) return '/'
+  const path = candidate.split(/[?#]/, 1)[0]
+  if (path === '/login' || path === '/bootstrap') return '/'
+  return candidate
+}

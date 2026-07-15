@@ -17,6 +17,7 @@ export class ApiError extends Error {
     public readonly code: string,
     public readonly status: number,
     message: string,
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -83,10 +84,17 @@ export class ApiClient {
         envelope.error?.code ?? 'request_failed',
         response.status,
         envelope.error?.message ?? 'Não foi possível concluir a solicitação',
+        parseRetryAfter(response.headers.get('Retry-After')),
       )
     }
     return data as T
   }
+}
+
+function parseRetryAfter(value: string | null) {
+  if (!value) return undefined
+  const seconds = Number.parseInt(value, 10)
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined
 }
 
 export const api = new ApiClient()

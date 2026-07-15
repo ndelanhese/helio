@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 
 import { bootstrapStatusQuery, sessionQuery } from '../api/queries'
-import { classifySessionResult, resolveAppAccess } from '../app/auth-gate'
+import { classifySessionResult, loginRedirect, resolveAppAccess } from '../app/auth-gate'
 import { replaceLocation } from '../app/navigation'
 import { AppShell } from '../components/layout/AppShell'
 import { SessionUnavailable } from '../components/layout/SessionUnavailable'
@@ -24,8 +24,9 @@ function RootLayout() {
     : 'loading'
 
   useEffect(() => {
-    if (decision === '/bootstrap' || decision === '/login') replaceLocation(decision)
-  }, [decision])
+    if (decision === '/bootstrap') replaceLocation('/bootstrap')
+    if (decision === '/login') replaceLocation(loginRedirect(`${path}${window.location.search}`))
+  }, [decision, path])
 
   if (bootstrap.isError) return <main className="route-state">Não foi possível verificar o acesso ao Helio.</main>
   if (needsSession && sessionAccess === 'unavailable') return <SessionUnavailable onRetry={() => { void session.refetch() }} />

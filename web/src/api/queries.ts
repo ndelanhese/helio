@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { api, authMemory } from './client'
-import type { BootstrapStatus, LiveTelemetry, Session, Settings } from './types'
+import type { AuthCredentials, BootstrapPayload, BootstrapStatus, LiveTelemetry, LoginPayload, Session, Settings } from './types'
 
 export const queryKeys = {
   bootstrap: ['bootstrap'] as const,
@@ -36,3 +36,11 @@ export const settingsQuery = queryOptions({
   queryKey: queryKeys.settings,
   queryFn: ({ signal }) => api.request<Settings>('/settings', { signal }),
 })
+
+export function login(payload: LoginPayload) {
+  return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload })
+}
+
+export function createBootstrap(payload: BootstrapPayload) {
+  return api.request<AuthCredentials>('/bootstrap', { method: 'POST', body: payload })
+}

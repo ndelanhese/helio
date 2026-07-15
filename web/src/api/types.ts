@@ -16,6 +16,15 @@ export interface AuthCredentials {
   username: string
 }
 
+export interface LoginPayload {
+  password: string
+  username: string
+}
+
+export interface BootstrapPayload extends LoginPayload {
+  settings: Omit<Settings, 'installedPowerW'>
+}
+
 export interface Session {
   csrfToken: string
   expiresAt: string
@@ -37,6 +46,7 @@ export interface Settings {
   retentionDays: number
   tariffMinorPerKWh: number
   timezone: string
+  installedPowerW?: number
 }
 
 export interface LiveTelemetry {
