@@ -17,12 +17,32 @@ import (
 
 const (
 	defaultRetentionDays = 730
-	shutdownLimit        = 10 * time.Second
+	defaultShutdownLimit = 10 * time.Second
 	retryDelay           = time.Minute
 	alertEventBurst      = 256
 )
 
 var errAlertSettings = errors.New("alert settings unavailable")
+var ErrShutdownTimeout = errors.New("jobs shutdown timeout")
+
+type jobStageError struct {
+	class string
+	err   error
+}
+
+func (e *jobStageError) Error() string { return e.err.Error() }
+func (e *jobStageError) Unwrap() error { return e.err }
+
+func staged(class string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var existing *jobStageError
+	if errors.As(err, &existing) {
+		return err
+	}
+	return &jobStageError{class: class, err: err}
+}
 
 type Repository interface {
 	AggregateHour(context.Context, time.Time, time.Time) (domain.HourlySummary, error)
@@ -108,6 +128,14 @@ func WithIntegration(integration Integration) Option {
 	return func(r *Runner) { r.integration = integration }
 }
 
+func WithShutdownTimeout(timeout time.Duration) Option {
+	return func(r *Runner) {
+		if timeout > 0 {
+			r.shutdownTimeout = timeout
+		}
+	}
+}
+
 type Status struct {
 	State      string
 	UpdatedAt  time.Time
@@ -126,10 +154,14 @@ type Runner struct {
 	weatherStatus     WeatherStatus
 	weatherResult     weather.Result
 	integrationStatus IntegrationStatus
+	readinessMu       sync.Mutex
+	runReady          chan struct{}
+	runPrepared       bool
+	shutdownTimeout   time.Duration
 }
 
 func New(repository Repository, settings Settings, options ...Option) *Runner {
-	runner := &Runner{repository: repository, settings: settings, clock: systemClock{}}
+	runner := &Runner{repository: repository, settings: settings, clock: systemClock{}, shutdownTimeout: defaultShutdownLimit}
 	for _, option := range options {
 		option(runner)
 	}
@@ -159,7 +191,31 @@ func (r *Runner) IntegrationStatus() IntegrationStatus {
 	return r.integrationStatus
 }
 
-func (r *Runner) Run(ctx context.Context) error {
+// PrepareRun creates the readiness signal for the next Run invocation. The
+// signal closes only after the ordered alert subscription is registered (or
+// immediately when that integration is disabled).
+func (r *Runner) PrepareRun() <-chan struct{} {
+	r.readinessMu.Lock()
+	defer r.readinessMu.Unlock()
+	r.runReady = make(chan struct{})
+	r.runPrepared = true
+	return r.runReady
+}
+
+func (r *Runner) readinessForRun() chan struct{} {
+	r.readinessMu.Lock()
+	defer r.readinessMu.Unlock()
+	if r.runReady == nil || !r.runPrepared {
+		r.runReady = make(chan struct{})
+	}
+	r.runPrepared = false
+	return r.runReady
+}
+
+func (r *Runner) Run(ctx context.Context) (result error) {
+	ready := r.readinessForRun()
+	var readyOnce sync.Once
+	markReady := func() { readyOnce.Do(func() { close(ready) }) }
 	if r.repository == nil || r.settings == nil || r.clock == nil {
 		r.setStatus("degraded", time.Now(), "configuration")
 		return errors.New("jobs: repository, settings, and clock are required")
@@ -171,8 +227,18 @@ func (r *Runner) Run(ctx context.Context) error {
 		integrationContext, cancel := context.WithCancel(ctx)
 		integrationCancel = cancel
 		integrationDone = make(chan struct{})
-		go func() { r.runIntegration(integrationContext); close(integrationDone) }()
-		defer func() { integrationCancel(); <-integrationDone }()
+		go func() { r.runIntegrationReady(integrationContext, markReady); close(integrationDone) }()
+		defer func() {
+			integrationCancel()
+			select {
+			case <-integrationDone:
+			case <-time.After(r.shutdownTimeout):
+				r.setStatus("stopped", r.clock.Now(), "shutdown_timeout")
+				result = errors.Join(result, ErrShutdownTimeout)
+			}
+		}()
+	} else {
+		markReady()
 	}
 
 	var lastDay string
@@ -194,7 +260,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			if day != lastDay {
 				runErr, stopped := r.runCurrent(ctx, now, settings, location)
 				if stopped {
-					return nil
+					return runErr
 				}
 				if runErr != nil {
 					if !r.wait(ctx, retryDelay) {
@@ -231,16 +297,14 @@ func (r *Runner) runCurrent(ctx context.Context, now time.Time, settings domain.
 		r.recordResult(now, err)
 		return err, false
 	case <-ctx.Done():
+		cancel()
 		select {
 		case err := <-done:
-			cancel()
 			r.recordResult(now, err)
-			return err, true
-		case <-r.clock.After(shutdownLimit):
-			cancel()
-			err := <-done
+			return nil, true
+		case <-time.After(r.shutdownTimeout):
 			r.setStatus("stopped", r.clock.Now(), "shutdown_timeout")
-			return err, true
+			return ErrShutdownTimeout, true
 		}
 	}
 }
@@ -263,13 +327,13 @@ func (r *Runner) runOnce(ctx context.Context, now time.Time, settings domain.Set
 			end = dayEnd
 		}
 		if _, err := r.repository.AggregateHour(ctx, start, end); err != nil {
-			return fmt.Errorf("aggregate hour: %w", err)
+			return staged("aggregate_hour", fmt.Errorf("aggregate hour: %w", err))
 		}
 		start = end
 	}
 	daily, err := r.repository.AggregateDay(ctx, dayStart, dayEnd)
 	if err != nil {
-		return fmt.Errorf("aggregate day: %w", err)
+		return staged("aggregate_day", fmt.Errorf("aggregate day: %w", err))
 	}
 	if r.integration.AnalysisData != nil && r.integration.AnalysisWriter != nil {
 		if err := r.analyzeDay(ctx, now, settings, location, dayStart, dayEnd, daily); err != nil {
@@ -277,28 +341,43 @@ func (r *Runner) runOnce(ctx context.Context, now time.Time, settings domain.Set
 		}
 	}
 	if _, err := r.repository.AggregateMonth(ctx, dayStart); err != nil {
-		return fmt.Errorf("aggregate month: %w", err)
+		return staged("aggregate_month", fmt.Errorf("aggregate month: %w", err))
 	}
 	retention := settings.RetentionDays
 	if retention == 0 {
 		retention = defaultRetentionDays
 	}
 	if _, err := r.repository.PruneBefore(ctx, now.AddDate(0, 0, -retention)); err != nil {
-		return fmt.Errorf("prune telemetry: %w", err)
+		return staged("retention", fmt.Errorf("prune telemetry: %w", err))
 	}
 	return nil
 }
 
 func (r *Runner) analyzeDay(ctx context.Context, now time.Time, settings domain.Settings, location *time.Location, dayStart, dayEnd time.Time, daily domain.DailySummary) (err error) {
 	stage := "load_history"
+	analysisComplete := false
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			r.setAnalysisStatus("unavailable", "panic", r.clock.Now())
-			err = fmt.Errorf("analysis panic")
+			if stage == "weather" {
+				r.setWeatherUnavailable("panic", r.clock.Now())
+				r.setAnalysisStatus("unavailable", "weather", r.clock.Now())
+			} else if stage == "alerts_evaluation" {
+				r.setAnalysisStatus("available", "", r.clock.Now())
+				r.setAlertStatus("unavailable", "daily_evaluation", r.clock.Now())
+			} else {
+				r.setAnalysisStatus("unavailable", "panic", r.clock.Now())
+			}
+			err = staged(jobClassForAnalysisStage(stage), fmt.Errorf("analysis panic"))
 			return
 		}
 		if err != nil {
-			r.setAnalysisStatus("unavailable", stage, r.clock.Now())
+			if stage == "alerts_evaluation" && analysisComplete {
+				r.setAnalysisStatus("available", "", r.clock.Now())
+				r.setAlertStatus("unavailable", "daily_evaluation", r.clock.Now())
+			} else {
+				r.setAnalysisStatus("unavailable", componentClassForAnalysisStage(stage), r.clock.Now())
+			}
+			err = staged(jobClassForAnalysisStage(stage), err)
 			return
 		}
 		r.setAnalysisStatus("available", "", r.clock.Now())
@@ -355,14 +434,50 @@ func (r *Runner) analyzeDay(ctx context.Context, now time.Time, settings domain.
 	if err := r.integration.AnalysisWriter.Save(ctx, persisted); err != nil {
 		return fmt.Errorf("save daily analysis: %w", err)
 	}
+	analysisComplete = true
 	if r.integration.Alerts != nil {
 		stage = "alerts_evaluation"
 		if _, err := r.integration.Alerts.Evaluate(ctx, alerts.Input{At: now.UTC(), WeatherAvailable: weatherResult.Available,
 			TelemetryCoveragePct: daily.CoveragePct, AnalysisDay: persisted.Day, Analysis: &result}); err != nil {
 			return fmt.Errorf("evaluate daily alerts: %w", err)
 		}
+		r.setAlertStatus("available", "", r.clock.Now())
 	}
 	return nil
+}
+
+func jobClassForAnalysisStage(stage string) string {
+	switch stage {
+	case "load_history":
+		return "analysis_history"
+	case "baseline":
+		return "baseline"
+	case "daylight":
+		return "daylight"
+	case "weather":
+		return "weather"
+	case "evaluation":
+		return "analysis"
+	case "persistence":
+		return "analysis_storage"
+	case "alerts_evaluation":
+		return "daily_alert"
+	default:
+		return "analysis"
+	}
+}
+
+func componentClassForAnalysisStage(stage string) string {
+	switch stage {
+	case "load_history":
+		return "history"
+	case "persistence":
+		return "storage"
+	case "evaluation":
+		return "evaluation"
+	default:
+		return stage
+	}
 }
 
 func daylightHours(day time.Time, latitude, longitude float64, location *time.Location) ([]analysis.DaylightHour, error) {
@@ -389,6 +504,10 @@ func daylightHours(day time.Time, latitude, longitude float64, location *time.Lo
 }
 
 func (r *Runner) runIntegration(ctx context.Context) {
+	r.runIntegrationReady(ctx, func() {})
+}
+
+func (r *Runner) runIntegrationReady(ctx context.Context, markReady func()) {
 	var workers sync.WaitGroup
 	if r.integration.Weather != nil {
 		workers.Add(1)
@@ -401,13 +520,15 @@ func (r *Runner) runIntegration(ctx context.Context) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			r.runAlertIntegration(ctx)
+			r.runAlertIntegration(ctx, markReady)
 		}()
+	} else {
+		markReady()
 	}
 	workers.Wait()
 }
 
-func (r *Runner) runAlertIntegration(ctx context.Context) {
+func (r *Runner) runAlertIntegration(ctx context.Context, markReady func()) {
 	var events <-chan collector.Event
 	stopEvents := func() {}
 	if r.integration.Events != nil {
@@ -418,6 +539,7 @@ func (r *Runner) runAlertIntegration(ctx context.Context) {
 		}
 	}
 	defer stopEvents()
+	markReady()
 	for {
 		select {
 		case <-ctx.Done():
@@ -576,7 +698,12 @@ func scheduleFor(at time.Time) time.Time {
 
 func (r *Runner) recordResult(at time.Time, err error) {
 	if err != nil {
-		r.setStatus("degraded", at, "storage")
+		class := "storage"
+		var stage *jobStageError
+		if errors.As(err, &stage) {
+			class = stage.class
+		}
+		r.setStatus("degraded", at, class)
 		return
 	}
 	r.mu.Lock()

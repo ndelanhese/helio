@@ -104,3 +104,51 @@ func TestMigrationV2BackfillsPreciseObservationFromMinuteBucket(t *testing.T) {
 		t.Fatalf("schema version=%d, want %d", version, wantVersion)
 	}
 }
+
+func TestMigrationV6ClearsLegacyResolvedOpeningEvidence(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "helio-v5.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) < 6 {
+		t.Fatal("migration 0006 is missing")
+	}
+	for _, migration := range migrations[:5] {
+		if _, err := raw.ExecContext(ctx, migration.sql); err != nil {
+			t.Fatalf("apply v%d: %v", migration.version, err)
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for version := 1; version <= 5; version++ {
+		if _, err := raw.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(?,CURRENT_TIMESTAMP)`, version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `INSERT INTO alerts(id,rule,state,severity,opened_at,resolved_at,evidence_json)
+		VALUES('legacy','logger_offline','resolved','critical','2026-07-01T00:00:00Z','2026-07-01T00:05:00Z','{"values":{"failed_polls":3}}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var evidence string
+	if err := db.sql.QueryRowContext(ctx, `SELECT evidence_json FROM alerts WHERE id='legacy'`).Scan(&evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence != `{}` {
+		t.Fatalf("legacy resolved evidence=%s", evidence)
+	}
+}

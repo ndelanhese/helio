@@ -1,7 +1,9 @@
 package api
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
 )
@@ -36,13 +38,28 @@ func TestGeneratedValueMinorUsesExactCheckedRounding(t *testing.T) {
 }
 
 func TestSummarizeTrendReportsCurrentPriorDeltaAndCoverage(t *testing.T) {
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	points := []domain.AggregatePoint{
-		{PeakPowerW: 100, CoveragePct: 100}, {PeakPowerW: 100, CoveragePct: 80},
-		{PeakPowerW: 120, CoveragePct: 100}, {PeakPowerW: 140, CoveragePct: 100},
+		{At: start, PeakPowerW: 100, CoveragePct: 100}, {At: start.AddDate(0, 0, 1), PeakPowerW: 100, CoveragePct: 80},
+		{At: start.AddDate(0, 0, 2), PeakPowerW: 120, CoveragePct: 100}, {At: start.AddDate(0, 0, 3), PeakPowerW: 140, CoveragePct: 100},
 	}
-	trend := summarizeTrend(points, func(point domain.AggregatePoint) float64 { return point.PeakPowerW })
+	trend := summarizeTrend(points, start, start.AddDate(0, 0, 4), time.UTC, func(point domain.AggregatePoint) float64 { return point.PeakPowerW })
 	if trend.Direction != "up" || trend.Previous != 100 || trend.Current != 130 || trend.Delta != 30 || trend.DeltaPct != 30 || trend.CoveragePct != 95 || trend.WindowDays != 4 {
 		t.Fatalf("trend=%#v", trend)
+	}
+}
+
+func TestSummarizeTrendCountsMissingCalendarDaysAsZeroCoverage(t *testing.T) {
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	points := []domain.AggregatePoint{
+		{At: start, PeakPowerW: 100, CoveragePct: 100},
+		{At: start.AddDate(0, 0, 2), PeakPowerW: 100, CoveragePct: 100},
+		{At: start.AddDate(0, 0, 4), PeakPowerW: 130, CoveragePct: 100},
+		{At: start.AddDate(0, 0, 6), PeakPowerW: 130, CoveragePct: 100},
+	}
+	trend := summarizeTrend(points, start, start.AddDate(0, 0, 7), time.UTC, func(point domain.AggregatePoint) float64 { return point.PeakPowerW })
+	if trend.WindowDays != 7 || math.Abs(trend.CoveragePct-(400.0/7)) > 1e-9 || trend.Previous != 100 || trend.Current != 130 || trend.Direction != "up" {
+		t.Fatalf("calendar trend=%#v", trend)
 	}
 }
 

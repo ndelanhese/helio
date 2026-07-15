@@ -42,6 +42,8 @@ type App struct {
 	jobsDone          chan struct{}
 	jobsWG            sync.WaitGroup
 	stopping          bool
+	startupWait       time.Duration
+	retainResources   bool
 }
 
 type settingsRuntime interface {
@@ -59,6 +61,7 @@ type jobRuntime interface {
 
 type weatherJobRuntime interface{ WeatherStatus() jobs.WeatherStatus }
 type integrationJobRuntime interface{ IntegrationStatus() jobs.IntegrationStatus }
+type readyJobRuntime interface{ PrepareRun() <-chan struct{} }
 
 func New(cfg config.Config) *App {
 	if cfg.HTTPAddr == "" {
@@ -159,13 +162,30 @@ func (a *App) applySettings(ctx context.Context, settings domain.Settings, actor
 		runContext = a.runtime.context()
 	}
 	wasRunning := a.pauseJobs()
+	releaseCollector := func() {}
+	if a.runtime != nil {
+		releaseCollector = a.runtime.holdCollectorStart()
+	}
 	if err := a.settingsRuntime.Apply(ctx, settings, func() error { return a.db.ApplySettings(ctx, settings, actorUserID, a.allowPublicLogger) }); err != nil {
 		if wasRunning {
-			a.startJobs(runContext)
+			if readyErr := a.startJobsReady(runContext); readyErr != nil {
+				if a.runtime != nil {
+					a.runtime.cancelCurrentCollector()
+				}
+				return fmt.Errorf("restart jobs after settings rollback: %w", readyErr)
+			}
 		}
+		releaseCollector()
 		return err
 	}
-	a.startJobs(runContext)
+	if err := a.startJobsReady(runContext); err != nil {
+		a.pauseJobs()
+		if a.runtime != nil {
+			a.runtime.cancelCurrentCollector()
+		}
+		return fmt.Errorf("start jobs before collector: %w", err)
+	}
+	releaseCollector()
 	return nil
 }
 
@@ -173,7 +193,7 @@ func (a *App) Run(ctx context.Context) error {
 	if a.initErr != nil {
 		return a.initErr
 	}
-	defer a.db.Close()
+	defer a.closeDatabaseUnlessRetained()
 	listener, err := net.Listen("tcp", a.server.Addr)
 	if err != nil {
 		return err
@@ -200,6 +220,18 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+func (a *App) closeDatabaseUnlessRetained() {
+	if a.db == nil {
+		return
+	}
+	a.jobsMu.Lock()
+	retain := a.retainResources
+	a.jobsMu.Unlock()
+	if !retain {
+		_ = a.db.Close()
+	}
+}
+
 func shutdownHTTP(ctx context.Context, server *http.Server, listener net.Listener, stopServices func()) error {
 	if listener != nil {
 		_ = listener.Close()
@@ -213,10 +245,16 @@ func shutdownHTTP(ctx context.Context, server *http.Server, listener net.Listene
 func (a *App) initializeRuntime(ctx context.Context) error {
 	a.runtime.start(ctx)
 	if settings, err := a.settings(ctx); err == nil {
+		releaseCollector := a.runtime.holdCollectorStart()
 		if err := a.runtime.reconfigure(ctx, settings); err != nil {
 			return fmt.Errorf("start collector: %w", err)
 		}
-		a.startJobs(ctx)
+		if err := a.startJobsReady(ctx); err != nil {
+			a.pauseJobs()
+			a.runtime.cancelCurrentCollector()
+			return fmt.Errorf("start jobs before collector: %w", err)
+		}
+		releaseCollector()
 	} else if open, openErr := a.db.BootstrapOpen(ctx); openErr != nil || !open {
 		return fmt.Errorf("load settings: %w", err)
 	}
@@ -252,14 +290,23 @@ func (a *App) stopServices() {
 	})
 }
 
-func (a *App) startJobs(ctx context.Context) {
+func (a *App) startJobs(ctx context.Context) <-chan struct{} {
+	closed := func() <-chan struct{} {
+		ready := make(chan struct{})
+		close(ready)
+		return ready
+	}
 	if ctx == nil || a.jobRunner == nil {
-		return
+		return closed()
 	}
 	a.jobsMu.Lock()
 	defer a.jobsMu.Unlock()
 	if a.stopping || a.jobsCancel != nil {
-		return
+		return closed()
+	}
+	ready := closed()
+	if runtime, ok := a.jobRunner.(readyJobRuntime); ok {
+		ready = runtime.PrepareRun()
 	}
 	jobContext, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -268,14 +315,39 @@ func (a *App) startJobs(ctx context.Context) {
 	a.jobsWG.Add(1)
 	go func() {
 		defer a.jobsWG.Done()
-		_ = a.jobRunner.Run(jobContext)
+		err := a.jobRunner.Run(jobContext)
 		close(done)
 		a.jobsMu.Lock()
+		if errors.Is(err, jobs.ErrShutdownTimeout) {
+			a.retainResources = true
+		}
 		if a.jobsDone == done {
 			a.jobsCancel, a.jobsDone = nil, nil
 		}
 		a.jobsMu.Unlock()
 	}()
+	return ready
+}
+
+func (a *App) startJobsReady(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	ready := a.startJobs(ctx)
+	wait := a.startupWait
+	if wait <= 0 {
+		wait = 2 * time.Second
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return errors.New("jobs readiness timeout")
+	}
 }
 
 func (a *App) pauseJobs() bool {
@@ -308,7 +380,38 @@ type collectorRuntime struct {
 	state       string
 	stateAt     time.Time
 	errorClass  string
+	startGate   chan struct{}
 	waitTimeout time.Duration
+}
+
+func (r *collectorRuntime) holdCollectorStart() func() {
+	r.mu.Lock()
+	gate := make(chan struct{})
+	r.startGate = gate
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(gate)
+			r.mu.Lock()
+			if r.startGate == gate {
+				r.startGate = nil
+			}
+			r.mu.Unlock()
+		})
+	}
+}
+
+func (r *collectorRuntime) cancelCurrentCollector() {
+	r.mu.Lock()
+	cancel, done := r.cancel, r.done
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
 }
 
 func (r *collectorRuntime) start(ctx context.Context) {
@@ -440,10 +543,21 @@ func (r *collectorRuntime) startCollectorLocked(next *collector.Collector, setti
 	runCtx, cancel := context.WithCancel(r.ctx)
 	done := make(chan struct{})
 	r.current, r.cancel, r.done, r.active = next, cancel, done, settings
+	gate := r.startGate
 	r.state, r.stateAt, r.errorClass = "running", time.Now().UTC(), ""
 	r.mu.Unlock()
 	go func() {
-		err := next.Run(runCtx)
+		var err error
+		if gate != nil {
+			select {
+			case <-gate:
+			case <-runCtx.Done():
+				err = runCtx.Err()
+			}
+		}
+		if err == nil {
+			err = next.Run(runCtx)
+		}
 		close(done)
 		r.mu.Lock()
 		if r.done == done {

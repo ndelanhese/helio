@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -95,7 +96,10 @@ func (w *replayWeather) Get(_ context.Context, request weather.Request) weather.
 	return weather.Result{Available: true, FetchedAt: request.Start.Add(12 * time.Hour), Hours: hours}
 }
 
-type fakeAnalysisData struct{ daily, hourly []domain.AggregatePoint }
+type fakeAnalysisData struct {
+	daily, hourly       []domain.AggregatePoint
+	dailyErr, hourlyErr error
+}
 
 type panicAnalysisData struct{}
 
@@ -107,10 +111,10 @@ func (panicAnalysisData) HourlyHistory(context.Context, time.Time, time.Time) ([
 }
 
 func (f fakeAnalysisData) DailyHistory(context.Context, time.Time, time.Time) ([]domain.AggregatePoint, error) {
-	return append([]domain.AggregatePoint(nil), f.daily...), nil
+	return append([]domain.AggregatePoint(nil), f.daily...), f.dailyErr
 }
 func (f fakeAnalysisData) HourlyHistory(context.Context, time.Time, time.Time) ([]domain.AggregatePoint, error) {
-	return append([]domain.AggregatePoint(nil), f.hourly...), nil
+	return append([]domain.AggregatePoint(nil), f.hourly...), f.hourlyErr
 }
 
 type fakeAnalysisWriter struct {
@@ -118,6 +122,7 @@ type fakeAnalysisWriter struct {
 	values []domain.DailyAnalysis
 	order  *[]string
 	panic  bool
+	err    error
 }
 
 func (f *fakeAnalysisWriter) Save(_ context.Context, value domain.DailyAnalysis) error {
@@ -125,6 +130,9 @@ func (f *fakeAnalysisWriter) Save(_ context.Context, value domain.DailyAnalysis)
 	defer f.mu.Unlock()
 	if f.panic {
 		panic("analysis writer panic")
+	}
+	if f.err != nil {
+		return f.err
 	}
 	f.values = append(f.values, value)
 	if f.order != nil {
@@ -187,6 +195,18 @@ type blockingWeather struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+}
+
+type contextIgnoringWeather struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (f *contextIgnoringWeather) Get(context.Context, weather.Request) weather.Result {
+	f.once.Do(func() { close(f.started) })
+	<-f.release
+	return weather.Result{}
 }
 
 type readyEventSource struct {
@@ -426,6 +446,28 @@ func TestRunnerContainsWeatherPanicAndRetriesWithBackoff(t *testing.T) {
 	<-done
 }
 
+func TestRunnerShutdownCapsContextIgnoringWeatherWorker(t *testing.T) {
+	now := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	provider := &contextIgnoringWeather{started: make(chan struct{}), release: make(chan struct{})}
+	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC"}, nil
+	}, WithClock(newFakeClock(now)), WithIntegration(Integration{Weather: provider}), WithShutdownTimeout(20*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	<-provider.started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrShutdownTimeout) {
+			t.Fatalf("shutdown error=%v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("weather worker exceeded shutdown cap")
+	}
+	close(provider.release)
+}
+
 func TestRunnerContainsAnalysisDependencyPanicAndClassifiesIt(t *testing.T) {
 	location := time.UTC
 	dayStart := time.Date(2026, 7, 14, 0, 0, 0, 0, location)
@@ -440,6 +482,42 @@ func TestRunnerContainsAnalysisDependencyPanicAndClassifiesIt(t *testing.T) {
 	status := runner.IntegrationStatus().Analysis
 	if status.State != "unavailable" || status.ErrorClass != "panic" {
 		t.Fatalf("analysis status=%#v", status)
+	}
+}
+
+func TestDailyPipelineReportsTruthfulStageAndComponent(t *testing.T) {
+	day := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	baseSettings := domain.Settings{Timezone: "UTC", Latitude: -23.5, Longitude: -46.6, PanelCount: 1, PanelWattage: 100, ActiveMPPT: []int{1}}
+	for _, test := range []struct {
+		name          string
+		settings      domain.Settings
+		integration   Integration
+		wantJob       string
+		wantAnalysis  string
+		wantAlerts    string
+		analysisState string
+	}{
+		{"baseline", baseSettings, Integration{AnalysisData: fakeAnalysisData{daily: []domain.AggregatePoint{{CoveragePct: 95}}}, AnalysisWriter: &fakeAnalysisWriter{}}, "baseline", "baseline", "", "unavailable"},
+		{"daylight", func() domain.Settings { value := baseSettings; value.Latitude = 100; return value }(), Integration{AnalysisData: fakeAnalysisData{}, AnalysisWriter: &fakeAnalysisWriter{}}, "daylight", "daylight", "", "unavailable"},
+		{"weather", baseSettings, Integration{AnalysisData: fakeAnalysisData{}, AnalysisWriter: &fakeAnalysisWriter{}, Weather: &panicOnceWeather{}}, "weather", "weather", "", "unavailable"},
+		{"analysis storage", baseSettings, Integration{AnalysisData: fakeAnalysisData{}, AnalysisWriter: &fakeAnalysisWriter{err: errors.New("disk")}}, "analysis_storage", "storage", "", "unavailable"},
+		{"daily alert", baseSettings, Integration{AnalysisData: fakeAnalysisData{}, AnalysisWriter: &fakeAnalysisWriter{}, Alerts: &fakeAlertEvaluator{err: errors.New("alerts")}}, "daily_alert", "", "daily_evaluation", "available"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) { return test.settings, nil }, WithIntegration(test.integration))
+			err := runner.analyzeDay(context.Background(), day.AddDate(0, 0, 1), test.settings, time.UTC, day, day.AddDate(0, 0, 1), domain.DailySummary{CoveragePct: 95})
+			if err == nil {
+				t.Fatal("expected staged error")
+			}
+			runner.recordResult(day, err)
+			if got := runner.Status().ErrorClass; got != test.wantJob {
+				t.Fatalf("jobs error class=%q want=%q err=%v", got, test.wantJob, err)
+			}
+			status := runner.IntegrationStatus()
+			if status.Analysis.State != test.analysisState || status.Analysis.ErrorClass != test.wantAnalysis || status.Alerts.ErrorClass != test.wantAlerts {
+				t.Fatalf("integration status=%#v", status)
+			}
+		})
 	}
 }
 

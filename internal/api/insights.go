@@ -106,7 +106,8 @@ func (a *API) insights(w http.ResponseWriter, r *http.Request) {
 	dto.Trends.PeakPower = trendDTO{Direction: "insufficient", WindowDays: 0}
 	dto.Trends.ProductiveMinutes = trendDTO{Direction: "insufficient", WindowDays: 0}
 	if a.dependencies.Summaries != nil {
-		points, historyErr := a.dependencies.Summaries.DailyHistory(r.Context(), dayStart.AddDate(0, 0, -6), dayStart.AddDate(0, 0, 1))
+		windowStart, windowEnd := dayStart.AddDate(0, 0, -6), dayStart.AddDate(0, 0, 1)
+		points, historyErr := a.dependencies.Summaries.DailyHistory(r.Context(), windowStart, windowEnd)
 		if historyErr != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "insights could not be loaded")
 			return
@@ -114,8 +115,8 @@ func (a *API) insights(w http.ResponseWriter, r *http.Request) {
 		if dto.ObservationWindow.QualifyingDays == 0 {
 			dto.ObservationWindow.QualifyingDays = qualifyingSummaryDays(points)
 		}
-		dto.Trends.PeakPower = summarizeTrend(points, func(point domain.AggregatePoint) float64 { return point.PeakPowerW })
-		dto.Trends.ProductiveMinutes = summarizeTrend(points, func(point domain.AggregatePoint) float64 { return float64(point.ProductiveMinutes) })
+		dto.Trends.PeakPower = summarizeTrend(points, windowStart, windowEnd, location, func(point domain.AggregatePoint) float64 { return point.PeakPowerW })
+		dto.Trends.ProductiveMinutes = summarizeTrend(points, windowStart, windowEnd, location, func(point domain.AggregatePoint) float64 { return float64(point.ProductiveMinutes) })
 	}
 	writeJSON(w, http.StatusOK, dto)
 }
@@ -141,22 +142,40 @@ func qualifyingSummaryDays(points []domain.AggregatePoint) int {
 	return count
 }
 
-func summarizeTrend(points []domain.AggregatePoint, value func(domain.AggregatePoint) float64) trendDTO {
-	result := trendDTO{Direction: "insufficient", WindowDays: len(points)}
-	qualifying := make([]domain.AggregatePoint, 0, len(points))
+func summarizeTrend(points []domain.AggregatePoint, windowStart, windowEnd time.Time, location *time.Location, value func(domain.AggregatePoint) float64) trendDTO {
+	if location == nil {
+		location = time.UTC
+	}
+	windowDays := 0
+	for day := windowStart.In(location); day.Before(windowEnd); day = day.AddDate(0, 0, 1) {
+		windowDays++
+	}
+	result := trendDTO{Direction: "insufficient", WindowDays: windowDays}
+	previousPoints, currentPoints := make([]domain.AggregatePoint, 0, len(points)), make([]domain.AggregatePoint, 0, len(points))
+	midpoint := windowStart.In(location).AddDate(0, 0, windowDays/2)
+	totalDuration := windowEnd.Sub(windowStart).Hours()
 	for _, point := range points {
-		result.CoveragePct += point.CoveragePct
+		local := point.At.In(location)
+		dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
+		if dayStart.Before(windowStart) || !dayStart.Before(windowEnd) {
+			continue
+		}
+		dayDuration := dayStart.AddDate(0, 0, 1).Sub(dayStart).Hours()
+		result.CoveragePct += point.CoveragePct * dayDuration
 		if point.CoveragePct >= 80 {
-			qualifying = append(qualifying, point)
+			if dayStart.Before(midpoint) {
+				previousPoints = append(previousPoints, point)
+			} else {
+				currentPoints = append(currentPoints, point)
+			}
 		}
 	}
-	if len(points) > 0 {
-		result.CoveragePct /= float64(len(points))
+	if totalDuration > 0 {
+		result.CoveragePct /= totalDuration
 	}
-	if len(qualifying) < 4 {
+	if len(previousPoints)+len(currentPoints) < 4 || len(previousPoints) == 0 || len(currentPoints) == 0 {
 		return result
 	}
-	middle := len(qualifying) / 2
 	average := func(slice []domain.AggregatePoint) float64 {
 		var sum float64
 		for _, point := range slice {
@@ -164,7 +183,7 @@ func summarizeTrend(points []domain.AggregatePoint, value func(domain.AggregateP
 		}
 		return sum / float64(len(slice))
 	}
-	previous, current := average(qualifying[:middle]), average(qualifying[middle:])
+	previous, current := average(previousPoints), average(currentPoints)
 	result.Previous, result.Current = previous, current
 	result.Delta = current - previous
 	if previous <= 0 {

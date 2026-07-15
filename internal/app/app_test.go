@@ -11,12 +11,71 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ndelanhese/helio/internal/alerts"
 	"github.com/ndelanhese/helio/internal/collector"
 	"github.com/ndelanhese/helio/internal/config"
 	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/jobs"
 	"github.com/ndelanhese/helio/internal/storage"
 )
+
+type startupRepository struct{}
+
+func (startupRepository) AggregateHour(context.Context, time.Time, time.Time) (domain.HourlySummary, error) {
+	return domain.HourlySummary{}, nil
+}
+func (startupRepository) AggregateDay(context.Context, time.Time, time.Time) (domain.DailySummary, error) {
+	return domain.DailySummary{}, nil
+}
+func (startupRepository) AggregateMonth(context.Context, time.Time) (domain.MonthlySummary, error) {
+	return domain.MonthlySummary{}, nil
+}
+func (startupRepository) PruneBefore(context.Context, time.Time) (int64, error) { return 0, nil }
+
+type startupAlertEvaluator struct{ inputs chan alerts.Input }
+
+func (e startupAlertEvaluator) Evaluate(_ context.Context, input alerts.Input) ([]alerts.Transition, error) {
+	e.inputs <- input
+	return nil, nil
+}
+
+func TestStartJobsReadyRegistersOrderedAlertConsumerBeforeFirstPublish(t *testing.T) {
+	hub := collector.NewHub()
+	evaluator := startupAlertEvaluator{inputs: make(chan alerts.Input, 1)}
+	runner := jobs.New(startupRepository{}, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC", ActiveMPPT: []int{1}}, nil
+	}, jobs.WithIntegration(jobs.Integration{Alerts: evaluator, Events: hub}))
+	a := &App{jobRunner: runner, startupWait: time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := a.startJobsReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	observed := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	hub.Publish(collector.Event{Kind: "snapshot", Snapshot: &domain.TelemetrySnapshot{ObservedAt: observed}})
+	select {
+	case input := <-evaluator.inputs:
+		if !input.TelemetryObserved || !input.At.Equal(observed) {
+			t.Fatalf("first input=%#v", input)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first collector event was published before alert subscription was ready")
+	}
+	a.stopServices()
+}
+
+func TestStartJobsReadyDoesNotDeadlockWhenIntegrationDisabled(t *testing.T) {
+	runner := jobs.New(startupRepository{}, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC"}, nil
+	})
+	a := &App{jobRunner: runner, startupWait: 50 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := a.startJobsReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	a.stopServices()
+}
 
 type orderedListener struct {
 	mu     *sync.Mutex
@@ -112,6 +171,24 @@ type recordingJobRuntime struct {
 	stopped chan struct{}
 }
 
+type neverReadyJobRuntime struct{ ready chan struct{} }
+
+func (r *neverReadyJobRuntime) PrepareRun() <-chan struct{} { return r.ready }
+func (*neverReadyJobRuntime) Run(ctx context.Context) error { <-ctx.Done(); return nil }
+func (*neverReadyJobRuntime) Status() jobs.Status           { return jobs.Status{State: "starting"} }
+
+func TestStartJobsReadyTimesOutAndCanBeCancelledWithoutDeadlock(t *testing.T) {
+	a := &App{jobRunner: &neverReadyJobRuntime{ready: make(chan struct{})}, startupWait: 15 * time.Millisecond}
+	started := time.Now()
+	err := a.startJobsReady(context.Background())
+	if err == nil || time.Since(started) > 100*time.Millisecond {
+		t.Fatalf("readiness result err=%v elapsed=%v", err, time.Since(started))
+	}
+	if !a.pauseJobs() {
+		t.Fatal("timed-out jobs runner was not cancellable")
+	}
+}
+
 type barrierJobRuntime struct {
 	mu           sync.Mutex
 	runs         int
@@ -141,6 +218,45 @@ type signalingSettingsRuntime struct {
 type exitingJobRuntime struct {
 	mu   sync.Mutex
 	runs int
+}
+
+type timedOutJobRuntime struct {
+	db     *storage.DB
+	probe  chan struct{}
+	result chan error
+}
+
+func (r *timedOutJobRuntime) Run(ctx context.Context) error {
+	<-ctx.Done()
+	go func() {
+		<-r.probe
+		r.result <- r.db.Ready(context.Background())
+	}()
+	return jobs.ErrShutdownTimeout
+}
+func (*timedOutJobRuntime) Status() jobs.Status {
+	return jobs.Status{State: "stopped", ErrorClass: "shutdown_timeout"}
+}
+
+func TestTimedOutJobsRetainDatabaseForAbandonedWorker(t *testing.T) {
+	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "retained.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &timedOutJobRuntime{db: db, probe: make(chan struct{}), result: make(chan error, 1)}
+	a := &App{db: db, jobRunner: job}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.startJobs(ctx)
+	cancel()
+	a.stopServices()
+	a.closeDatabaseUnlessRetained()
+	close(job.probe)
+	if err := <-job.result; err != nil {
+		t.Fatalf("abandoned worker observed closed database: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (r *exitingJobRuntime) Run(context.Context) error {

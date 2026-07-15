@@ -51,6 +51,30 @@ type fakeRepository struct {
 	afterClose  int
 }
 
+type contextIgnoringRepository struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *contextIgnoringRepository) AggregateHour(context.Context, time.Time, time.Time) (domain.HourlySummary, error) {
+	select {
+	case <-r.entered:
+	default:
+		close(r.entered)
+	}
+	<-r.release
+	return domain.HourlySummary{}, nil
+}
+func (*contextIgnoringRepository) AggregateDay(context.Context, time.Time, time.Time) (domain.DailySummary, error) {
+	return domain.DailySummary{}, nil
+}
+func (*contextIgnoringRepository) AggregateMonth(context.Context, time.Time) (domain.MonthlySummary, error) {
+	return domain.MonthlySummary{}, nil
+}
+func (*contextIgnoringRepository) PruneBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
 func (r *fakeRepository) recordCall() {
 	if r.closed {
 		r.afterClose++
@@ -187,7 +211,7 @@ func TestRunnerExecutesOneMissedRunOnStartupAndThenOnceDaily(t *testing.T) {
 	}
 }
 
-func TestRunnerCancellationWaitsForCurrentWork(t *testing.T) {
+func TestRunnerCancellationCancelsAndJoinsCooperativeCurrentWork(t *testing.T) {
 	repository := &fakeRepository{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	runner := New(repository, func(context.Context) (domain.Settings, error) {
 		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
@@ -198,12 +222,6 @@ func TestRunnerCancellationWaitsForCurrentWork(t *testing.T) {
 	<-repository.entered
 	cancel()
 	select {
-	case <-done:
-		t.Fatal("runner returned before current transaction finished")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(repository.release)
-	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
@@ -211,28 +229,25 @@ func TestRunnerCancellationWaitsForCurrentWork(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runner did not finish")
 	}
+	close(repository.release)
 }
 
 func TestRunnerCancellationCapsTransactionWait(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	clock := newFakeClock(now)
 	repository := &fakeRepository{entered: make(chan struct{}, 1)}
 	runner := New(repository, func(context.Context) (domain.Settings, error) {
 		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
-	}, WithClock(clock))
+	}, WithClock(newFakeClock(now)))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runner.Run(ctx) }()
 	<-repository.entered
 	cancel()
-	eventually(t, func() bool {
-		clock.mu.Lock()
-		defer clock.mu.Unlock()
-		return len(clock.waits) > 0 && clock.waits[len(clock.waits)-1] == 10*time.Second
-	})
-	clock.wake <- now.Add(10 * time.Second)
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
 		repository.mu.Lock()
 		active := repository.active
 		repository.closed = true
@@ -250,6 +265,32 @@ func TestRunnerCancellationCapsTransactionWait(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runner exceeded shutdown cap")
 	}
+}
+
+func TestRunnerReturnsAtShutdownDeadlineWhenDependencyIgnoresContext(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	repository := &contextIgnoringRepository{entered: make(chan struct{}), release: make(chan struct{})}
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
+	}, WithClock(newFakeClock(now)), WithShutdownTimeout(20*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	<-repository.entered
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrShutdownTimeout) {
+			t.Fatalf("shutdown error=%v", err)
+		}
+		if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+			t.Fatalf("shutdown elapsed=%v", elapsed)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("runner exceeded shutdown deadline")
+	}
+	close(repository.release)
 }
 
 func TestRunnerRetriesFailedDayBeforeAdvancingCatchup(t *testing.T) {
