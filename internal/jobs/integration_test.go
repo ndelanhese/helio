@@ -468,6 +468,37 @@ func TestRunnerShutdownCapsContextIgnoringWeatherWorker(t *testing.T) {
 	close(provider.release)
 }
 
+func TestRunnerUsesOneShutdownBudgetForHungDailyAndWeatherWorkers(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	repository := &contextIgnoringRepository{entered: make(chan struct{}), release: make(chan struct{})}
+	provider := &contextIgnoringWeather{started: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(func() {
+		close(repository.release)
+		close(provider.release)
+	})
+	runner := New(repository, func(context.Context) (domain.Settings, error) {
+		return domain.Settings{Timezone: "UTC", RetentionDays: 30}, nil
+	}, WithClock(newFakeClock(now)), WithIntegration(Integration{Weather: provider}), WithShutdownTimeout(20*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	<-repository.entered
+	<-provider.started
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrShutdownTimeout) {
+			t.Fatalf("shutdown error=%v", err)
+		}
+		if elapsed := time.Since(started); elapsed > 35*time.Millisecond {
+			t.Fatalf("shutdown stacked worker deadlines: elapsed=%v", elapsed)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("runner exceeded cumulative shutdown deadline")
+	}
+}
+
 func TestRunnerContainsAnalysisDependencyPanicAndClassifiesIt(t *testing.T) {
 	location := time.UTC
 	dayStart := time.Date(2026, 7, 14, 0, 0, 0, 0, location)

@@ -61,6 +61,40 @@ type systemClock struct{}
 func (systemClock) Now() time.Time                                { return time.Now() }
 func (systemClock) After(duration time.Duration) <-chan time.Time { return time.After(duration) }
 
+type shutdownBudget struct {
+	once    sync.Once
+	timeout time.Duration
+	expired chan struct{}
+	timer   *time.Timer
+}
+
+func (b *shutdownBudget) done() <-chan struct{} {
+	b.once.Do(func() {
+		b.timer = time.AfterFunc(b.timeout, func() { close(b.expired) })
+	})
+	return b.expired
+}
+
+func (b *shutdownBudget) stop() {
+	if b.timer != nil {
+		b.timer.Stop()
+	}
+}
+
+func (b *shutdownBudget) wait(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+	}
+	select {
+	case <-done:
+		return true
+	case <-b.done():
+		return false
+	}
+}
+
 type Settings func(context.Context) (domain.Settings, error)
 
 type AnalysisData interface {
@@ -213,6 +247,8 @@ func (r *Runner) readinessForRun() chan struct{} {
 }
 
 func (r *Runner) Run(ctx context.Context) (result error) {
+	shutdown := &shutdownBudget{timeout: r.shutdownTimeout, expired: make(chan struct{})}
+	defer shutdown.stop()
 	ready := r.readinessForRun()
 	var readyOnce sync.Once
 	markReady := func() { readyOnce.Do(func() { close(ready) }) }
@@ -230,9 +266,7 @@ func (r *Runner) Run(ctx context.Context) (result error) {
 		go func() { r.runIntegrationReady(integrationContext, markReady); close(integrationDone) }()
 		defer func() {
 			integrationCancel()
-			select {
-			case <-integrationDone:
-			case <-time.After(r.shutdownTimeout):
+			if !shutdown.wait(integrationDone) {
 				r.setStatus("stopped", r.clock.Now(), "shutdown_timeout")
 				result = errors.Join(result, ErrShutdownTimeout)
 			}
@@ -258,7 +292,7 @@ func (r *Runner) Run(ctx context.Context) (result error) {
 		if !now.Before(scheduled) {
 			day := now.AddDate(0, 0, -1).Format("2006-01-02")
 			if day != lastDay {
-				runErr, stopped := r.runCurrent(ctx, now, settings, location)
+				runErr, stopped := r.runCurrent(ctx, now, settings, location, shutdown)
 				if stopped {
 					return runErr
 				}
@@ -287,7 +321,7 @@ func (r *Runner) Run(ctx context.Context) (result error) {
 	}
 }
 
-func (r *Runner) runCurrent(ctx context.Context, now time.Time, settings domain.Settings, location *time.Location) (error, bool) {
+func (r *Runner) runCurrent(ctx context.Context, now time.Time, settings domain.Settings, location *time.Location, shutdown *shutdownBudget) (error, bool) {
 	jobContext, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- r.runOnce(jobContext, now, settings, location) }()
@@ -302,7 +336,7 @@ func (r *Runner) runCurrent(ctx context.Context, now time.Time, settings domain.
 		case err := <-done:
 			r.recordResult(now, err)
 			return nil, true
-		case <-time.After(r.shutdownTimeout):
+		case <-shutdown.done():
 			r.setStatus("stopped", r.clock.Now(), "shutdown_timeout")
 			return ErrShutdownTimeout, true
 		}
