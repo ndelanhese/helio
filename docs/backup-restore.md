@@ -4,7 +4,7 @@ Helio stores its durable state in one SQLite database, `/data/helio.db`. Treat a
 
 ## Create and validate a backup
 
-The authenticated **Download backup** action is safe while Helio is running. It creates a consistent SQLite snapshot and downloads a file named `helio-backup-YYYYMMDD-HHMMSS.db`. Keep the browser connected until the download completes.
+Prefer the authenticated online backup for normal operation. It is safe while Helio is running, creates a consistent SQLite snapshot, and downloads a file named `helio-backup-YYYYMMDD-HHMMSS.db`. Keep the browser connected until the download completes.
 
 Online snapshot creation needs temporary free space on the `/data` volume of approximately the current database size. Check volume free space before starting a backup; a full volume causes the export to fail without changing the live database.
 
@@ -18,18 +18,42 @@ sqlite3 helio-backup-20260715-120000.db 'SELECT count(*) FROM schema_migrations;
 
 `integrity_check` must print exactly `ok`. Copy the validated file to separate storage, then encrypt that copy with your established backup tool. A file on the same disk or Docker volume is not a disaster-recovery backup.
 
-For an offline filesystem copy, first stop the application and leave its container stopped for the entire copy:
+Use an offline filesystem copy only when the authenticated backup is unavailable. First stop the application gracefully and leave its container stopped for the entire copy:
 
 ```sh
-docker compose stop helio
+set -eu
+wal_probe="$(mktemp -d)"
+cleanup() { rm -rf "$wal_probe"; }
+trap cleanup EXIT HUP INT TERM
+
+docker compose stop --timeout 30 helio
 container_id="$(docker compose ps --all --quiet helio)"
 test -n "$container_id"
+
+exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")"
+oom_killed="$(docker inspect --format '{{.State.OOMKilled}}' "$container_id")"
+state_error="$(docker inspect --format '{{.State.Error}}' "$container_id")"
+if [ "$exit_code" -ne 0 ] || [ "$oom_killed" != "false" ] || [ -n "$state_error" ]; then
+  echo "ABORT: Helio did not stop cleanly (exit=$exit_code oom=$oom_killed error=$state_error)" >&2
+  exit 1
+fi
+
+if docker cp "$container_id:/data/helio.db-wal" "$wal_probe/helio.db-wal" 2>/dev/null; then
+  wal_bytes="$(wc -c <"$wal_probe/helio.db-wal" | tr -d ' ')"
+  echo "ABORT: /data/helio.db-wal still exists after shutdown ($wal_bytes bytes)" >&2
+  exit 1
+fi
+
 docker cp "$container_id:/data/helio.db" ./helio-offline.db
 chmod 600 ./helio-offline.db
 sqlite3 ./helio-offline.db 'PRAGMA integrity_check;'
 ```
 
-Start Helio again only after the copy and validation finish: `docker compose start helio`. Do not copy only `helio.db` while the process is running; SQLite may also have live WAL files.
+Any nonzero exit code—including `137` after a forced kill—or `OOMKilled=true` means the shutdown was not safe for a main-file-only copy. Abort, preserve the stopped volume, investigate, then restart Helio and prefer the authenticated online backup.
+
+The WAL can contain committed data that has not yet been checkpointed into `helio.db`. Omitting it can silently lose that data; the integrity_check can still report `ok` on the older main database because structural validity does not prove the WAL's committed rows were included. Therefore the procedure aborts if `/data/helio.db-wal` exists at all, even when it appears empty; it never copies only the main database while a WAL artifact remains.
+
+Start Helio again only after the copy and validation finish: `docker compose start helio`.
 
 ## Restore without overwriting the live volume
 
