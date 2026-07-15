@@ -30,10 +30,10 @@ const (
 
 	energyStart              = 0x0684
 	energyCount              = 4
-	energyTodayLowOffset     = 0
-	energyTodayHighOffset    = 1
-	energyLifetimeLowOffset  = 2
-	energyLifetimeHighOffset = 3
+	energyTodayHighOffset    = 0
+	energyTodayLowOffset     = 1
+	energyLifetimeHighOffset = 2
+	energyLifetimeLowOffset  = 3
 )
 
 func snapshotBlocks() [4]registerBlock {

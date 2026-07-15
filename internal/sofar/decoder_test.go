@@ -98,7 +98,7 @@ func TestReadSnapshotPreservesInactiveMPPTValues(t *testing.T) {
 	}
 }
 
-func TestReadSnapshotDecodesLittleRegisterWordOrder(t *testing.T) {
+func TestReadSnapshotDecodesBigRegisterWordOrder(t *testing.T) {
 	fixture := loadFixture(t, "normal_day")
 	fixture.Blocks[3].Values = []uint16{2, 1, 3, 2}
 	registers := fixtureReaderFrom(fixture)
@@ -108,10 +108,10 @@ func TestReadSnapshotDecodesLittleRegisterWordOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := float64(uint32(1)<<16|2) * 10; !closeEnough(got.EnergyTodayWh, want) {
+	if want := float64(uint32(2)<<16|1) * 10; !closeEnough(got.EnergyTodayWh, want) {
 		t.Fatalf("EnergyTodayWh = %v, want %v", got.EnergyTodayWh, want)
 	}
-	if want := float64(uint32(2)<<16|3) * 100; !closeEnough(got.EnergyLifetimeWh, want) {
+	if want := float64(uint32(3)<<16|2) * 100; !closeEnough(got.EnergyLifetimeWh, want) {
 		t.Fatalf("EnergyLifetimeWh = %v, want %v", got.EnergyLifetimeWh, want)
 	}
 }
