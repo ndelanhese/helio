@@ -131,10 +131,12 @@ type Integration struct {
 }
 
 type WeatherStatus struct {
-	State      string
-	UpdatedAt  time.Time
-	FetchedAt  time.Time
-	ErrorClass string
+	State         string
+	UpdatedAt     time.Time
+	FetchedAt     time.Time
+	CloudCoverPct *float64
+	IrradianceWM2 *float64
+	ErrorClass    string
 }
 
 type WorkerStatus struct {
@@ -641,8 +643,31 @@ func (r *Runner) setWeatherResult(result weather.Result, at time.Time) {
 	}
 	r.mu.Lock()
 	r.weatherResult = result
-	r.weatherStatus = WeatherStatus{State: state, UpdatedAt: at.UTC(), FetchedAt: result.FetchedAt.UTC(), ErrorClass: result.ErrorClass}
+	status := WeatherStatus{State: state, UpdatedAt: at.UTC(), FetchedAt: result.FetchedAt.UTC(), ErrorClass: result.ErrorClass}
+	if hour, ok := currentWeatherHour(result, at); ok {
+		cloudCover := hour.CloudCoverPct
+		irradiance := hour.IrradianceWM2
+		status.CloudCoverPct = &cloudCover
+		status.IrradianceWM2 = &irradiance
+	}
+	r.weatherStatus = status
 	r.mu.Unlock()
+}
+
+func currentWeatherHour(result weather.Result, at time.Time) (weather.Hour, bool) {
+	cutoff := at.UTC().Truncate(time.Hour)
+	var current weather.Hour
+	found := false
+	for _, hour := range result.Hours {
+		if hour.Time.UTC().After(cutoff) {
+			continue
+		}
+		if !found || hour.Time.UTC().After(current.Time.UTC()) {
+			current = hour
+			found = true
+		}
+	}
+	return current, found
 }
 
 func (r *Runner) evaluateCollectorEventSafely(ctx context.Context, event collector.Event) {

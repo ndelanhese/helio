@@ -374,6 +374,17 @@ func TestComponentHealthWeatherUsesOnlyPublicAvailabilityEnum(t *testing.T) {
 	}
 }
 
+func TestComponentHealthIncludesCurrentWeatherReadings(t *testing.T) {
+	cloudCover, irradiance := 43.0, 612.0
+	handler := api.New(api.Dependencies{Components: func(context.Context) api.ComponentStatus {
+		return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: "available", CloudCoverPct: &cloudCover, IrradianceWM2: &irradiance}
+	}})
+	rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"cloudCoverPct":43`) || !strings.Contains(rec.Body.String(), `"irradianceWM2":612`) {
+		t.Fatalf("weather readings: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestComponentHealthExposesAnalysisPipelineState(t *testing.T) {
 	handler := api.New(api.Dependencies{Components: func(context.Context) api.ComponentStatus {
 		return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: "available",

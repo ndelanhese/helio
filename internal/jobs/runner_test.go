@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
+	"github.com/ndelanhese/helio/internal/weather"
 )
 
 type fakeClock struct {
@@ -89,6 +90,16 @@ func TestRunnerInitialStatusHasTimestamp(t *testing.T) {
 	status := runner.Status()
 	if status.State != "idle" || !status.UpdatedAt.Equal(now) {
 		t.Fatalf("initial status = %#v", status)
+	}
+}
+
+func TestSetWeatherResultPublishesCurrentHourlyReadings(t *testing.T) {
+	at := time.Date(2026, 7, 14, 15, 42, 0, 0, time.UTC)
+	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) { return domain.Settings{}, nil })
+	runner.setWeatherResult(weather.Result{Available: true, Hours: []weather.Hour{{Time: at.Add(-time.Hour).Truncate(time.Hour), CloudCoverPct: 43, IrradianceWM2: 612}, {Time: at.Add(time.Hour).Truncate(time.Hour), CloudCoverPct: 10, IrradianceWM2: 900}}}, at)
+	status := runner.WeatherStatus()
+	if status.CloudCoverPct == nil || *status.CloudCoverPct != 43 || status.IrradianceWM2 == nil || *status.IrradianceWM2 != 612 {
+		t.Fatalf("weather readings = %#v", status)
 	}
 }
 

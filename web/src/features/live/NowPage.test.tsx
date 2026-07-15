@@ -97,6 +97,18 @@ describe('NowPage', () => {
 	expect(screen.getByText('Confiança meteorológica reduzida')).toBeVisible()
   })
 
+	it('shows current hourly weather readings when available', async () => {
+		useFixture()
+		server.use(http.get('/health/components', () => HttpResponse.json({
+			database: 'ok', logger: 'online', collector: 'running', weather: 'available',
+			cloudCoverPct: 43, irradianceWM2: 612, weatherFetchedAt: '2026-07-14T15:40:00Z',
+		})))
+		renderApp(<NowPage />)
+		expect(await screen.findByRole('heading', { name: '43% de nuvens' })).toBeVisible()
+		expect(screen.getByText('612 W/m²')).toBeVisible()
+		expect(screen.getByText('Leitura horária da previsão para sua localização.')).toBeVisible()
+	})
+
   it('keeps the last measurement visible when it becomes stale', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.setSystemTime(new Date('2026-07-14T15:42:10Z'))
