@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	addr            = "127.0.0.1:4173"
-	fixedTimestamp  = "2026-07-14T15:42:00Z"
-	fixedRecoveryAt = "2026-07-14T15:43:00Z"
-	testAdmin       = "TEST_ADMIN"
-	testPassword    = "Helio-TEST-2026!"
+	addr                     = "127.0.0.1:4173"
+	fixedTimestamp           = "2026-07-14T15:42:00Z"
+	fixedRecoveryAt          = "2026-07-14T15:43:00Z"
+	testAdmin                = "TEST_ADMIN"
+	testPassword             = "Helio-TEST-2026!"
+	fakeConfirmationLifetime = 5 * time.Minute
 )
 
 type liveSnapshot struct {
@@ -51,9 +52,9 @@ type liveState struct {
 }
 
 type fakeSession struct {
-	CSRF      string
-	Username  string
-	Confirmed bool
+	CSRF           string
+	Username       string
+	ConfirmedUntil time.Time
 }
 
 type fixtureServer struct {
@@ -64,6 +65,7 @@ type fixtureServer struct {
 	subscribers   map[chan []byte]struct{}
 	sessions      map[string]fakeSession
 	sessionSerial uint64
+	now           func() time.Time
 }
 
 func main() {
@@ -73,7 +75,13 @@ func main() {
 }
 
 func newFixtureServer() *fixtureServer {
-	s := &fixtureServer{subscribers: make(map[chan []byte]struct{}), sessions: make(map[string]fakeSession)}
+	s := &fixtureServer{
+		subscribers: make(map[chan []byte]struct{}),
+		sessions:    make(map[string]fakeSession),
+		now: func() time.Time {
+			return time.Date(2026, 7, 14, 15, 42, 0, 0, time.UTC)
+		},
+	}
 	s.reset("default")
 	return s
 }
@@ -349,20 +357,23 @@ func (s *fixtureServer) confirmPassword(w http.ResponseWriter, r *http.Request) 
 	if !decodeStrict(w, r, &body) {
 		return
 	}
-	if body.Password != testPassword {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "password is invalid")
-		return
-	}
 	cookie, _ := r.Cookie("helio_session")
 	s.mu.Lock()
 	session, ok := s.sessions[cookie.Value]
 	if ok {
-		session.Confirmed = true
+		session.ConfirmedUntil = time.Time{}
+		if body.Password == testPassword {
+			session.ConfirmedUntil = s.now().UTC().Add(fakeConfirmationLifetime)
+		}
 		s.sessions[cookie.Value] = session
 	}
 	s.mu.Unlock()
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	if body.Password != testPassword {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "password is invalid")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -429,13 +440,14 @@ func (s *fixtureServer) putSettings(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if fakeLoggerIdentityChanged(s.settings, settings) {
 		session := s.sessions[cookie.Value]
-		if !session.Confirmed {
+		confirmed := s.now().UTC().Before(session.ConfirmedUntil)
+		session.ConfirmedUntil = time.Time{}
+		s.sessions[cookie.Value] = session
+		if !confirmed {
 			s.mu.Unlock()
 			writeError(w, http.StatusForbidden, "reauthentication_required", "recent password confirmation is required")
 			return
 		}
-		session.Confirmed = false
-		s.sessions[cookie.Value] = session
 	}
 	s.settings = settings
 	s.mu.Unlock()

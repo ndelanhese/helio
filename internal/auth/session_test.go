@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -179,6 +181,15 @@ func TestConfirmPasswordIsSessionBoundRecentAndCreatesNoReplacementSession(t *te
 	if !m.RecentlyConfirmed(creds.Token) {
 		t.Fatal("session was not marked recently confirmed")
 	}
+	if err := m.ConfirmPassword(context.Background(), creds.Token, "203.0.113.8", "wrong after successful confirmation"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong confirmation after success: %v", err)
+	}
+	if m.RecentlyConfirmed(creds.Token) {
+		t.Fatal("wrong password retained an earlier confirmation")
+	}
+	if err := m.ConfirmPassword(context.Background(), creds.Token, "203.0.113.8", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
 	// Confirmation preserves the current durable session instead of issuing a replacement.
 	tokenHash := sha256.Sum256([]byte(creds.Token))
 	if _, err := db.LookupSession(context.Background(), tokenHash[:]); err != nil {
@@ -188,8 +199,46 @@ func TestConfirmPasswordIsSessionBoundRecentAndCreatesNoReplacementSession(t *te
 		t.Fatalf("confirmation created %d replacement sessions", counter.creates)
 	}
 	now = now.Add(5*time.Minute + time.Second)
-	if m.RecentlyConfirmed(creds.Token) {
+	if m.ConsumeRecentConfirmation(creds.Token) {
 		t.Fatal("confirmation did not expire")
+	}
+	if _, ok := m.confirmed[string(digestToken(creds.Token))]; ok {
+		t.Fatal("expired confirmation was not deleted")
+	}
+}
+
+func TestConsumeRecentConfirmationAllowsExactlyOneConcurrentConsumer(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	m, _ := testManager(t, &now)
+	const token = "concurrent-confirmation-token"
+	key := string(digestToken(token))
+	const rounds = 32
+	const consumers = 64
+	for round := range rounds {
+		m.confirmed[key] = now.Add(confirmationLifetime)
+		ready := sync.WaitGroup{}
+		ready.Add(consumers)
+		start := make(chan struct{})
+		var successes atomic.Int32
+		finished := sync.WaitGroup{}
+		finished.Add(consumers)
+		for range consumers {
+			go func() {
+				defer finished.Done()
+				ready.Done()
+				<-start
+				if m.ConsumeRecentConfirmation(token) {
+					successes.Add(1)
+				}
+			}()
+		}
+		ready.Wait()
+		close(start)
+		finished.Wait()
+
+		if got := successes.Load(); got != 1 {
+			t.Fatalf("round %d: successful concurrent consumers=%d, want exactly one", round, got)
+		}
 	}
 }
 

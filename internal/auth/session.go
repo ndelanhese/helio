@@ -276,10 +276,14 @@ func (m *Manager) RecentlyConfirmed(rawSessionToken string) bool {
 
 // ConsumeRecentConfirmation makes sensitive settings authorization one-shot.
 func (m *Manager) ConsumeRecentConfirmation(rawSessionToken string) bool {
-	if !m.RecentlyConfirmed(rawSessionToken) {
+	key := string(digestToken(rawSessionToken))
+	m.confirmMu.Lock()
+	defer m.confirmMu.Unlock()
+	expires, ok := m.confirmed[key]
+	delete(m.confirmed, key)
+	if !ok || !m.now().UTC().Before(expires) {
 		return false
 	}
-	m.clearConfirmation(rawSessionToken)
 	return true
 }
 

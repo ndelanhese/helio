@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ndelanhese/helio/internal/api"
 )
@@ -32,6 +33,8 @@ func TestHistoryCSVRejectsProductionOverLimitRange(t *testing.T) {
 
 func TestFakeappPasswordConfirmationMatchesSensitiveSettingsContract(t *testing.T) {
 	server := newFixtureServer()
+	now := time.Date(2026, 7, 14, 15, 42, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
 	handler := server.handler()
 	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"TEST_ADMIN","password":"Helio-TEST-2026!"}`))
 	login.Host = "helio.test"
@@ -63,18 +66,40 @@ func TestFakeappPasswordConfirmationMatchesSensitiveSettingsContract(t *testing.
 	if rec := put("192.0.2.55"); rec.Code != http.StatusForbidden {
 		t.Fatalf("unconfirmed=%d %s", rec.Code, rec.Body.String())
 	}
-	confirm := httptest.NewRequest(http.MethodPost, "/api/v1/auth/confirm-password", strings.NewReader(`{"password":"Helio-TEST-2026!"}`))
-	confirm.Host = "helio.test"
-	confirm.Header.Set("Origin", "http://helio.test")
-	confirm.Header.Set("X-CSRF-Token", credentials.CSRF)
-	confirm.AddCookie(cookies[0])
-	confirmRec := httptest.NewRecorder()
-	handler.ServeHTTP(confirmRec, confirm)
-	if confirmRec.Code != http.StatusNoContent || len(confirmRec.Result().Cookies()) != 0 {
-		t.Fatalf("confirm=%d cookies=%v", confirmRec.Code, confirmRec.Result().Cookies())
+	confirm := func(password string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/confirm-password", strings.NewReader(`{"password":"`+password+`"}`))
+		req.Host = "helio.test"
+		req.Header.Set("Origin", "http://helio.test")
+		req.Header.Set("X-CSRF-Token", credentials.CSRF)
+		req.AddCookie(cookies[0])
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := confirm(testPassword); rec.Code != http.StatusNoContent || len(rec.Result().Cookies()) != 0 {
+		t.Fatalf("confirm=%d cookies=%v", rec.Code, rec.Result().Cookies())
+	}
+	if rec := confirm("wrong-after-success"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong confirmation=%d %s", rec.Code, rec.Body.String())
+	}
+	if rec := put("192.0.2.55"); rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong password retained confirmation=%d %s", rec.Code, rec.Body.String())
+	}
+	if rec := confirm(testPassword); rec.Code != http.StatusNoContent {
+		t.Fatalf("second confirmation=%d %s", rec.Code, rec.Body.String())
+	}
+	now = now.Add(5*time.Minute + time.Nanosecond)
+	if rec := put("192.0.2.55"); rec.Code != http.StatusForbidden {
+		t.Fatalf("expired confirmation=%d %s", rec.Code, rec.Body.String())
+	}
+	if rec := confirm(testPassword); rec.Code != http.StatusNoContent {
+		t.Fatalf("third confirmation=%d %s", rec.Code, rec.Body.String())
 	}
 	if rec := put("192.0.2.55"); rec.Code != http.StatusOK {
 		t.Fatalf("confirmed=%d %s", rec.Code, rec.Body.String())
+	}
+	if rec := put("192.0.2.66"); rec.Code != http.StatusForbidden {
+		t.Fatalf("confirmation was reusable=%d %s", rec.Code, rec.Body.String())
 	}
 }
 
