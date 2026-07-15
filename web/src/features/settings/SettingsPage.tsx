@@ -123,9 +123,9 @@ function SettingsEditor({ health, initial, sessionUsername }: { health: UseQuery
         </section>
         <DataPanel error={errors.retentionDays} retentionDays={values.retentionDays} setRetentionDays={(value) => setField('retentionDays', value)} />
         {conflict ? <section aria-label="Configurações alteradas no servidor" aria-live="polite" className="settings-conflict" role="status">
-        <div><strong>As configurações foram alteradas em outra sessão.</strong><p>Escolha quais valores devem permanecer antes de continuar.</p></div>
+        <div><strong>As configurações foram alteradas em outra sessão.</strong><p>{saving ? 'Aguarde o salvamento terminar para escolher quais valores devem permanecer.' : 'Escolha quais valores devem permanecer antes de continuar.'}</p></div>
         <div className="conflict-actions">
-          <button className="secondary-action" onClick={() => {
+          <button className="secondary-action" disabled={saving} onClick={() => {
             setOriginal(conflict)
             setValues(settingsToValues(conflict))
             setCurrentPassword('')
@@ -133,7 +133,7 @@ function SettingsEditor({ health, initial, sessionUsername }: { health: UseQuery
             setErrors({})
             setStatus('Alterações do servidor carregadas.')
           }} type="button">Carregar alterações do servidor</button>
-          <button className="secondary-action" onClick={() => {
+          <button className="secondary-action" disabled={saving} onClick={() => {
             setOriginal(conflict)
             setConflict(null)
             setStatus('Suas edições foram mantidas.')

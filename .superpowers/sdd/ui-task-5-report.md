@@ -61,3 +61,15 @@ None blocking. Task 6 browser journeys and fake backend remain intentionally out
 - `npm --prefix web run build` — passed and rebuilt the embedded `internal/webui/dist` assets.
 - `npm --prefix web run test:e2e` — all 11 Chromium tests passed, including the existing live responsive tests and the 8 committed Task 5 scenarios.
 - `git diff --check` — passed.
+
+## Pending-save conflict hardening — 2026-07-15
+
+Conflict resolution remains visible when a background settings refresh arrives during a PUT, but both choices are native-disabled until that mutation settles. Live copy explains that the operator must wait. Click and keyboard attempts therefore cannot replace dirty values while the eventual PUT response is still authoritative.
+
+The regression covers both deterministic outcomes: a successful PUT continues to rebase the form and cache from its response, while a failed 409 keeps the refreshed server document as the pending conflict, re-enables Load/Keep, and lets the operator make an explicit choice afterward.
+
+- RED: the pending-save conflict rendered actionable buttons and no waiting explanation.
+- GREEN focused: `npm --prefix web test -- --run src/features/settings/SettingsPage.test.tsx --reporter=dot` — 20 tests passed.
+- TypeScript and Biome passed after the focused fix.
+- Final full frontend: 23 files and 167 tests passed; the same pre-existing `NowPage.test.tsx` MSW diagnostics were non-failing.
+- Final typecheck, Biome lint, production build, `git diff --check`, and all 11 Playwright tests passed.

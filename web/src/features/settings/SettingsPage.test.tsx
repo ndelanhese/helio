@@ -141,6 +141,51 @@ describe('SettingsPage', () => {
     expect(wattage).toHaveValue(620)
   })
 
+  it('locks conflict choices during save and enables them after a failed mutation settles', async () => {
+    let finishSave: (() => void) | undefined
+    server.use(
+      http.get('/api/v1/settings', () => HttpResponse.json(settings)),
+      http.get('/api/v1/auth/session', () => HttpResponse.json(authenticatedSession)),
+      http.get('/health/components', () => HttpResponse.json(health)),
+      http.put('/api/v1/settings', async () => new Promise<Response>((resolve) => {
+        finishSave = () => resolve(HttpResponse.json(
+          { error: { code: 'settings_conflict', message: 'settings changed' } },
+          { status: 409 },
+        ))
+      })),
+    )
+    const { client } = renderApp(<SettingsPage />)
+    const wattage = await screen.findByRole('spinbutton', { name: 'Potência por painel (W)' })
+    await userEvent.clear(wattage)
+    await userEvent.type(wattage, '620')
+    await userEvent.click(screen.getByRole('button', { name: 'Salvar configurações' }))
+
+    act(() => {
+      client.setQueryData(queryKeys.settings, { ...settings, panelCount: 8, installedPowerW: 4_880 })
+    })
+    const conflict = await screen.findByRole('status', { name: 'Configurações alteradas no servidor' })
+    const reload = within(conflict).getByRole('button', { name: 'Carregar alterações do servidor' })
+    const keep = within(conflict).getByRole('button', { name: 'Manter minhas edições' })
+    expect(within(conflict).getByText(/aguarde o salvamento terminar/i)).toBeVisible()
+    expect(reload).toBeDisabled()
+    expect(keep).toBeDisabled()
+
+    await userEvent.click(reload)
+    keep.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(wattage).toHaveValue(620)
+    expect(screen.getByRole('spinbutton', { name: 'Quantidade de painéis' })).toHaveValue(7)
+
+    finishSave?.()
+    expect(await screen.findByText('As configurações mudaram em outra sessão. Recarregue e tente novamente.')).toBeVisible()
+    expect(reload).toBeEnabled()
+    expect(keep).toBeEnabled()
+    await userEvent.click(reload)
+    expect(screen.getByRole('spinbutton', { name: 'Quantidade de painéis' })).toHaveValue(8)
+    expect(wattage).toHaveValue(610)
+    expect(screen.queryByRole('status', { name: 'Configurações alteradas no servidor' })).not.toBeInTheDocument()
+  })
+
   it('shows the initial loading state and retries a failed settings request without inventing values', async () => {
     let requests = 0
     server.use(
