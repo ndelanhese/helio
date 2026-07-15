@@ -1,6 +1,6 @@
 IMAGE ?= helio:local
 
-.PHONY: build container container-down container-up hardware-test test test-e2e web
+.PHONY: build container container-down container-up hardware-test smoke test test-e2e web
 
 build: web
 	go build ./cmd/helio
@@ -22,6 +22,9 @@ test-e2e:
 
 hardware-test:
 	go run ./cmd/helio-hardware-test
+
+smoke: container
+	HELIO_IMAGE=$(IMAGE) ./scripts/smoke.sh
 
 web:
 	npm --prefix web run build

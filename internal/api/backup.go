@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/ndelanhese/helio/internal/auth"
 )
@@ -15,21 +14,12 @@ func (a *API) backup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := "helio-backup-" + a.dependencies.Now().UTC().Format("20060102-150405") + ".db"
-	staged, err := os.CreateTemp("", ".helio-http-backup-*.db")
+	staged, err := a.dependencies.Store.PrepareBackup(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "backup could not be prepared")
 		return
 	}
-	stagedPath := staged.Name()
-	defer func() { _ = staged.Close(); _ = os.Remove(stagedPath) }()
-	if err := a.dependencies.Store.Backup(r.Context(), staged); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "backup could not be prepared")
-		return
-	}
-	if _, err := staged.Seek(0, io.SeekStart); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "backup could not be prepared")
-		return
-	}
+	defer staged.Close()
 	principal, ok := auth.PrincipalFromRequest(r)
 	log, auditOK := a.dependencies.Store.(auditor)
 	if !ok || !auditOK || log.RecordAudit(r.Context(), principal.UserID, "data.backup", map[string]any{"filename": filename}) != nil {

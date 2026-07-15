@@ -1,10 +1,15 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestOpenMigratesAndEnablesWAL(t *testing.T) {
@@ -172,5 +177,97 @@ func TestBackupCanBeReopened(t *testing.T) {
 	}
 	if value != `{"name":"home"}` {
 		t.Fatalf("value_json=%q", value)
+	}
+}
+
+type firstWriteGate struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+	buffer  bytes.Buffer
+}
+
+func (w *firstWriteGate) Write(p []byte) (int, error) {
+	w.once.Do(func() {
+		close(w.started)
+		<-w.release
+	})
+	return w.buffer.Write(p)
+}
+
+func TestBackupIsAConsistentSnapshotDuringConcurrentInsert(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := Open(ctx, filepath.Join(dir, "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO telemetry_events(observed_at, kind, payload_json) VALUES ('2026-07-14T12:00:00Z', 'before', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	gate := &firstWriteGate{started: make(chan struct{}), release: make(chan struct{})}
+	backupDone := make(chan error, 1)
+	go func() { backupDone <- db.Backup(ctx, gate) }()
+	select {
+	case <-gate.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("backup did not start streaming")
+	}
+	insertDone := make(chan error, 1)
+	go func() {
+		_, err := db.sql.ExecContext(ctx, `INSERT INTO telemetry_events(observed_at, kind, payload_json) VALUES ('2026-07-14T12:01:00Z', 'during', '{}')`)
+		insertDone <- err
+	}()
+	select {
+	case err := <-insertDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent insert remained blocked after snapshot preparation")
+	}
+	close(gate.release)
+	if err := <-backupDone; err != nil {
+		t.Fatal(err)
+	}
+
+	backupPath := filepath.Join(dir, "consistent.db")
+	if err := os.WriteFile(backupPath, gate.buffer.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := sql.Open("sqlite", backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	var count int
+	if err := snapshot.QueryRow(`SELECT count(*) FROM telemetry_events`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("snapshot row count=%d, want pre-insert set of 1", count)
+	}
+}
+
+func TestPreparedBackupRemovesSnapshotOnClose(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	snapshot, err := db.PrepareBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if leftovers, err := filepath.Glob(filepath.Join(filepath.Dir(db.path), ".helio-backup-*.db")); err != nil || len(leftovers) != 0 {
+		t.Fatalf("prepared backup leaked: %v err=%v", leftovers, err)
 	}
 }

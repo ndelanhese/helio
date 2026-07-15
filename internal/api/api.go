@@ -19,6 +19,7 @@ type Store interface {
 	GetSettings(context.Context, ...bool) (domain.Settings, error)
 	PutSettings(context.Context, domain.Settings, ...bool) error
 	Backup(context.Context, io.Writer) error
+	PrepareBackup(context.Context) (io.ReadCloser, error)
 }
 
 type HistoryStore interface {

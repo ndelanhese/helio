@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -69,31 +70,63 @@ func (db *DB) Ready(ctx context.Context) error {
 
 // Backup writes a consistent, standalone SQLite snapshot to w.
 func (db *DB) Backup(ctx context.Context, w io.Writer) error {
+	snapshot, err := db.PrepareBackup(ctx)
+	if err != nil {
+		return err
+	}
+	defer snapshot.Close()
+	if _, err := io.Copy(w, snapshot); err != nil {
+		return fmt.Errorf("stream backup snapshot: %w", err)
+	}
+	return nil
+}
+
+// PrepareBackup creates a consistent standalone snapshot beside the live
+// database. The caller must close the returned reader; Close removes the
+// snapshot even when response streaming is interrupted.
+func (db *DB) PrepareBackup(ctx context.Context) (io.ReadCloser, error) {
 	tmp, err := os.CreateTemp(filepath.Dir(db.path), ".helio-backup-*.db")
 	if err != nil {
-		return fmt.Errorf("create backup path: %w", err)
+		return nil, fmt.Errorf("create backup path: %w", err)
 	}
 	tmpPath := tmp.Name()
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close backup placeholder: %w", err)
+		return nil, fmt.Errorf("close backup placeholder: %w", err)
 	}
 	if err := os.Remove(tmpPath); err != nil {
-		return fmt.Errorf("prepare backup path: %w", err)
+		return nil, fmt.Errorf("prepare backup path: %w", err)
 	}
-	defer os.Remove(tmpPath)
 
 	if _, err := db.sql.ExecContext(ctx, "VACUUM INTO ?", tmpPath); err != nil {
-		return fmt.Errorf("vacuum backup: %w", err)
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("vacuum backup: %w", err)
 	}
 
 	backup, err := os.Open(tmpPath)
 	if err != nil {
-		return fmt.Errorf("open backup snapshot: %w", err)
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("open backup snapshot: %w", err)
 	}
-	defer backup.Close()
-	if _, err := io.Copy(w, backup); err != nil {
-		return fmt.Errorf("stream backup snapshot: %w", err)
-	}
-	return nil
+	return &backupSnapshot{File: backup, path: tmpPath}, nil
+}
+
+type backupSnapshot struct {
+	*os.File
+	path string
+	once sync.Once
+	err  error
+}
+
+func (snapshot *backupSnapshot) Close() error {
+	snapshot.once.Do(func() {
+		closeErr := snapshot.File.Close()
+		removeErr := os.Remove(snapshot.path)
+		if closeErr != nil {
+			snapshot.err = closeErr
+		} else if removeErr != nil && !os.IsNotExist(removeErr) {
+			snapshot.err = removeErr
+		}
+	})
+	return snapshot.err
 }
