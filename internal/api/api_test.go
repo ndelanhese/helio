@@ -182,7 +182,7 @@ func TestSettingsPresenceRangeHistoryCSVAndBackup(t *testing.T) {
 	}
 	query := "?from=" + now.Add(-time.Minute).Format(time.RFC3339) + "&to=" + now.Add(time.Minute).Format(time.RFC3339)
 	csv := request(t, f.handler, http.MethodGet, "/api/v1/history.csv"+query, "", cookie, "")
-	if csv.Code != http.StatusOK || !strings.HasPrefix(csv.Body.String(), "timestamp,power_w,energy_today_wh,status\n") {
+	if csv.Code != http.StatusOK || !strings.HasPrefix(csv.Body.String(), "at,power_w,energy_today_wh,status\n") {
 		t.Fatalf("csv: %d %q", csv.Code, csv.Body.String())
 	}
 	backup := request(t, f.handler, http.MethodGet, "/api/v1/data/backup", "", cookie, "")

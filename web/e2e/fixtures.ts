@@ -17,7 +17,10 @@ export const test = base.extend<HelioFixtures>({
   setScenario: [async ({ context }, use) => {
     await control(context.request, 'default')
     const login = async () => {
-      const response = await context.request.post('/api/v1/auth/login', { data: { username: TEST_ADMIN, password: TEST_PASSWORD } })
+      const response = await context.request.post('/api/v1/auth/login', {
+        data: { username: TEST_ADMIN, password: TEST_PASSWORD },
+        headers: { Origin: 'http://127.0.0.1:4173' },
+      })
       expect(response.status()).toBe(200)
     }
     await login()

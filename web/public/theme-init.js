@@ -12,5 +12,7 @@
   } catch {
     dark = false
   }
-  document.documentElement.dataset.theme = choice === 'system' ? (dark ? 'dark' : 'light') : choice
+  const resolved = choice === 'system' ? (dark ? 'dark' : 'light') : choice
+  document.documentElement.dataset.theme = resolved
+  document.documentElement.style.colorScheme = resolved
 })()

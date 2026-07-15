@@ -16,7 +16,7 @@ for (const destination of pages) for (const viewport of viewports) for (const th
     await preparePage(page, theme)
     await page.goto(destination.path)
     await expect(page.getByRole('heading', { name: destination.heading })).toBeVisible()
-    await expectPageGate(page)
+    await expectPageGate(page, theme)
   })
 }
 
@@ -27,7 +27,7 @@ for (const viewport of viewports) for (const theme of themes) {
     await preparePage(page, theme)
     await page.goto('/login')
     await expect(page.getByRole('heading', { name: 'Entre no seu Helio' })).toBeVisible()
-    await expectPageGate(page)
+    await expectPageGate(page, theme)
   })
 
   test(`Bootstrap gate ${viewport.width}x${viewport.height} ${theme}`, async ({ page, setScenario }) => {
@@ -36,6 +36,6 @@ for (const viewport of viewports) for (const theme of themes) {
     await preparePage(page, theme)
     await page.goto('/bootstrap')
     await expect(page.getByRole('heading', { name: 'Crie a conta local' })).toBeVisible()
-    await expectPageGate(page)
+    await expectPageGate(page, theme)
   })
 }

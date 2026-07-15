@@ -5,14 +5,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ndelanhese/helio/internal/config"
+	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/webui"
 )
 
@@ -53,7 +57,7 @@ type fakeSession struct {
 type fixtureServer struct {
 	mu            sync.Mutex
 	bootstrapOpen bool
-	settings      map[string]any
+	settings      domain.Settings
 	live          liveState
 	subscribers   map[chan []byte]struct{}
 	sessions      map[string]fakeSession
@@ -111,13 +115,11 @@ func baseSnapshot(power float64, observedAt string) *liveSnapshot {
 	}
 }
 
-func defaultSettings() map[string]any {
-	return map[string]any{
-		"activeMPPT": []int{1}, "currency": "BRL", "latitude": -23.55, "longitude": -46.63,
-		"loggerHost": "192.0.2.44", "loggerPort": 8899, "loggerSerial": "42424242", "modbusSlave": 1,
-		"panelCount": 7, "panelWattage": 610, "retentionDays": 730, "tariffMinorPerKWh": 95,
-		"timezone": "America/Sao_Paulo",
-	}
+func defaultSettings() domain.Settings {
+	return domain.Settings{ActiveMPPT: []int{1}, Currency: "BRL", Latitude: -23.55, Longitude: -46.63,
+		LoggerHost: "192.0.2.44", LoggerPort: 8899, LoggerSerial: "42424242", ModbusSlave: 1,
+		PanelCount: 7, PanelWattage: 610, InstalledPowerW: 4270, RetentionDays: 730,
+		TariffMinorPerKWh: 95, Timezone: "America/Sao_Paulo"}
 }
 
 func (s *fixtureServer) reset(name string) {
@@ -214,9 +216,30 @@ func (s *fixtureServer) bootstrapStatus(w http.ResponseWriter, _ *http.Request) 
 }
 
 func (s *fixtureServer) bootstrap(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	if json.NewDecoder(r.Body).Decode(&body) != nil {
-		writeError(w, 400, "invalid_json", "invalid JSON")
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "forbidden", "request origin is invalid")
+		return
+	}
+	var body struct {
+		Username string          `json:"username"`
+		Password string          `json:"password"`
+		Settings settingsRequest `json:"settings"`
+	}
+	if !decodeStrict(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Username) == "" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_request", "username is required")
+		return
+	}
+	settings, err := body.Settings.domain()
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_settings", err.Error())
+		return
+	}
+	settings, err = config.ValidateSettings(settings, true)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_settings", err.Error())
 		return
 	}
 	s.mu.Lock()
@@ -225,9 +248,7 @@ func (s *fixtureServer) bootstrap(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "bootstrap_closed", "initial setup is already complete")
 		return
 	}
-	if settings, ok := body["settings"].(map[string]any); ok {
-		s.settings = settings
-	}
+	s.settings = settings
 	s.bootstrapOpen = false
 	credentials := s.issueSessionLocked(w, testAdmin)
 	s.mu.Unlock()
@@ -235,6 +256,10 @@ func (s *fixtureServer) bootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *fixtureServer) login(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "forbidden", "request origin is invalid")
+		return
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -350,22 +375,31 @@ func (s *fixtureServer) events(w http.ResponseWriter, r *http.Request) {
 
 func (s *fixtureServer) getSettings(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
-	settings := cloneMap(s.settings)
+	settings := s.settings
+	settings.ActiveMPPT = append([]int(nil), s.settings.ActiveMPPT...)
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, settings)
 }
 
 func (s *fixtureServer) putSettings(w http.ResponseWriter, r *http.Request) {
-	var settings map[string]any
-	if json.NewDecoder(r.Body).Decode(&settings) != nil {
-		writeError(w, 400, "invalid_json", "invalid JSON")
+	var body settingsRequest
+	if !decodeStrict(w, r, &body) {
+		return
+	}
+	settings, err := body.domain()
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_settings", err.Error())
+		return
+	}
+	settings, err = config.ValidateSettings(settings, true)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_settings", err.Error())
 		return
 	}
 	s.mu.Lock()
 	s.settings = settings
-	saved := cloneMap(settings)
 	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, saved)
+	writeJSON(w, http.StatusOK, settings)
 }
 
 func (s *fixtureServer) history(w http.ResponseWriter, r *http.Request) {
@@ -397,12 +431,12 @@ func (s *fixtureServer) historyCSV(w http.ResponseWriter, r *http.Request) {
 	from, fromErr := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
 	to, toErr := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
 	if fromErr != nil || toErr != nil || !from.Before(to) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_range", "from and to must define an increasing RFC3339 range")
+		writeError(w, http.StatusUnprocessableEntity, "invalid_range", "from must be before to and both must be RFC3339 timestamps")
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="helio-history.csv"`)
-	_, _ = w.Write([]byte("timestamp,power_w,energy_wh,status\n2026-07-14T12:00:00Z,2070,3450,ok\n"))
+	_, _ = w.Write([]byte("at,power_w,energy_today_wh,status\n2026-07-14T12:00:00Z,2070,12340,normal\n"))
 }
 
 func (s *fixtureServer) insights(w http.ResponseWriter, _ *http.Request) {
@@ -462,11 +496,85 @@ func productionAssets() http.Handler {
 	})
 }
 
-func cloneMap(value map[string]any) map[string]any {
-	encoded, _ := json.Marshal(value)
-	var result map[string]any
-	_ = json.Unmarshal(encoded, &result)
-	return result
+type settingsRequest struct {
+	LoggerHost        *string  `json:"loggerHost"`
+	LoggerSerial      *string  `json:"loggerSerial"`
+	LoggerPort        *int     `json:"loggerPort"`
+	ModbusSlave       *int     `json:"modbusSlave"`
+	PanelCount        *int     `json:"panelCount"`
+	PanelWattage      *int     `json:"panelWattage"`
+	ActiveMPPT        *[]int   `json:"activeMPPT"`
+	Latitude          *float64 `json:"latitude"`
+	Longitude         *float64 `json:"longitude"`
+	Timezone          *string  `json:"timezone"`
+	Currency          *string  `json:"currency"`
+	TariffMinorPerKWh *int64   `json:"tariffMinorPerKWh"`
+	RetentionDays     *int     `json:"retentionDays"`
+}
+
+func (d settingsRequest) domain() (domain.Settings, error) {
+	required := []struct {
+		name    string
+		present bool
+	}{{"loggerHost", d.LoggerHost != nil}, {"loggerSerial", d.LoggerSerial != nil}, {"panelCount", d.PanelCount != nil}, {"panelWattage", d.PanelWattage != nil}, {"activeMPPT", d.ActiveMPPT != nil}, {"latitude", d.Latitude != nil}, {"longitude", d.Longitude != nil}, {"timezone", d.Timezone != nil}, {"currency", d.Currency != nil}}
+	for _, field := range required {
+		if !field.present {
+			return domain.Settings{}, fmt.Errorf("%s is required", field.name)
+		}
+	}
+	if d.LoggerPort != nil && *d.LoggerPort == 0 {
+		return domain.Settings{}, fmt.Errorf("loggerPort must not be zero when provided")
+	}
+	if d.ModbusSlave != nil && *d.ModbusSlave == 0 {
+		return domain.Settings{}, fmt.Errorf("modbusSlave must not be zero when provided")
+	}
+	if d.RetentionDays != nil && *d.RetentionDays == 0 {
+		return domain.Settings{}, fmt.Errorf("retentionDays must not be zero when provided")
+	}
+	value := domain.Settings{LoggerHost: *d.LoggerHost, LoggerSerial: *d.LoggerSerial, PanelCount: *d.PanelCount,
+		PanelWattage: *d.PanelWattage, ActiveMPPT: append([]int(nil), (*d.ActiveMPPT)...), Latitude: *d.Latitude,
+		Longitude: *d.Longitude, Timezone: *d.Timezone, Currency: *d.Currency}
+	if d.LoggerPort != nil {
+		value.LoggerPort = *d.LoggerPort
+	}
+	if d.ModbusSlave != nil {
+		value.ModbusSlave = *d.ModbusSlave
+	}
+	if d.TariffMinorPerKWh != nil {
+		value.TariffMinorPerKWh = *d.TariffMinorPerKWh
+	}
+	if d.RetentionDays != nil {
+		value.RetentionDays = *d.RetentionDays
+	}
+	return value, nil
+}
+
+func decodeStrict(w http.ResponseWriter, r *http.Request, target any) bool {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body is not valid JSON")
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must contain one JSON value")
+		return false
+	}
+	return true
+}
+
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	parsed, err := url.Parse(origin)
+	if err != nil || origin == "" || parsed.User != nil || parsed.Host == "" || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.URL.Scheme, "https") {
+		scheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

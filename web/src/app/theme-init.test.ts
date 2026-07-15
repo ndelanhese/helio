@@ -17,5 +17,6 @@ describe('theme bootstrap document', () => {
     Function(script)()
 
     expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.style.colorScheme).toBe('dark')
   })
 })

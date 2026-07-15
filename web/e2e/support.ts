@@ -6,6 +6,11 @@ export const TEST_PASSWORD = 'Helio-TEST-2026!'
 export const TEST_LOGGER_HOST = '192.0.2.44'
 export const TEST_LOGGER_SERIAL = '42424242'
 export const TEST_CONTROL_TOKEN = 'HELIO-E2E-CONTROL-v1'
+export const TEST_SETTINGS = {
+  activeMPPT: [1], currency: 'BRL', latitude: -23.55, loggerHost: TEST_LOGGER_HOST, loggerPort: 8899,
+  loggerSerial: TEST_LOGGER_SERIAL, longitude: -46.63, modbusSlave: 1, panelCount: 7, panelWattage: 610,
+  retentionDays: 730, tariffMinorPerKWh: 95, timezone: 'America/Sao_Paulo',
+}
 export const FIXED_NOW = new Date('2026-07-14T15:43:00.000Z')
 
 export type TestTheme = 'system' | 'light' | 'dark'
@@ -52,6 +57,7 @@ export async function expectTouchTargets(page: Page) {
 }
 
 export async function expectAccessible(page: Page) {
+  await waitForVisualReadiness(page)
   await page.addScriptTag({ path: join(process.cwd(), 'node_modules/axe-core/axe.min.js') })
   const violations = await page.evaluate(async () => {
     const axe = (window as unknown as { axe: { run: (root: Document) => Promise<{ violations: Array<{ id: string; impact: string | null; nodes: Array<{ failureSummary: string; html: string; target: string[] }> }> }> } }).axe
@@ -61,7 +67,37 @@ export async function expectAccessible(page: Page) {
   expect(violations).toEqual([])
 }
 
-export async function expectPageGate(page: Page) {
+export async function waitForVisualReadiness(page: Page, theme?: TestTheme) {
+  const expected = theme === 'system' ? 'dark' : theme
+  await page.waitForFunction((wanted) => {
+    const root = document.documentElement
+    const style = getComputedStyle(root)
+    const resolved = wanted ?? root.dataset.theme
+    const tokens = resolved === 'dark'
+      ? { canvas: '#101714', text: '#EEF4EE', background: 'rgb(16, 23, 20)', color: 'rgb(238, 244, 238)' }
+      : { canvas: '#F3F1E8', text: '#173B2D', background: 'rgb(243, 241, 232)', color: 'rgb(23, 59, 45)' }
+    const linksReady = [...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')].every((link) => link.sheet !== null)
+    return root.dataset.theme === resolved && linksReady
+      && style.getPropertyValue('--canvas').trim().toUpperCase() === tokens.canvas
+      && style.getPropertyValue('--text').trim().toUpperCase() === tokens.text
+      && style.backgroundColor === tokens.background && style.color === tokens.color
+  }, expected)
+  await page.evaluate(async () => {
+    await document.fonts.ready
+    const frames = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    const signature = () => `${document.documentElement.dataset.theme}|${document.styleSheets.length}|${document.body.querySelectorAll('*').length}|${document.body.textContent?.length ?? 0}`
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await frames()
+      const before = signature()
+      await frames()
+      if (before === signature()) return
+    }
+    throw new Error('application DOM did not stabilize before accessibility analysis')
+  })
+}
+
+export async function expectPageGate(page: Page, theme?: TestTheme) {
+  await waitForVisualReadiness(page, theme)
   await expectNoHorizontalOverflow(page)
   await expectTouchTargets(page)
   await expectAccessible(page)
