@@ -1,6 +1,6 @@
-IMAGE ?= helio:local
+IMAGE ?= $(if $(HELIO_IMAGE),$(HELIO_IMAGE),helio:local)
 
-.PHONY: build container container-down container-up hardware-test smoke test test-e2e web workflow-check workflow-contract
+.PHONY: build container container-down container-up docs-check hardware-test smoke test test-e2e web workflow-check workflow-contract
 
 build: web
 	go build ./cmd/helio
@@ -13,6 +13,11 @@ container-up:
 
 container-down:
 	docker compose down
+
+docs-check:
+	ruby scripts/pwa_contract_test.rb
+	ruby scripts/docs_contract_test.rb
+	ruby scripts/check-doc-links.rb
 
 test:
 	go test ./...

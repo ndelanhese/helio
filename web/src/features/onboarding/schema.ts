@@ -93,7 +93,7 @@ export function validateStep(step: number, values: OnboardingValues): FieldError
     if (values.password !== values.confirmPassword) errors.confirmPassword = 'As senhas precisam ser iguais.'
   }
   if (step === 1) {
-    if (!validIPv4(values.loggerHost)) errors.loggerHost = 'Use um endereço IPv4, como 192.168.1.50.'
+    if (!validIPv4(values.loggerHost)) errors.loggerHost = 'Use um endereço IPv4 válido; 192.0.2.1 é apenas um exemplo de formato.'
     if (!validLoggerSerial(values.loggerSerial)) errors.loggerSerial = 'Informe um número de série decimal uint32 (até 4294967295).'
     const port = integer(values.loggerPort)
     if (port === undefined || port < 1 || port > 65535) errors.loggerPort = 'Informe uma porta inteira entre 1 e 65535.'

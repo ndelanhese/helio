@@ -45,8 +45,8 @@ export function AccountStep(props: SharedProps) {
 export function LoggerStep({ errors, update, values, revealSerial, onReveal }: SharedProps & { onReveal: () => void; revealSerial: boolean }) {
   return (
     <StepHeading eyebrow="Comunicação" title="Conecte o logger" text="Use o IPv4 que o roteador reservou para o inversor. O Helio confirma o alcance depois de salvar.">
-      <Field field="loggerHost" label="Endereço IP do logger" hint="Prefira um IPv4 privado e reservado no roteador. Exemplo: 192.168.1.50" error={errors.loggerHost}>
-        <input autoComplete="off" id="loggerHost" inputMode="decimal" name="loggerHost" onChange={(event) => update('loggerHost', event.target.value)} placeholder="192.168.1.50" value={values.loggerHost} />
+      <Field field="loggerHost" label="Endereço IP do logger" hint="Use o IPv4 privado reservado no roteador. 192.0.2.1 é apenas um exemplo de formato." error={errors.loggerHost}>
+        <input autoComplete="off" id="loggerHost" inputMode="decimal" name="loggerHost" onChange={(event) => update('loggerHost', event.target.value)} placeholder="192.0.2.1" value={values.loggerHost} />
       </Field>
       <Field field="loggerSerial" label="Número de série do logger" error={errors.loggerSerial}>
         <div className="secret-field">

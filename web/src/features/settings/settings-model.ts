@@ -63,7 +63,7 @@ export function validateSettings(values: SettingsValues): SettingsErrors {
   if (wattage === undefined || wattage < 1) errors.panelWattage = 'Informe uma potência inteira positiva por painel.'
   if (count && wattage && count * wattage > 12_000) errors.panelCount = 'A potência instalada não pode superar 12 kW.'
   if (values.activeMPPT.length === 0) errors.activeMPPT = 'Mantenha ao menos uma entrada PV ativa.'
-  if (!validIPv4(values.loggerHost)) errors.loggerHost = 'Use um endereço IPv4, como 192.168.1.50.'
+  if (!validIPv4(values.loggerHost)) errors.loggerHost = 'Use um endereço IPv4 válido; 192.0.2.1 é apenas um exemplo de formato.'
   if (!/^\d+$/.test(values.loggerSerial) || BigInt(values.loggerSerial) > 4_294_967_295n) errors.loggerSerial = 'Informe um número de série decimal uint32 válido.'
   const port = integer(values.loggerPort)
   if (port === undefined || port < 1 || port > 65_535) errors.loggerPort = 'Informe uma porta inteira entre 1 e 65535.'

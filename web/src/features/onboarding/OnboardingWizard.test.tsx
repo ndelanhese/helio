@@ -54,7 +54,7 @@ describe('OnboardingWizard', () => {
     renderApp(<OnboardingWizard />)
     await reachLogger(user)
 
-    expect(screen.getByText(/prefira um IPv4 privado/i)).toBeVisible()
+    expect(screen.getByText(/use o IPv4 privado/i)).toHaveTextContent('192.0.2.1')
     await user.type(screen.getByLabelText('Endereço IP do logger'), '8.8.8.8')
     await user.type(screen.getByLabelText('Número de série do logger'), '123456789')
     await user.click(screen.getByRole('button', { name: 'Continuar para os painéis' }))

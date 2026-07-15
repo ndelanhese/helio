@@ -3,13 +3,13 @@
 Local-first solar monitoring for Solarman/SOFAR systems. Built with Go, React, SQLite, and Docker.
 
 > [!IMPORTANT]
-> Helio is currently in design phase. No production image exists yet. Follow the roadmap or join a discussion if you want to help build the first release.
+> Helio v0.1 is a release candidate available as source. No `v0.1.0` tag or GHCR image is claimed until the release workflow publishes it. Build this checkout for evaluation, keep it on a trusted private LAN, and back up before upgrades.
 
 ## Why Helio?
 
 Vendor solar apps often hide useful telemetry behind slow cloud interfaces and weak history views. Helio is designed to talk directly to a Solarman V5 logger on your local network, preserve your own data, and explain system health without depending on vendor cloud availability.
 
-## Planned features
+## Release-candidate features
 
 - Live inverter and PV string telemetry
 - Independent minute, daily, monthly, and yearly history
@@ -20,7 +20,7 @@ Vendor solar apps often hide useful telemetry behind slow cloud interfaces and w
 - Local authentication
 - CSV export and documented local API
 - Single-container deployment with persistent SQLite storage
-- Future Telegram, Home Assistant, remote access, and guarded Modbus controls
+- Read-only Solarman/SOFAR access; no inverter write endpoints
 
 ## Reference hardware
 
@@ -50,13 +50,19 @@ One Go process serves the API, SSE live stream, embedded React app, collector, s
 - Server-Sent Events for live telemetry
 - Docker multi-stage build
 
+## Install and operate
+
+The source checkout runs with `docker compose up -d` and binds to localhost by default. Start with [Install](docs/install.md), then keep [Operations](docs/operations.md), [Backup and restore](docs/backup-restore.md), [Hardware testing](docs/hardware-testing.md), and the [local API](docs/api.md) nearby.
+
+Future release image commands are documented but clearly conditional on publication. Do not assume `ghcr.io/ndelanhese/helio:v0.1.0` exists until the matching GitHub release and immutable digest are visible.
+
 ## Roadmap
 
 1. Solarman V5 read-only transport and SOFAR register validation
 2. Persistent collector, authentication, REST API, and SSE
 3. Responsive Now and History views
 4. Weather-aware insights and internal alerts
-5. Stable Docker image and documented self-hosting
+5. Publish the tested multi-architecture Docker image and documented self-hosting release
 6. Telegram, Home Assistant, remote access, and guarded controls
 
 Detailed approved design: [Helio local solar monitor design](docs/superpowers/specs/2026-07-14-helio-local-solar-monitor-design.md).
@@ -74,4 +80,3 @@ MVP is read-only. Inverter writes can change grid-protection or operating parame
 ## License
 
 Licensed under [Apache License 2.0](LICENSE).
-
