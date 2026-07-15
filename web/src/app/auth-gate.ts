@@ -28,8 +28,19 @@ export function loginRedirect(destination: string) {
 }
 
 export function safeRedirectTarget(candidate: string | null | undefined) {
-  if (!candidate?.startsWith('/') || candidate.startsWith('//')) return '/'
-  const path = candidate.split(/[?#]/, 1)[0]
-  if (path === '/login' || path === '/bootstrap') return '/'
-  return candidate
+  if (!candidate) return '/'
+  try {
+    const origin = window.location.origin
+    const destination = new URL(candidate, origin)
+    if (destination.origin !== origin) return '/'
+    let decodedPath = destination.pathname
+    for (let pass = 0; pass < 2; pass += 1) {
+      try { decodedPath = decodeURIComponent(decodedPath) } catch { break }
+    }
+    if (decodedPath.startsWith('//') || decodedPath.startsWith('/\\')) return '/'
+    if (destination.pathname === '/login' || destination.pathname === '/bootstrap') return '/'
+    return `${destination.pathname}${destination.search}${destination.hash}`
+  } catch {
+    return '/'
+  }
 }

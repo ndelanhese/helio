@@ -24,6 +24,12 @@ async function reachPanels(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Continuar para os painéis' }))
 }
 
+async function reachReview(user: ReturnType<typeof userEvent.setup>) {
+  await reachPanels(user)
+  await user.click(screen.getByRole('button', { name: 'Continuar para local e tarifa' }))
+  await user.click(screen.getByRole('button', { name: 'Revisar configuração' }))
+}
+
 describe('OnboardingWizard', () => {
   it.each(['light', 'dark'] as const)('não tem violações axe no tema %s', async (theme) => {
     localStorage.setItem('helio-theme', theme)
@@ -66,6 +72,11 @@ describe('OnboardingWizard', () => {
 
     expect(screen.getByText('Use no máximo 128 bytes.')).toBeVisible()
     expect(screen.getByLabelText('Senha')).toHaveFocus()
+  })
+
+  it('explica mínimo em caracteres Unicode e máximo em bytes', () => {
+    renderApp(<OnboardingWizard />)
+    expect(screen.getByText(/mínimo de 12 caracteres Unicode e máximo de 128 bytes/i)).toBeVisible()
   })
 
   it('bloqueia senhas diferentes e move foco para o primeiro erro', async () => {
@@ -153,7 +164,64 @@ describe('OnboardingWizard', () => {
     await user.click(screen.getByRole('button', { name: 'Revisar configuração' }))
     await user.click(screen.getByRole('button', { name: 'Criar Helio' }))
 
-    expect(await screen.findByText(/número de série precisa conter apenas dígitos/i)).toBeVisible()
+    expect(await screen.findByText(/número de série decimal uint32 válido/i)).toBeVisible()
     expect(screen.getByLabelText('Número de série do logger')).toHaveValue('123456789')
+  })
+
+  it('marca o grupo MPPT como inválido quando nenhuma entrada está ativa', async () => {
+    const user = userEvent.setup()
+    renderApp(<OnboardingWizard />)
+    await reachPanels(user)
+    await user.click(screen.getByLabelText('Entrada PV1 ativa'))
+    await user.click(screen.getByRole('button', { name: 'Continuar para local e tarifa' }))
+
+    expect(screen.getByRole('group', { name: 'Entradas fotovoltaicas em uso' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText(/ao menos uma entrada PV/i)).toBeVisible()
+  })
+
+  it('refaz o status e sai para login quando outro cliente fecha o bootstrap', async () => {
+    const user = userEvent.setup()
+    const onBootstrapClosed = vi.fn()
+    let statusRequests = 0
+    server.use(
+      http.post('/api/v1/bootstrap', () => HttpResponse.json(
+        { error: { code: 'bootstrap_closed', message: 'initial setup is already complete' } },
+        { status: 409 },
+      )),
+      http.get('/api/v1/bootstrap/status', () => {
+        statusRequests += 1
+        return HttpResponse.json({ open: false })
+      }),
+    )
+    const ClosedAwareWizard = OnboardingWizard as React.ComponentType<{ onBootstrapClosed: () => void }>
+    const { client } = renderApp(<ClosedAwareWizard onBootstrapClosed={onBootstrapClosed} />)
+    client.setQueryData(queryKeys.bootstrap, { open: true })
+    await reachReview(user)
+    await user.click(screen.getByRole('button', { name: 'Criar Helio' }))
+
+    await waitFor(() => expect(onBootstrapClosed).toHaveBeenCalledOnce())
+    expect(statusRequests).toBeGreaterThan(0)
+    expect(client.getQueryData(queryKeys.bootstrap)).toEqual({ open: false })
+  })
+
+  it('não fica preso no wizard se o status falhar depois do 409 definitivo', async () => {
+    const user = userEvent.setup()
+    const onBootstrapClosed = vi.fn()
+    server.use(
+      http.post('/api/v1/bootstrap', () => HttpResponse.json(
+        { error: { code: 'bootstrap_closed', message: 'initial setup is already complete' } },
+        { status: 409 },
+      )),
+      http.get('/api/v1/bootstrap/status', () => HttpResponse.json(
+        { error: { code: 'unavailable', message: 'status unavailable' } },
+        { status: 503 },
+      )),
+    )
+    const ClosedAwareWizard = OnboardingWizard as React.ComponentType<{ onBootstrapClosed: () => void }>
+    renderApp(<ClosedAwareWizard onBootstrapClosed={onBootstrapClosed} />)
+    await reachReview(user)
+    await user.click(screen.getByRole('button', { name: 'Criar Helio' }))
+
+    await waitFor(() => expect(onBootstrapClosed).toHaveBeenCalledOnce())
   })
 })

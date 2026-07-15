@@ -13,7 +13,7 @@
 ## TDD e verificação
 
 - RED observado: `npm --prefix web test -- --run LoginForm OnboardingWizard` falhou por componentes ausentes.
-- GREEN final: `npm --prefix web test -- --run` — 11 arquivos, 33 testes aprovados.
+- GREEN inicial: `npm --prefix web test -- --run` — 11 arquivos, 33 testes aprovados.
 - Axe executado nos formulários em temas claro e escuro, sem violações (contraste excluído no jsdom).
 - `npm --prefix web run typecheck` — aprovado.
 - `npm --prefix web run lint` — aprovado, zero warnings.
@@ -29,3 +29,21 @@
 ## Observação
 
 - A regra axe de contraste precisa de layout real e ficou desabilitada no jsdom; contraste visual deve continuar na checklist de navegador/E2E.
+
+## Correções após revisão
+
+- Redirect de retorno agora usa `URL`, compara origem exata, normaliza path/query/hash e rejeita barras invertidas, formas codificadas e loops.
+- O handler 401 global preserva path, query e hash e não redireciona recursivamente em login/bootstrap.
+- Parsers rejeitam vazio, não finito, inteiro inseguro e decimal inválido; zero explícito de tarifa permanece válido.
+- Série limitada a decimal uint32; senha usa mínimo em pontos de código Unicode e máximo em bytes UTF-8.
+- Timezone usa validação IANA real; moeda usa `Intl.supportedValuesOf` com fallback integral compatível com o backend.
+- Todos os campos do bootstrap têm mapeamento seguro de 422, etapa e foco. O backend ainda não envia metadado de campo: o frontend depende dos códigos estáveis `invalid_request`, `invalid_password`, `invalid_settings` e de fragmentos estáveis das mensagens, sem refletir detalhes do servidor.
+- Login e bootstrap usam trava síncrona contra double-submit; 409 refaz o status e sempre segue para login.
+- Token de eyebrow claro passou a usar `#173B2D` (AA sobre o canvas); amarelo permanece em fundo escuro/masthead.
+- Contagem regressiva usa anúncio `polite`, MPPT expõe `aria-invalid`, e falhas de rede/servidor têm mensagens distintas.
+
+### Verificação da revisão
+
+- RED observado separadamente para redirects/401, 22 casos de schema/mapeamento, double-submit, 409, contraste, fallback ISO e falha do refetch.
+- GREEN final: `npm --prefix web test -- --run` — 14 arquivos, 73 testes aprovados.
+- `typecheck`, `lint` e `build` aprovados; `git diff --check` limpo.

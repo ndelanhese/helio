@@ -17,11 +17,16 @@ describe('resolveAppAccess', () => {
   })
 
   it('preserves only safe same-origin destinations through login', () => {
-    expect(loginRedirect('/history?range=week')).toBe('/login?redirect=%2Fhistory%3Frange%3Dweek')
-    expect(safeRedirectTarget('/insights')).toBe('/insights')
+    expect(loginRedirect('/history?range=week#sun')).toBe('/login?redirect=%2Fhistory%3Frange%3Dweek%23sun')
+    expect(safeRedirectTarget('/insights?period=7d#peak')).toBe('/insights?period=7d#peak')
     expect(safeRedirectTarget('https://attacker.test')).toBe('/')
     expect(safeRedirectTarget('//attacker.test')).toBe('/')
+    expect(safeRedirectTarget('/\\evil.test')).toBe('/')
+    expect(safeRedirectTarget('/%5c%5cevil.test')).toBe('/')
+    expect(safeRedirectTarget('/%2f%2fevil.test')).toBe('/')
+    expect(safeRedirectTarget('/history/../insights?q=1#ok')).toBe('/insights?q=1#ok')
     expect(safeRedirectTarget('/login')).toBe('/')
+    expect(safeRedirectTarget('/bootstrap?next=/history')).toBe('/')
   })
 })
 

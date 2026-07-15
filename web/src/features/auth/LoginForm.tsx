@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { LockKeyhole } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { ApiError, authMemory } from '../../api/client'
 import { login, queryKeys } from '../../api/queries'
@@ -11,6 +11,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
   const [password, setPassword] = useState('')
   const [remaining, setRemaining] = useState(0)
   const [message, setMessage] = useState('')
+  const submissionStarted = useRef(false)
   const mutation = useMutation({
     mutationFn: login,
     onSuccess: (session) => {
@@ -23,10 +24,15 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
         setRemaining(error.retryAfterSeconds ?? 60)
         return
       }
-      setMessage(error instanceof ApiError && error.status === 401
-        ? 'Usuário ou senha não conferem. Verifique os dados e tente novamente.'
-        : 'Não foi possível entrar. Verifique a conexão com o Helio e tente novamente.')
+      if (error instanceof ApiError && error.status === 401) {
+        setMessage('Usuário ou senha não conferem. Verifique os dados e tente novamente.')
+      } else if (error instanceof ApiError && error.status >= 500) {
+        setMessage('O servidor Helio não conseguiu concluir o login. Aguarde um instante e tente novamente.')
+      } else {
+        setMessage('Não foi possível alcançar o Helio. Verifique a conexão de rede e tente novamente.')
+      }
     },
+    onSettled: () => { submissionStarted.current = false },
   })
 
   useEffect(() => {
@@ -41,7 +47,9 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
     <form className="login-form" onSubmit={(event) => {
       event.preventDefault()
       setMessage('')
-      if (!mutation.isPending && remaining === 0) mutation.mutate({ username: username.trim(), password })
+      if (submissionStarted.current || remaining > 0) return
+      submissionStarted.current = true
+      mutation.mutate({ username: username.trim(), password })
     }}>
       <div className="onboarding-step">
         <p className="eyebrow">Área protegida</p>
@@ -52,7 +60,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
         <div className="form-field"><label htmlFor="login-username">Usuário</label><div><input autoComplete="username" id="login-username" onChange={(event) => setUsername(event.target.value)} value={username} /></div></div>
         <div className="form-field"><label htmlFor="login-password">Senha</label><div><input autoComplete="current-password" id="login-password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} /></div></div>
         <p className="security-note"><LockKeyhole aria-hidden="true" /> Conexão local sem HTTPS: não reutilize uma senha importante.</p>
-        {remaining > 0 && <p aria-live="assertive" className="form-alert" role="alert">Muitas tentativas. Tente novamente em {countdown}.</p>}
+        {remaining > 0 && <p aria-live="polite" className="form-alert" role="status">Muitas tentativas. Tente novamente em {countdown}.</p>}
         {message && <p aria-live="assertive" className="form-alert" role="alert">{message}</p>}
         <button className="primary-action" disabled={mutation.isPending || remaining > 0} type="submit">
           {mutation.isPending ? 'Verificando acesso…' : remaining > 0 ? `Tente novamente em ${countdown}` : 'Entrar no Helio'}

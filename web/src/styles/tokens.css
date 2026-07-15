@@ -6,6 +6,7 @@
   --accent: #2E7D55;
   --sun: #E7B84B;
   --danger: #B4493D;
+  --eyebrow: #173B2D;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -30,4 +31,5 @@
   --accent: #6EC495;
   --sun: #F0C75E;
   --danger: #E47B6D;
+  --eyebrow: #F0C75E;
 }

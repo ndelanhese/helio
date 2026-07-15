@@ -31,7 +31,7 @@ export function AccountStep(props: SharedProps) {
       <Field field="username" label="Usuário administrador" error={props.errors.username}>
         <input autoComplete="username" id="username" name="username" onChange={(event) => props.update('username', event.target.value)} value={props.values.username} />
       </Field>
-      <Field field="password" label="Senha" hint="De 12 a 128 caracteres. Guarde-a no seu gerenciador de senhas." error={props.errors.password}>
+      <Field field="password" label="Senha" hint="Mínimo de 12 caracteres Unicode e máximo de 128 bytes. Guarde-a no seu gerenciador de senhas." error={props.errors.password}>
         <input autoComplete="new-password" id="password" name="password" onChange={(event) => props.update('password', event.target.value)} type="password" value={props.values.password} />
       </Field>
       <Field field="confirmPassword" label="Confirmar senha" error={props.errors.confirmPassword}>
@@ -76,7 +76,7 @@ export function PanelsStep({ errors, update, values, toggleMPPT }: SharedProps &
         <SunMedium aria-hidden="true" /><span>Potência instalada</span>
         <strong>{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(total / 1000)} kWp</strong>
       </output>
-      <fieldset aria-describedby={errors.activeMPPT ? 'activeMPPT-error' : undefined} className="mppt-fieldset">
+      <fieldset aria-describedby={errors.activeMPPT ? 'activeMPPT-error' : undefined} aria-invalid={errors.activeMPPT ? 'true' : undefined} className="mppt-fieldset">
         <legend>Entradas fotovoltaicas em uso</legend>
         {[1, 2].map((input) => (
           <label key={input}>

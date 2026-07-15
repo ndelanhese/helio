@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import { ApiError, authMemory } from '../../api/client'
-import { createBootstrap, queryKeys } from '../../api/queries'
+import { bootstrapStatusQuery, createBootstrap, queryKeys } from '../../api/queries'
 import {
   initialOnboardingValues,
   type FieldErrors,
@@ -29,7 +29,7 @@ const stepForField: Partial<Record<OnboardingField, number>> = {
   latitude: 3, longitude: 3, timezone: 3, currency: 3, tariff: 3, retentionDays: 3,
 }
 
-export function OnboardingWizard({ onSuccess }: { onSuccess?: () => void }) {
+export function OnboardingWizard({ onBootstrapClosed, onSuccess }: { onBootstrapClosed?: () => void; onSuccess?: () => void }) {
   const client = useQueryClient()
   const [step, setStep] = useState(0)
   const [values, setValues] = useState(initialOnboardingValues)
@@ -53,14 +53,21 @@ export function OnboardingWizard({ onSuccess }: { onSuccess?: () => void }) {
       client.setQueryData(queryKeys.bootstrap, { open: false })
       onSuccess?.()
     },
-    onError: (error) => {
+    onError: async (error) => {
       submissionStarted.current = false
       if (error instanceof ApiError && error.status === 409) {
-        setErrors({ general: 'A configuração inicial já foi concluída. Entre com a conta existente.' })
+        try {
+          await client.invalidateQueries({ queryKey: queryKeys.bootstrap, refetchType: 'all' })
+          await client.fetchQuery(bootstrapStatusQuery)
+        } catch {
+          // The 409 is definitive; a transient status failure must not trap the user.
+        } finally {
+          onBootstrapClosed?.()
+        }
         return
       }
       if (error instanceof ApiError && error.status === 422) {
-        const [field, message] = serverFieldError(error.message)
+        const [field, message] = serverFieldError(error.message, error.code)
         setErrors({ [field]: message })
         if (field !== 'general') {
           setStep(stepForField[field] ?? step)

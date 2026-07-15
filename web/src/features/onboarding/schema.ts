@@ -41,44 +41,68 @@ export const initialOnboardingValues: OnboardingValues = {
   username: '',
 }
 
-const integer = (value: string) => /^\d+$/.test(value) ? Number(value) : Number.NaN
-const decimal = (value: string) => Number(value.replace(',', '.'))
+function integer(value: string) {
+  if (!/^\d+$/.test(value)) return undefined
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : undefined
+}
+
+function decimal(value: string) {
+  const normalized = value.trim().replace(',', '.')
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return undefined
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function requiredInteger(value: string, field: OnboardingField) {
+  const parsed = integer(value)
+  if (parsed === undefined) throw new Error(`invalid integer field: ${field}`)
+  return parsed
+}
+
+function requiredDecimal(value: string, field: OnboardingField) {
+  const parsed = decimal(value)
+  if (parsed === undefined) throw new Error(`invalid decimal field: ${field}`)
+  return parsed
+}
 
 export function validateStep(step: number, values: OnboardingValues): FieldErrors {
   const errors: FieldErrors = {}
   if (step === 0) {
     if (!values.username.trim()) errors.username = 'Informe o usuário administrador.'
+    const passwordLength = [...values.password].length
     const passwordBytes = new TextEncoder().encode(values.password).length
-    if (passwordBytes < 12) errors.password = 'Use pelo menos 12 caracteres.'
+    if (passwordLength < 12) errors.password = 'Use pelo menos 12 caracteres Unicode.'
     else if (passwordBytes > 128) errors.password = 'Use no máximo 128 bytes.'
     if (values.password !== values.confirmPassword) errors.confirmPassword = 'As senhas precisam ser iguais.'
   }
   if (step === 1) {
     if (!validIPv4(values.loggerHost)) errors.loggerHost = 'Use um endereço IPv4, como 192.168.1.50.'
-    if (!/^\d{1,10}$/.test(values.loggerSerial)) errors.loggerSerial = 'O número de série precisa conter apenas dígitos.'
+    if (!validLoggerSerial(values.loggerSerial)) errors.loggerSerial = 'Informe um número de série decimal uint32 (até 4294967295).'
     const port = integer(values.loggerPort)
-    if (port < 1 || port > 65535) errors.loggerPort = 'Informe uma porta entre 1 e 65535.'
+    if (port === undefined || port < 1 || port > 65535) errors.loggerPort = 'Informe uma porta inteira entre 1 e 65535.'
     const slave = integer(values.modbusSlave)
-    if (slave < 1 || slave > 247) errors.modbusSlave = 'Informe um endereço Modbus entre 1 e 247.'
+    if (slave === undefined || slave < 1 || slave > 247) errors.modbusSlave = 'Informe um endereço Modbus inteiro entre 1 e 247.'
   }
   if (step === 2) {
     const count = integer(values.panelCount)
     const watts = integer(values.panelWattage)
-    if (count < 1) errors.panelCount = 'Informe ao menos um painel.'
-    if (watts < 1) errors.panelWattage = 'Informe a potência positiva do painel.'
-    if (count > 0 && watts > 0 && count * watts > 12000) errors.panelCount = 'A potência instalada não pode superar 12 kW.'
+    if (count === undefined || count < 1) errors.panelCount = 'Informe uma quantidade inteira positiva de painéis.'
+    if (watts === undefined || watts < 1) errors.panelWattage = 'Informe uma potência inteira positiva por painel.'
+    if (count !== undefined && watts !== undefined && count > 0 && watts > 0 && count * watts > 12000) errors.panelCount = 'A potência instalada não pode superar 12 kW.'
     if (values.activeMPPT.length === 0) errors.activeMPPT = 'Mantenha ao menos uma entrada PV ativa.'
   }
   if (step === 3) {
     const latitude = decimal(values.latitude)
     const longitude = decimal(values.longitude)
-    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) errors.latitude = 'Informe uma latitude entre -90 e 90.'
-    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) errors.longitude = 'Informe uma longitude entre -180 e 180.'
-    if (!/^[A-Za-z_+-]+\/[A-Za-z0-9_+/-]+$/.test(values.timezone)) errors.timezone = 'Use um fuso IANA, como America/Sao_Paulo.'
-    if (!/^[A-Z]{3}$/.test(values.currency)) errors.currency = 'Use um código de moeda com três letras maiúsculas.'
-    if (!Number.isFinite(decimal(values.tariff)) || decimal(values.tariff) < 0) errors.tariff = 'Informe uma tarifa igual ou maior que zero.'
+    if (latitude === undefined || latitude < -90 || latitude > 90) errors.latitude = 'Informe uma latitude finita entre -90 e 90.'
+    if (longitude === undefined || longitude < -180 || longitude > 180) errors.longitude = 'Informe uma longitude finita entre -180 e 180.'
+    if (!validTimezone(values.timezone)) errors.timezone = 'Use um fuso IANA real, como America/Sao_Paulo.'
+    if (!validCurrency(values.currency)) errors.currency = 'Use um código de moeda ISO 4217, como BRL.'
+    const tariff = decimal(values.tariff)
+    if (tariff === undefined || tariff < 0) errors.tariff = 'Informe uma tarifa finita igual ou maior que zero.'
     const retention = integer(values.retentionDays)
-    if (retention < 30 || retention > 3650) errors.retentionDays = 'Escolha entre 30 e 3650 dias.'
+    if (retention === undefined || retention < 30 || retention > 3650) errors.retentionDays = 'Escolha um número inteiro entre 30 e 3650 dias.'
   }
   return errors
 }
@@ -89,38 +113,82 @@ export function toBootstrapPayload(values: OnboardingValues): BootstrapPayload {
     password: values.password,
     settings: {
       activeMPPT: [...values.activeMPPT].sort(),
-      currency: values.currency,
-      latitude: decimal(values.latitude),
+      currency: values.currency.trim().toUpperCase(),
+      latitude: requiredDecimal(values.latitude, 'latitude'),
       loggerHost: values.loggerHost.trim(),
-      loggerPort: integer(values.loggerPort),
+      loggerPort: requiredInteger(values.loggerPort, 'loggerPort'),
       loggerSerial: values.loggerSerial,
-      longitude: decimal(values.longitude),
-      modbusSlave: integer(values.modbusSlave),
-      panelCount: integer(values.panelCount),
-      panelWattage: integer(values.panelWattage),
-      retentionDays: integer(values.retentionDays),
-      tariffMinorPerKWh: Math.round(decimal(values.tariff) * 100),
+      longitude: requiredDecimal(values.longitude, 'longitude'),
+      modbusSlave: requiredInteger(values.modbusSlave, 'modbusSlave'),
+      panelCount: requiredInteger(values.panelCount, 'panelCount'),
+      panelWattage: requiredInteger(values.panelWattage, 'panelWattage'),
+      retentionDays: requiredInteger(values.retentionDays, 'retentionDays'),
+      tariffMinorPerKWh: Math.round(requiredDecimal(values.tariff, 'tariff') * 100),
       timezone: values.timezone.trim(),
     },
   }
 }
 
 export function installedPower(values: OnboardingValues) {
-  const watts = integer(values.panelCount) * integer(values.panelWattage)
-  return Number.isFinite(watts) ? watts : 0
+  const count = integer(values.panelCount)
+  const perPanel = integer(values.panelWattage)
+  if (count === undefined || perPanel === undefined) return 0
+  const watts = count * perPanel
+  return Number.isSafeInteger(watts) ? watts : 0
 }
 
-export function serverFieldError(message: string): [OnboardingField | 'general', string] {
+export function serverFieldError(message: string, code = 'invalid_settings'): [OnboardingField | 'general', string] {
   const normalized = message.toLowerCase()
-  if (normalized.includes('serial')) return ['loggerSerial', 'O número de série precisa conter apenas dígitos e caber no formato do logger.']
-  if (normalized.includes('host')) return ['loggerHost', 'O servidor recusou o endereço do logger. Confira o IPv4 da rede local.']
-  if (normalized.includes('password')) return ['password', 'A senha precisa ter entre 12 e 128 bytes.']
-  if (normalized.includes('timezone')) return ['timezone', 'O servidor não reconheceu esse fuso IANA.']
-  if (normalized.includes('tariff')) return ['tariff', 'O servidor recusou essa tarifa.']
+  if (code === 'invalid_request') return ['username', 'Informe o usuário administrador.']
+  if (code === 'invalid_password' || normalized.includes('password')) return ['password', 'A senha precisa ter ao menos 12 caracteres e no máximo 128 bytes.']
+  const mappings: Array<[RegExp, OnboardingField, string]> = [
+    [/username/, 'username', 'Informe o usuário administrador.'],
+    [/logger host|loggerhost/, 'loggerHost', 'O servidor recusou o endereço IPv4 do logger.'],
+    [/logger serial|loggerserial|serial/, 'loggerSerial', 'Informe um número de série decimal uint32 válido.'],
+    [/logger port|loggerport/, 'loggerPort', 'Informe uma porta entre 1 e 65535.'],
+    [/modbus slave|modbusslave/, 'modbusSlave', 'Informe um endereço Modbus entre 1 e 247.'],
+    [/installed power|panel count/, 'panelCount', 'Revise a quantidade e a potência total instalada.'],
+    [/panel wattage|panelwattage|wattage/, 'panelWattage', 'Revise a potência por painel.'],
+    [/mppt/, 'activeMPPT', 'Mantenha ao menos uma entrada PV válida ativa.'],
+    [/latitude/, 'latitude', 'Informe uma latitude entre -90 e 90.'],
+    [/longitude/, 'longitude', 'Informe uma longitude entre -180 e 180.'],
+    [/timezone|time zone/, 'timezone', 'O servidor não reconheceu esse fuso IANA.'],
+    [/currency/, 'currency', 'O servidor não reconheceu essa moeda ISO 4217.'],
+    [/tariff/, 'tariff', 'O servidor recusou essa tarifa.'],
+    [/retention/, 'retentionDays', 'Escolha uma retenção entre 30 e 3650 dias.'],
+  ]
+  for (const [pattern, field, safeMessage] of mappings) {
+    if (pattern.test(normalized)) return [field, safeMessage]
+  }
   return ['general', 'Não foi possível criar o Helio. Revise os dados e tente novamente.']
 }
 
 function validIPv4(value: string) {
   const parts = value.split('.').map(Number)
   return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+}
+
+function validLoggerSerial(value: string) {
+  if (!/^\d+$/.test(value)) return false
+  try { return BigInt(value) <= 4_294_967_295n } catch { return false }
+}
+
+function validTimezone(value: string) {
+  if (!value || value === 'Local') return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format()
+    return true
+  } catch {
+    return false
+  }
+}
+
+const fallbackCurrencies = new Set('AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BOV BRL BSD BTN BWP BYN BZD CAD CDF CHE CHF CHW CLF CLP CNY COP COU CRC CUC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MXV MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SLL SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD USN UYI UYU UYW UZS VED VES VND VUV WST XAF XAG XAU XBA XBB XBC XBD XCD XDR XOF XPD XPF XPT XSU XTS XUA XXX YER ZAR ZMW ZWL'.split(' '))
+
+function validCurrency(value: string) {
+  const normalized = value.trim().toUpperCase()
+  if (!/^[A-Z]{3}$/.test(normalized)) return false
+  const intl = Intl as typeof Intl & { supportedValuesOf?: (key: 'currency') => string[] }
+  const supported = intl.supportedValuesOf?.('currency')
+  return supported ? supported.includes(normalized) : fallbackCurrencies.has(normalized)
 }
