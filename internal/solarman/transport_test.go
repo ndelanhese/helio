@@ -66,6 +66,38 @@ func TestTCPRoundTripReadsFragmentedFrameAndSetsDeadline(t *testing.T) {
 	}
 }
 
+func TestTCPRoundTripAnswersLoggerHeartbeatBeforeModbusResponse(t *testing.T) {
+	request := []byte{1, 2, 3}
+	heartbeat := buildFrame(0x4710, 123456789, 0x2207, make([]byte, 10))
+	response := fixture(t, "read_holding_response.hex")
+	conn := &scriptedConn{reader: bytes.NewReader(append(heartbeat, response...))}
+	transport := newTCPRoundTripper(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	got, err := transport.RoundTrip(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, response) {
+		t.Fatalf("response = %x, want %x", got, response)
+	}
+	written := conn.written.Bytes()
+	if !bytes.HasPrefix(written, request) {
+		t.Fatalf("writes do not begin with request: %x", written)
+	}
+	heartbeatReply := written[len(request):]
+	if heartbeatReply[3] != 0x10 || heartbeatReply[4] != 0x17 {
+		t.Fatalf("heartbeat reply control = %02x %02x, want 10 17", heartbeatReply[3], heartbeatReply[4])
+	}
+	if heartbeatReply[5] != 0x08 || heartbeatReply[6] != 0x22 {
+		t.Fatalf("heartbeat reply sequence = %02x %02x, want 08 22", heartbeatReply[5], heartbeatReply[6])
+	}
+	if binary.LittleEndian.Uint32(heartbeatReply[7:11]) != 123456789 {
+		t.Fatalf("heartbeat reply logger serial mismatch")
+	}
+}
+
 func TestTCPRoundTripClosesAfterPartialRead(t *testing.T) {
 	response := fixture(t, "read_holding_response.hex")
 	conn := &scriptedConn{reader: bytes.NewReader(response[:v5HeaderSize+1])}
