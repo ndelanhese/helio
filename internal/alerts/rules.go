@@ -188,18 +188,13 @@ func evaluateUnderproduction(input Input, state State, open bool, config Config)
 	if input.Analysis == nil {
 		return d
 	}
-	if state.LastKey == input.AnalysisDay {
+	if state.LastKey != "" && input.AnalysisDay <= state.LastKey {
 		return d
-	}
-	if !input.WeatherAvailable || !input.Analysis.Qualifying {
-		d.Next.Consecutive = 0
-		d.Next.LastKey = input.AnalysisDay
-		return d
-	}
-	if state.LastKey != "" && !consecutiveDay(state.LastKey, input.AnalysisDay) {
-		d.Next.Consecutive = 0
 	}
 	d.Next.LastKey = input.AnalysisDay
+	if !input.WeatherAvailable || !input.Analysis.Qualifying {
+		return d
+	}
 	ratio := input.Analysis.Ratio
 	if open {
 		if ratio >= config.RecoveryRatio {
@@ -237,6 +232,7 @@ func evaluateGridFrequency(input Input, state State, open bool, config Config) D
 func evaluateDuration(input Input, state State, open, outside bool, duration time.Duration, severity Severity, reason, key string, value float64) Decision {
 	d := baseDecision(state, severity, reason)
 	if !input.TelemetryObserved || !input.TelemetryFresh {
+		d.Next.PendingSince = time.Time{}
 		return d
 	}
 	if !outside {
@@ -265,12 +261,6 @@ func evidence(values map[string]float64, since time.Time) Evidence {
 		result.Timestamps = map[string]time.Time{"pending_since": since.UTC()}
 	}
 	return result
-}
-
-func consecutiveDay(previous, current string) bool {
-	before, err1 := time.Parse("2006-01-02", previous)
-	after, err2 := time.Parse("2006-01-02", current)
-	return err1 == nil && err2 == nil && before.AddDate(0, 0, 1).Equal(after)
 }
 
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

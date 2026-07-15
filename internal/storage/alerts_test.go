@@ -133,14 +133,22 @@ func TestAlertRepositoryConcurrentOpenIsUnique(t *testing.T) {
 		}
 	}
 	var wait sync.WaitGroup
+	errors := make(chan error, 20)
 	wait.Add(20)
 	for range 20 {
 		go func() {
 			defer wait.Done()
-			_, _ = engine.Evaluate(ctx, alerts.Input{At: base.Add(2 * time.Second), PollObserved: true})
+			_, err := engine.Evaluate(ctx, alerts.Input{At: base.Add(2 * time.Second), PollObserved: true})
+			errors <- err
 		}()
 	}
 	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("concurrent evaluation: %v", err)
+		}
+	}
 	records, err := NewAlertRepository(db).List(ctx, "open")
 	if err != nil {
 		t.Fatal(err)

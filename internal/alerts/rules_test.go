@@ -110,9 +110,55 @@ func TestRuleDiscontinuitiesResetPendingEvidence(t *testing.T) {
 		t.Fatalf("non-fresh sample counted toward fault recovery: %+v", nonFreshClear)
 	}
 
-	nonconsecutive := PersistentUnderproductionRule().Evaluate(analysisInput(ruleBase.AddDate(0, 0, 3), .20), State{Consecutive: 2, LastKey: ruleBase.Format("2006-01-02")}, false, config)
-	if nonconsecutive.ShouldOpen || nonconsecutive.Next.Consecutive != 1 {
-		t.Fatalf("day gap retained underproduction streak: %+v", nonconsecutive.Next)
+	skippedDates := PersistentUnderproductionRule().Evaluate(analysisInput(ruleBase.AddDate(0, 0, 3), .20), State{Consecutive: 2, LastKey: ruleBase.Format("2006-01-02")}, false, config)
+	if !skippedDates.ShouldOpen || skippedDates.Next.Consecutive != 0 {
+		t.Fatalf("skipped dates erased underproduction streak: %+v", skippedDates.Next)
+	}
+}
+
+func TestGridDurationGapClearsPendingWindow(t *testing.T) {
+	config := DefaultConfig()
+	tests := []struct {
+		name     string
+		rule     Rule
+		duration time.Duration
+		bad      func(time.Time) Input
+	}{
+		{"voltage", GridVoltageRule(), config.VoltageFor, func(at time.Time) Input { return telemetryInput(at, 201, 60) }},
+		{"frequency", GridFrequencyRule(), config.FrequencyFor, func(at time.Time) Input { return telemetryInput(at, 220, 59) }},
+	}
+	for _, test := range tests {
+		for _, gap := range []struct {
+			name   string
+			mutate func(*Input)
+		}{
+			{"missing", func(input *Input) { input.TelemetryObserved = false }},
+			{"stale", func(input *Input) { input.TelemetryFresh = false }},
+		} {
+			t.Run(test.name+"_"+gap.name, func(t *testing.T) {
+				state := State{PendingSince: ruleBase}
+				interrupted := test.bad(ruleBase.Add(test.duration - time.Second))
+				gap.mutate(&interrupted)
+				decision := test.rule.Evaluate(interrupted, state, false, config)
+				if !decision.Next.PendingSince.IsZero() {
+					t.Fatalf("gap retained pending window: %+v", decision.Next)
+				}
+
+				restartedAt := ruleBase.Add(test.duration)
+				restarted := test.rule.Evaluate(test.bad(restartedAt), decision.Next, false, config)
+				if restarted.ShouldOpen || !restarted.Next.PendingSince.Equal(restartedAt) {
+					t.Fatalf("first bad sample after gap did not restart window: %+v", restarted)
+				}
+				beforeBoundary := test.rule.Evaluate(test.bad(restartedAt.Add(test.duration-time.Nanosecond)), restarted.Next, false, config)
+				if beforeBoundary.ShouldOpen {
+					t.Fatal("rule opened before restarted duration boundary")
+				}
+				atBoundary := test.rule.Evaluate(test.bad(restartedAt.Add(test.duration)), beforeBoundary.Next, false, config)
+				if !atBoundary.ShouldOpen {
+					t.Fatal("rule did not open at restarted duration boundary")
+				}
+			})
+		}
 	}
 }
 
@@ -152,13 +198,13 @@ func TestRuleUnderproductionQualifyingDayHysteresis(t *testing.T) {
 
 	notQualifying := analysisInput(ruleBase.AddDate(0, 0, 6), 0.20)
 	notQualifying.Analysis.Qualifying = false
-	if got := rule.Evaluate(notQualifying, State{Consecutive: 2}, false, config); got.ShouldOpen || got.Next.Consecutive != 0 {
-		t.Fatalf("nonqualifying analysis retained evidence: %+v", got)
+	if got := rule.Evaluate(notQualifying, State{Consecutive: 2}, false, config); got.ShouldOpen || got.Next.Consecutive != 2 {
+		t.Fatalf("nonqualifying analysis changed evidence: %+v", got)
 	}
 	noWeather := analysisInput(ruleBase.AddDate(0, 0, 7), 0.20)
 	noWeather.WeatherAvailable = false
-	if got := rule.Evaluate(noWeather, State{Consecutive: 2}, false, config); got.ShouldOpen || got.Next.Consecutive != 0 {
-		t.Fatalf("missing weather retained evidence: %+v", got)
+	if got := rule.Evaluate(noWeather, State{Consecutive: 2}, false, config); got.ShouldOpen || got.Next.Consecutive != 2 {
+		t.Fatalf("missing weather changed evidence: %+v", got)
 	}
 }
 
@@ -180,6 +226,68 @@ func TestRuleUnderproductionRecoveryStartsAfterOpening(t *testing.T) {
 	secondRecovery := rule.Evaluate(analysisInput(ruleBase.AddDate(0, 0, 5), .80), firstRecovery.Next, true, config)
 	if !secondRecovery.ShouldResolve {
 		t.Fatalf("second recovery did not resolve: %+v", secondRecovery)
+	}
+}
+
+func TestRuleUnderproductionCountsDistinctQualifyingDaysAcrossSkippedDates(t *testing.T) {
+	config := DefaultConfig()
+	rule := PersistentUnderproductionRule()
+	state := State{}
+	for index, offset := range []int{0, 3, 8} {
+		decision := rule.Evaluate(analysisInput(ruleBase.AddDate(0, 0, offset), .64), state, false, config)
+		state = decision.Next
+		if decision.ShouldOpen != (index == 2) {
+			t.Fatalf("qualifying day %d open=%v state=%+v", index+1, decision.ShouldOpen, state)
+		}
+	}
+
+	firstRecovery := rule.Evaluate(analysisInput(ruleBase.AddDate(0, 0, 12), .80), state, true, config)
+	nonqualifying := analysisInput(ruleBase.AddDate(0, 0, 14), .20)
+	nonqualifying.Analysis.Qualifying = false
+	gap := rule.Evaluate(nonqualifying, firstRecovery.Next, true, config)
+	if gap.Next.Consecutive != 1 {
+		t.Fatalf("nonqualifying day erased recovery evidence: %+v", gap.Next)
+	}
+	secondRecovery := rule.Evaluate(analysisInput(ruleBase.AddDate(0, 0, 20), .80), gap.Next, true, config)
+	if !secondRecovery.ShouldResolve {
+		t.Fatalf("second distinct recovery day did not resolve: %+v", secondRecovery)
+	}
+}
+
+func TestRuleUnderproductionIgnoresOutOfOrderAnalysisDays(t *testing.T) {
+	config := DefaultConfig()
+	rule := PersistentUnderproductionRule()
+	lastDay := ruleBase.AddDate(0, 0, 10).Format("2006-01-02")
+	replayedDay := ruleBase.AddDate(0, 0, 9)
+
+	openingInput := analysisInput(replayedDay, .20)
+	openingInput.At = ruleBase.AddDate(0, 0, 20)
+	opening := rule.Evaluate(openingInput, State{Consecutive: 2, LastKey: lastDay}, false, config)
+	if opening.ShouldOpen || opening.Next.Consecutive != 2 || opening.Next.LastKey != lastDay {
+		t.Fatalf("out-of-order day advanced opening evidence: %+v", opening)
+	}
+
+	recoveryInput := analysisInput(replayedDay, .90)
+	recoveryInput.At = ruleBase.AddDate(0, 0, 20)
+	recovery := rule.Evaluate(recoveryInput, State{Consecutive: 1, LastKey: lastDay}, true, config)
+	if recovery.ShouldResolve || recovery.Next.Consecutive != 1 || recovery.Next.LastKey != lastDay {
+		t.Fatalf("out-of-order day advanced recovery evidence: %+v", recovery)
+	}
+}
+
+func TestRuleUnderproductionQualifyingOppositeOutcomeResetsStreak(t *testing.T) {
+	config := DefaultConfig()
+	rule := PersistentUnderproductionRule()
+	lastDay := ruleBase.Format("2006-01-02")
+
+	opening := rule.Evaluate(analysisInput(ruleBase.AddDate(0, 0, 3), .65), State{Consecutive: 2, LastKey: lastDay}, false, config)
+	if opening.ShouldOpen || opening.Next.Consecutive != 0 {
+		t.Fatalf("qualifying non-low day did not reset opening streak: %+v", opening)
+	}
+
+	recovery := rule.Evaluate(analysisInput(ruleBase.AddDate(0, 0, 3), .79), State{Consecutive: 1, LastKey: lastDay}, true, config)
+	if recovery.ShouldResolve || recovery.Next.Consecutive != 0 {
+		t.Fatalf("qualifying non-recovery day did not reset recovery streak: %+v", recovery)
 	}
 }
 

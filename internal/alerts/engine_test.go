@@ -125,11 +125,22 @@ func TestAlertEngineConcurrentEvaluationCreatesOneOpen(t *testing.T) {
 	}
 	in := Input{At: ruleBase, PollObserved: true}
 	var wait sync.WaitGroup
+	errors := make(chan error, 20)
 	wait.Add(20)
 	for range 20 {
-		go func() { defer wait.Done(); _, _ = engine.Evaluate(context.Background(), in) }()
+		go func() {
+			defer wait.Done()
+			_, err := engine.Evaluate(context.Background(), in)
+			errors <- err
+		}()
 	}
 	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("concurrent evaluation: %v", err)
+		}
+	}
 	count := 0
 	for _, transition := range repository.transitions {
 		if transition.Rule == RuleLoggerOffline && transition.Kind == TransitionOpened {
