@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { api, authMemory } from './client'
-import type { AuthCredentials, BootstrapPayload, BootstrapStatus, LiveTelemetry, LoginPayload, Session, Settings } from './types'
+import type { AuthCredentials, BootstrapPayload, BootstrapStatus, LiveState, LoginPayload, Session, Settings } from './types'
 
 export const queryKeys = {
   bootstrap: ['bootstrap'] as const,
@@ -29,7 +29,7 @@ export const sessionQuery = queryOptions({
 
 export const liveQuery = queryOptions({
   queryKey: queryKeys.live,
-  queryFn: ({ signal }) => api.request<LiveTelemetry>('/live', { signal }),
+  queryFn: ({ signal }) => api.request<LiveState>('/live', { signal }),
 })
 
 export const settingsQuery = queryOptions({

@@ -49,9 +49,35 @@ export interface Settings {
   installedPowerW?: number
 }
 
-export interface LiveTelemetry {
-  [field: string]: unknown
-  capturedAt: string
+export interface MPPTTelemetry {
+  active: boolean
+  currentA: number
+  powerW: number
+  voltageV: number
+}
+
+export interface LiveSnapshot {
+  acPowerW: number
+  energyLifetimeWh: number
+  energyTodayWh: number
+  faultCodes: number[]
+  grid: {
+    frequencyHz: number
+    voltageV: number
+  }
+  observedAt: string
+  pv1: MPPTTelemetry
+  pv2: MPPTTelemetry
+  status: string
+}
+
+export interface LiveState {
+  errorClass?: string
+  lastError?: string
+  lastErrorAt?: string
+  lastSuccess?: string
+  snapshot?: LiveSnapshot
+  stale: boolean
 }
 
 export interface HistoryPoint {
@@ -65,5 +91,5 @@ export interface HistoryResponse {
 }
 
 export type LiveEvent =
-  | { type: 'snapshot'; version: 1; data: LiveTelemetry }
+  | { type: 'snapshot'; version: 1; data: LiveState }
   | { type: 'state'; version: 1; data: Record<string, unknown> }
