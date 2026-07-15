@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
@@ -22,12 +23,54 @@ const (
 // TelemetryRepository stores telemetry using local calendar buckets while all
 // raw observations remain normalized to UTC.
 type TelemetryRepository struct {
-	db       *DB
-	location *time.Location
+	db         *DB
+	locationMu sync.RWMutex
+	location   *time.Location
+}
+
+// SetLocation changes the effective calendar timezone for future aggregation.
+// In-flight operations retain a stable location snapshot.
+func (r *TelemetryRepository) SetLocation(location *time.Location) {
+	_ = r.ApplyLocation(location, nil)
+}
+
+// ApplyLocation serializes a durable calendar rebuild with the in-memory
+// location transition. A failed callback leaves the prior location active.
+func (r *TelemetryRepository) ApplyLocation(location *time.Location, apply func() error) error {
+	if location == nil {
+		location = time.UTC
+	}
+	r.locationMu.Lock()
+	defer r.locationMu.Unlock()
+	if apply != nil {
+		if err := apply(); err != nil {
+			return err
+		}
+	}
+	r.location = location
+	return nil
+}
+
+func (r *TelemetryRepository) Location() *time.Location {
+	r.locationMu.RLock()
+	defer r.locationMu.RUnlock()
+	if r.location == nil {
+		return time.UTC
+	}
+	return r.location
+}
+
+func (r *TelemetryRepository) operationLocation() (*time.Location, func()) {
+	r.locationMu.RLock()
+	location := r.location
+	if location == nil {
+		location = time.UTC
+	}
+	return location, r.locationMu.RUnlock
 }
 
 func (r *TelemetryRepository) HourlyHistory(ctx context.Context, from, to time.Time, _ *time.Location) ([]domain.AggregatePoint, error) {
-	rows, err := r.db.sql.QueryContext(ctx, `SELECT hour, energy_wh, peak_power_w, coverage_pct FROM hourly_summary
+	rows, err := r.db.sql.QueryContext(ctx, `SELECT hour, energy_wh, peak_power_w, coverage_pct, productive_minutes FROM hourly_summary
 		WHERE unixepoch(hour) >= unixepoch(?) AND unixepoch(hour) < unixepoch(?) ORDER BY unixepoch(hour) LIMIT ?`,
 		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), maximumSummaryRows+1)
 	if err != nil {
@@ -38,7 +81,7 @@ func (r *TelemetryRepository) HourlyHistory(ctx context.Context, from, to time.T
 	for rows.Next() {
 		var key string
 		var point domain.AggregatePoint
-		if err := rows.Scan(&key, &point.EnergyWh, &point.PeakPowerW, &point.CoveragePct); err != nil {
+		if err := rows.Scan(&key, &point.EnergyWh, &point.PeakPowerW, &point.CoveragePct, &point.ProductiveMinutes); err != nil {
 			return nil, fmt.Errorf("scan hourly history: %w", err)
 		}
 		point.At, err = time.Parse(time.RFC3339, key)
@@ -160,7 +203,9 @@ func (r *TelemetryRepository) SaveMinute(ctx context.Context, s domain.Telemetry
 	if err != nil {
 		return fmt.Errorf("marshal telemetry fault codes: %w", err)
 	}
-	observedAt := s.ObservedAt.In(r.location).Truncate(time.Minute).UTC()
+	location, releaseLocation := r.operationLocation()
+	defer releaseLocation()
+	observedAt := s.ObservedAt.In(location).Truncate(time.Minute).UTC()
 	_, err = r.db.sql.ExecContext(ctx, `
 		INSERT INTO telemetry_minute(
 			observed_at, observed_at_utc, ac_power_w, energy_today_wh, energy_lifetime_wh,
@@ -293,6 +338,10 @@ func (r *TelemetryRepository) AggregateHour(ctx context.Context, from, to time.T
 	if !from.Before(to) {
 		return domain.HourlySummary{}, errors.New("aggregate hour: from must be before to")
 	}
+	// Calendar lock precedes the database transaction; ApplyLocation takes the
+	// same lock before opening its settings/rebuild transaction.
+	location, releaseLocation := r.operationLocation()
+	defer releaseLocation()
 	tx, err := r.db.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.HourlySummary{}, fmt.Errorf("begin hourly aggregate: %w", err)
@@ -302,9 +351,12 @@ func (r *TelemetryRepository) AggregateHour(ctx context.Context, from, to time.T
 	if err != nil {
 		return domain.HourlySummary{}, err
 	}
-	summary := domain.HourlySummary{Hour: localHour(from, r.location).Format(time.RFC3339)}
+	summary := domain.HourlySummary{Hour: localHour(from, location).Format(time.RFC3339)}
 	for i, point := range points {
 		summary.PeakPowerW = math.Max(summary.PeakPowerW, point.PowerW)
+		if point.PowerW > 0 {
+			summary.ProductiveMinutes++
+		}
 		if i == 0 {
 			continue
 		}
@@ -318,11 +370,12 @@ func (r *TelemetryRepository) AggregateHour(ctx context.Context, from, to time.T
 		summary.CoveragePct = math.Min(100, float64(len(points))*100/float64(expectedMinutes))
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO hourly_summary(hour, energy_wh, peak_power_w, coverage_pct)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO hourly_summary(hour, energy_wh, peak_power_w, coverage_pct, productive_minutes)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(hour) DO UPDATE SET energy_wh=excluded.energy_wh,
-		peak_power_w=excluded.peak_power_w, coverage_pct=excluded.coverage_pct`,
-		summary.Hour, summary.EnergyWh, summary.PeakPowerW, summary.CoveragePct)
+		peak_power_w=excluded.peak_power_w, coverage_pct=excluded.coverage_pct,
+		productive_minutes=excluded.productive_minutes`,
+		summary.Hour, summary.EnergyWh, summary.PeakPowerW, summary.CoveragePct, summary.ProductiveMinutes)
 	if err != nil {
 		return domain.HourlySummary{}, fmt.Errorf("upsert hourly summary: %w", err)
 	}
@@ -336,7 +389,9 @@ func (r *TelemetryRepository) AggregateDay(ctx context.Context, from, to time.Ti
 	if !from.Before(to) {
 		return domain.DailySummary{}, errors.New("aggregate day: from must be before to")
 	}
-	local := from.In(r.location)
+	location, releaseLocation := r.operationLocation()
+	defer releaseLocation()
+	local := from.In(location)
 	summary := domain.DailySummary{Day: local.Format("2006-01-02")}
 
 	tx, err := r.db.sql.BeginTx(ctx, nil)
@@ -421,7 +476,9 @@ func laterTime(a, b time.Time) time.Time {
 }
 
 func (r *TelemetryRepository) AggregateMonth(ctx context.Context, inMonth time.Time) (domain.MonthlySummary, error) {
-	local := inMonth.In(r.location)
+	location, releaseLocation := r.operationLocation()
+	defer releaseLocation()
+	local := inMonth.In(location)
 	monthKey := local.Format("2006-01")
 	summary := domain.MonthlySummary{Month: monthKey}
 	tx, err := r.db.sql.BeginTx(ctx, nil)
@@ -444,7 +501,7 @@ func (r *TelemetryRepository) AggregateMonth(ctx context.Context, inMonth time.T
 			rows.Close()
 			return domain.MonthlySummary{}, fmt.Errorf("scan daily summary: %w", err)
 		}
-		start, err := time.ParseInLocation("2006-01-02", day, r.location)
+		start, err := time.ParseInLocation("2006-01-02", day, location)
 		if err != nil {
 			rows.Close()
 			return domain.MonthlySummary{}, fmt.Errorf("parse daily summary key: %w", err)

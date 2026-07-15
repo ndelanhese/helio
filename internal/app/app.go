@@ -32,10 +32,15 @@ type App struct {
 	shutdownCancel    context.CancelFunc
 	stopOnce          sync.Once
 	allowPublicLogger bool
+	repository        *storage.TelemetryRepository
 }
 
 type settingsRuntime interface {
 	Apply(context.Context, domain.Settings, func() error) error
+}
+
+type calendarRuntime interface {
+	ApplyLocation(*time.Location, func() error) error
 }
 
 func New(cfg config.Config) *App {
@@ -51,10 +56,10 @@ func New(cfg config.Config) *App {
 	}
 	hub := collector.NewHub()
 	repository := storage.NewTelemetryRepository(db, time.UTC)
-	runtime := &collectorRuntime{hub: hub, store: repository}
+	runtime := &collectorRuntime{hub: hub, store: repository, calendar: repository}
 	manager := auth.NewManager(db, auth.WithSecureCookies(cfg.SecureCookies))
 	shutdownContext, shutdownCancel := context.WithCancel(context.Background())
-	a := &App{db: db, runtime: runtime, settingsRuntime: runtime, shutdownContext: shutdownContext, shutdownCancel: shutdownCancel, allowPublicLogger: cfg.AllowPublicLogger,
+	a := &App{db: db, runtime: runtime, settingsRuntime: runtime, shutdownContext: shutdownContext, shutdownCancel: shutdownCancel, allowPublicLogger: cfg.AllowPublicLogger, repository: repository,
 		settings: func(ctx context.Context) (domain.Settings, error) { return db.GetSettings(ctx, cfg.AllowPublicLogger) }}
 	apiHandler := api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repository, Hub: hub,
@@ -91,15 +96,10 @@ func (a *App) Run(ctx context.Context) error {
 	if a.initErr != nil {
 		return a.initErr
 	}
-	a.runtime.start(ctx)
 	defer a.stopServices()
 	defer a.db.Close()
-	if settings, err := a.settings(ctx); err == nil {
-		if err := a.runtime.reconfigure(ctx, settings); err != nil {
-			return fmt.Errorf("start collector: %w", err)
-		}
-	} else if open, openErr := a.db.BootstrapOpen(ctx); openErr != nil || !open {
-		return fmt.Errorf("load settings: %w", err)
+	if err := a.initializeRuntime(ctx); err != nil {
+		return err
 	}
 	errC := make(chan error, 1)
 	go func() { errC <- a.server.ListenAndServe() }()
@@ -116,6 +116,18 @@ func (a *App) Run(ctx context.Context) error {
 		defer cancel()
 		return a.server.Shutdown(shutdown)
 	}
+}
+
+func (a *App) initializeRuntime(ctx context.Context) error {
+	a.runtime.start(ctx)
+	if settings, err := a.settings(ctx); err == nil {
+		if err := a.runtime.reconfigure(ctx, settings); err != nil {
+			return fmt.Errorf("start collector: %w", err)
+		}
+	} else if open, openErr := a.db.BootstrapOpen(ctx); openErr != nil || !open {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	return nil
 }
 
 func (a *App) stopServices() {
@@ -139,6 +151,7 @@ type collectorRuntime struct {
 	active      domain.Settings
 	hub         *collector.Hub
 	store       collector.Store
+	calendar    calendarRuntime
 }
 
 func (r *collectorRuntime) start(ctx context.Context) { r.mu.Lock(); r.ctx = ctx; r.mu.Unlock() }
@@ -180,6 +193,10 @@ func (r *collectorRuntime) Apply(_ context.Context, settings domain.Settings, pe
 	if err != nil {
 		return errors.New("invalid logger serial")
 	}
+	location, err := time.LoadLocation(settings.Timezone)
+	if err != nil {
+		return errors.New("invalid settings timezone")
+	}
 	reader := sofar.NewHardwareReader(sofar.HardwareConfig{Address: net.JoinHostPort(settings.LoggerHost, strconv.Itoa(settings.LoggerPort)), Serial: uint32(serial), SlaveID: byte(settings.ModbusSlave), ActiveMPPT: append([]int(nil), settings.ActiveMPPT...)})
 	next := collector.New(collector.Config{}, reader, r.store, r.hub)
 	r.mu.Lock()
@@ -199,13 +216,20 @@ func (r *collectorRuntime) Apply(_ context.Context, settings domain.Settings, pe
 			return errors.New("previous collector did not stop")
 		}
 	}
-	if persist != nil {
-		if err := persist(); err != nil {
-			if oldCancel != nil {
-				r.startCollectorLocked(oldCurrent, oldActive)
-			}
-			return err
+	apply := persist
+	if apply == nil {
+		apply = func() error { return nil }
+	}
+	if r.calendar != nil {
+		err = r.calendar.ApplyLocation(location, apply)
+	} else {
+		err = apply()
+	}
+	if err != nil {
+		if oldCancel != nil {
+			r.startCollectorLocked(oldCurrent, oldActive)
 		}
+		return err
 	}
 	r.mu.Lock()
 	if r.ctx == nil {

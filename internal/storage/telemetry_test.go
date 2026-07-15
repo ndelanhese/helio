@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"path/filepath"
 	"testing"
@@ -441,6 +442,76 @@ func TestMonthlyHistoryConvertsLocalBucketStartToUTC(t *testing.T) {
 	}
 	if len(points) != 1 || !points[0].At.Equal(start.UTC()) || points[0].EnergyWh != 5000 {
 		t.Fatalf("monthly summary: %#v", points)
+	}
+}
+
+func TestRepositoryLocationCanChangeBeforeProducingCalendarKeys(t *testing.T) {
+	ctx := context.Background()
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, repo := telemetryRepository(t, time.UTC)
+	repo.SetLocation(loc)
+	localStart := time.Date(2026, 1, 31, 0, 0, 0, 0, loc)
+	for minute := range 2 {
+		if err := repo.SaveMinute(ctx, snapshot(localStart.Add(time.Duration(minute)*time.Minute), 60, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := repo.AggregateHour(ctx, localStart, localStart.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AggregateDay(ctx, localStart, localStart.AddDate(0, 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AggregateMonth(ctx, localStart); err != nil {
+		t.Fatal(err)
+	}
+	var hour, day, month string
+	if err := db.sql.QueryRowContext(ctx, `SELECT hour FROM hourly_summary`).Scan(&hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.sql.QueryRowContext(ctx, `SELECT day FROM daily_summary`).Scan(&day); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.sql.QueryRowContext(ctx, `SELECT month FROM monthly_summary`).Scan(&month); err != nil {
+		t.Fatal(err)
+	}
+	if hour != "2026-01-31T00:00:00-03:00" || day != "2026-01-31" || month != "2026-01" {
+		t.Fatalf("keys hour=%q day=%q month=%q", hour, day, month)
+	}
+	if repo.Location().String() != loc.String() {
+		t.Fatalf("repository location=%s", repo.Location())
+	}
+}
+
+func TestRepositoryApplyLocationSerializesCalendarWorkAndRollsBackLocation(t *testing.T) {
+	_, repo := telemetryRepository(t, time.UTC)
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- repo.ApplyLocation(tokyo, func() error { close(entered); <-release; return errors.New("rebuild failed") })
+	}()
+	<-entered
+	locationRead := make(chan struct{})
+	go func() { _ = repo.Location(); close(locationRead) }()
+	select {
+	case <-locationRead:
+		t.Fatal("calendar location escaped logical-operation lock")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("ApplyLocation unexpectedly succeeded")
+	}
+	if repo.Location() != time.UTC {
+		t.Fatalf("location changed after rollback: %s", repo.Location())
 	}
 }
 

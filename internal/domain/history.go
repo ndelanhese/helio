@@ -18,10 +18,11 @@ type AggregatePoint struct {
 }
 
 type HourlySummary struct {
-	Hour        string  `json:"hour"`
-	EnergyWh    float64 `json:"energyWh"`
-	PeakPowerW  float64 `json:"peakPowerW"`
-	CoveragePct float64 `json:"coveragePct"`
+	Hour              string  `json:"hour"`
+	EnergyWh          float64 `json:"energyWh"`
+	PeakPowerW        float64 `json:"peakPowerW"`
+	CoveragePct       float64 `json:"coveragePct"`
+	ProductiveMinutes int     `json:"productiveMinutes"`
 }
 
 type DailySummary struct {

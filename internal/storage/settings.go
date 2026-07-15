@@ -37,12 +37,32 @@ func (db *DB) ApplySettings(ctx context.Context, settings domain.Settings, actor
 		return fmt.Errorf("begin settings update: %w", err)
 	}
 	defer tx.Rollback()
+	var previousPayload string
+	previousTimezone := ""
+	if err := tx.QueryRowContext(ctx, `SELECT value_json FROM settings WHERE key='system'`).Scan(&previousPayload); err == nil {
+		var previous settingsEnvelope
+		if err := json.Unmarshal([]byte(previousPayload), &previous); err != nil {
+			return fmt.Errorf("decode previous settings: %w", err)
+		}
+		previousTimezone = previous.Settings.Timezone
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read previous settings: %w", err)
+	}
 	if err := putSettings(ctx, tx, settings, allowPublicLogger); err != nil {
 		return err
 	}
 	detail := map[string]any{"fields": []string{"loggerHost", "loggerPort", "modbusSlave", "panelCount", "panelWattage", "activeMPPT", "latitude", "longitude", "timezone", "currency", "tariffMinorPerKWh", "retentionDays"}}
 	if err := insertAudit(ctx, tx, actorUserID, "settings.update", detail); err != nil {
 		return err
+	}
+	if previousTimezone != "" && previousTimezone != settings.Timezone {
+		location, err := time.LoadLocation(settings.Timezone)
+		if err != nil {
+			return fmt.Errorf("load settings timezone: %w", err)
+		}
+		if err := rebuildCalendarSummaries(ctx, tx, location); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit settings update: %w", err)

@@ -211,6 +211,42 @@ func TestHistoryResolutionReadsPersistedSummaryAfterRawRetention(t *testing.T) {
 	}
 }
 
+func TestDailySummaryProducerAndAPIShareConfiguredTimezone(t *testing.T) {
+	f := newFixture(t)
+	cookie, _ := bootstrap(t, f)
+	location, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.repo.SetLocation(location)
+	start := time.Date(2026, 1, 31, 0, 0, 0, 0, location)
+	for minute := range 2 {
+		if err := f.repo.SaveMinute(context.Background(), domain.TelemetrySnapshot{ObservedAt: start.Add(time.Duration(minute) * time.Minute), ACPowerW: 60}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.repo.AggregateHour(context.Background(), start, start.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.AggregateDay(context.Background(), start, start.AddDate(0, 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	target := "/api/v1/history?from=" + start.UTC().Format(time.RFC3339) + "&to=" + start.AddDate(0, 0, 1).UTC().Format(time.RFC3339) + "&resolution=day"
+	rec := request(t, f.handler, http.MethodGet, target, "", cookie, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history: %d %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Points []domain.AggregatePoint `json:"points"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Points) != 1 || !response.Points[0].At.Equal(start.UTC()) {
+		t.Fatalf("daily points=%#v", response.Points)
+	}
+}
+
 type auditFailStore struct{ *storage.DB }
 
 func (auditFailStore) RecordAudit(context.Context, string, string, any) error {

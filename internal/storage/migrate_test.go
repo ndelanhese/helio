@@ -36,7 +36,7 @@ func TestMigrationRejectsSchemaNewerThanBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.sql.ExecContext(ctx,
-		"INSERT INTO schema_migrations(version, applied_at) VALUES (3, CURRENT_TIMESTAMP)",
+		"INSERT INTO schema_migrations(version, applied_at) VALUES (4, CURRENT_TIMESTAMP)",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestMigrationV2BackfillsPreciseObservationFromMinuteBucket(t *testing.T) {
 	if err := db.sql.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("schema version=%d, want 2", version)
+	if version != 3 {
+		t.Fatalf("schema version=%d, want 3", version)
 	}
 }

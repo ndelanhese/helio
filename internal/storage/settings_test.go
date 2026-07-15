@@ -74,6 +74,9 @@ func TestApplySettingsRollsBackSettingsWhenRequiredAuditFails(t *testing.T) {
 	if err := db.PutSettings(ctx, initial); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO daily_summary(day,energy_wh,peak_power_w,productive_minutes,coverage_pct) VALUES('2025-12-31',100,50,10,90)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.sql.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('actor','Admin','x','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +85,7 @@ func TestApplySettingsRollsBackSettingsWhenRequiredAuditFails(t *testing.T) {
 	}
 	updated := initial
 	updated.PanelCount = 8
+	updated.Timezone = "Asia/Tokyo"
 	if err := db.ApplySettings(ctx, updated, "actor", false); err == nil {
 		t.Fatal("ApplySettings succeeded without required audit")
 	}
@@ -91,6 +95,55 @@ func TestApplySettingsRollsBackSettingsWhenRequiredAuditFails(t *testing.T) {
 	}
 	if got.PanelCount != initial.PanelCount {
 		t.Fatalf("settings committed without audit: panelCount=%d", got.PanelCount)
+	}
+	var day string
+	if err := db.sql.QueryRowContext(ctx, `SELECT day FROM daily_summary`).Scan(&day); err != nil {
+		t.Fatal(err)
+	}
+	if day != "2025-12-31" {
+		t.Fatalf("calendar summaries changed on rollback: %q", day)
+	}
+}
+
+func TestApplySettingsRebuildsDailyAndMonthlyFromPermanentHourlyRows(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "settings.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	old := validStoredSettings()
+	if err := db.PutSettings(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('actor','Admin','x','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO hourly_summary(hour,energy_wh,peak_power_w,coverage_pct,productive_minutes) VALUES('2026-01-01T01:00:00Z',100,50,90,17)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO daily_summary(day,energy_wh,peak_power_w,productive_minutes,coverage_pct) VALUES('2025-12-31',999,999,999,99)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO monthly_summary(month,energy_wh,peak_power_w,productive_minutes,coverage_pct) VALUES('2025-12',999,999,999,99)`); err != nil {
+		t.Fatal(err)
+	}
+	updated := old
+	updated.Timezone = "Asia/Tokyo"
+	if err := db.ApplySettings(ctx, updated, "actor", false); err != nil {
+		t.Fatal(err)
+	}
+	var day, month string
+	var dayEnergy, monthEnergy float64
+	var productive int
+	if err := db.sql.QueryRowContext(ctx, `SELECT day,energy_wh,productive_minutes FROM daily_summary`).Scan(&day, &dayEnergy, &productive); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.sql.QueryRowContext(ctx, `SELECT month,energy_wh FROM monthly_summary`).Scan(&month, &monthEnergy); err != nil {
+		t.Fatal(err)
+	}
+	if day != "2026-01-01" || month != "2026-01" || dayEnergy != 100 || monthEnergy != 100 || productive != 17 {
+		t.Fatalf("rebuilt day=%q/%v month=%q/%v", day, dayEnergy, month, monthEnergy)
 	}
 }
 
