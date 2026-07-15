@@ -231,11 +231,19 @@
 .weather-context > svg { width: 28px; color: var(--sun); }
 .weather-context .eyebrow { margin: 0 0 var(--space-2); }
 .weather-summary { margin-top: var(--space-2) !important; color: var(--text) !important; font-weight: 700; }
-.weather-readings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 0; }
+.weather-readings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 0; }
 .weather-readings div { min-width: 0; }
 .weather-readings dt { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .weather-readings dd { margin: var(--space-1) 0 0; font-family: var(--font-editorial); font-size: 1.15rem; line-height: 1; white-space: nowrap; }
 .weather-context p:last-child { margin-top: var(--space-3); }
+.solar-comparison { position: relative; display: grid; grid-template-columns: 1fr auto; gap: var(--space-3); align-items: start; margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.solar-comparison dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin: 0; }
+.solar-comparison dt { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.solar-comparison dd { margin: var(--space-1) 0 0; font-family: var(--font-editorial); font-size: 1.15rem; line-height: 1; white-space: nowrap; }
+.model-tooltip-trigger { display: inline-grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--muted); cursor: help; vertical-align: text-bottom; }
+.model-tooltip-trigger svg { width: 13px; height: 13px; }
+.model-tooltip { position: absolute; z-index: 2; right: 0; top: calc(100% + var(--space-2)); max-width: 34ch; padding: var(--space-3); border: 1px solid var(--border); background: var(--surface); color: var(--text) !important; font-size: .78rem !important; line-height: 1.45 !important; }
+@media (min-width: 520px) { .weather-readings { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .live-loading, .live-empty { display: grid; min-height: 55vh; align-content: center; gap: var(--space-5); }
 .live-loading > p { color: var(--muted); }
 .skeleton-power, .skeleton-line { background: color-mix(in srgb, var(--text) 9%, var(--canvas)); animation: live-pulse 1.2s cubic-bezier(.65, 0, .35, 1) infinite alternate; }

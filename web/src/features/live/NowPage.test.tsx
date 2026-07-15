@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -113,6 +114,13 @@ describe('NowPage', () => {
 		expect(screen.getByText('78%')).toBeVisible()
 		expect(screen.getByText('Radiação solar')).toBeVisible()
 		expect(screen.getByText('646 W/m²')).toBeVisible()
+		expect(screen.getByText('Potencial solar')).toBeVisible()
+		expect(screen.getByText('2,76 kW')).toBeVisible()
+		expect(screen.getByText('75% do potencial')).toBeVisible()
+		const modelInfo = screen.getByRole('button', { name: 'Como este potencial é estimado' })
+		expect(modelInfo).toBeVisible()
+		await userEvent.hover(modelInfo)
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Radiação modelada para sua localização')
 		expect(screen.getByText('Chuva moderada')).toBeVisible()
 		expect(screen.getByText('Atualizados há 2 minutos.')).toBeVisible()
 	})
