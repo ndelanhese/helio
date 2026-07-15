@@ -16,7 +16,7 @@ func Load() Config {
 	}
 	databasePath := os.Getenv("HELIO_DATABASE_PATH")
 	if databasePath == "" {
-		databasePath = "helio.db"
+		databasePath = "/data/helio.db"
 	}
 	return Config{HTTPAddr: addr, DatabasePath: databasePath,
 		SecureCookies:     os.Getenv("HELIO_SECURE_COOKIES") == "1",
