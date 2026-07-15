@@ -39,6 +39,18 @@ describe('onboarding numeric validation', () => {
     expect(toBootstrapPayload(values).settings.tariffMinorPerKWh).toBe(0)
     expect(Object.values(toBootstrapPayload(values).settings).every((value) => value !== null)).toBe(true)
   })
+
+  it.each([
+    ['0', 0], ['0.01', 1], ['1.2', 120], ['1,20', 120],
+  ] as const)('converts tariff %s to exact minor units', (tariff, minor) => {
+    const values = { ...valid, tariff }
+    expect(validateStep(3, values).tariff).toBeUndefined()
+    expect(toBootstrapPayload(values).settings.tariffMinorPerKWh).toBe(minor)
+  })
+
+  it.each(['1.234', '1e2', '90071992547409.92', '92233720368547758.08'])('rejects unsafe or inexact tariff %s', (tariff) => {
+    expect(validateStep(3, { ...valid, tariff }).tariff).toBeDefined()
+  })
 })
 
 describe('onboarding account and installation validation', () => {
@@ -55,6 +67,15 @@ describe('onboarding account and installation validation', () => {
     expect(validateStep(1, { ...valid, loggerSerial: '１２３' }).loggerSerial).toBeDefined()
   })
 
+  it.each(['...', '192.168..1', ' 192.168.1.1', '192.168.1.1 ', '+192.168.1.1', '192.168.001.1'])(
+    'rejects ambiguous IPv4 text %s',
+    (loggerHost) => expect(validateStep(1, { ...valid, loggerHost }).loggerHost).toBeDefined(),
+  )
+
+  it('accepts a strict private IPv4 address', () => {
+    expect(validateStep(1, { ...valid, loggerHost: '192.168.1.50' }).loggerHost).toBeUndefined()
+  })
+
   it('validates real IANA timezones and ISO currencies', () => {
     expect(validateStep(3, { ...valid, timezone: '' }).timezone).toBeDefined()
     expect(validateStep(3, { ...valid, timezone: 'Local' }).timezone).toBeDefined()
@@ -65,15 +86,12 @@ describe('onboarding account and installation validation', () => {
     expect(toBootstrapPayload({ ...valid, currency: 'brl' }).settings.currency).toBe('BRL')
   })
 
-  it('uses the backend-compatible ISO currency fallback only when Intl lacks the API', () => {
-    const descriptor = Object.getOwnPropertyDescriptor(Intl, 'supportedValuesOf')
-    Object.defineProperty(Intl, 'supportedValuesOf', { configurable: true, value: undefined })
-    try {
-      expect(validateStep(3, { ...valid, currency: 'XAU' }).currency).toBeUndefined()
-      expect(validateStep(3, { ...valid, currency: 'ZZZ' }).currency).toBeDefined()
-    } finally {
-      if (descriptor) Object.defineProperty(Intl, 'supportedValuesOf', descriptor)
-    }
+  it.each(['XAU', 'XTS', 'XXX', 'BOV', 'CHE', 'CLF', 'USN'])('accepts backend ISO currency %s regardless of Intl support', (currency) => {
+    expect(validateStep(3, { ...valid, currency }).currency).toBeUndefined()
+  })
+
+  it('rejects a currency outside the exact backend ISO set', () => {
+    expect(validateStep(3, { ...valid, currency: 'ZZZ' }).currency).toBeDefined()
   })
 })
 

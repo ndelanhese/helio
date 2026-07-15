@@ -1,4 +1,5 @@
 import type { BootstrapPayload } from '../../api/types'
+import { HELIO_ISO_4217_SET } from './currencies'
 
 export interface OnboardingValues {
   activeMPPT: number[]
@@ -66,6 +67,21 @@ function requiredDecimal(value: string, field: OnboardingField) {
   return parsed
 }
 
+function tariffMinor(value: string) {
+  const match = /^(\d+)(?:[.,](\d{1,2}))?$/.exec(value)
+  if (!match) return undefined
+  const fraction = (match[2] ?? '').padEnd(2, '0')
+  const minor = BigInt(match[1]) * 100n + BigInt(fraction || '0')
+  if (minor > BigInt(Number.MAX_SAFE_INTEGER) || minor > 9_223_372_036_854_775_807n) return undefined
+  return Number(minor)
+}
+
+function requiredTariffMinor(value: string) {
+  const parsed = tariffMinor(value)
+  if (parsed === undefined) throw new Error('invalid tariff field')
+  return parsed
+}
+
 export function validateStep(step: number, values: OnboardingValues): FieldErrors {
   const errors: FieldErrors = {}
   if (step === 0) {
@@ -99,8 +115,7 @@ export function validateStep(step: number, values: OnboardingValues): FieldError
     if (longitude === undefined || longitude < -180 || longitude > 180) errors.longitude = 'Informe uma longitude finita entre -180 e 180.'
     if (!validTimezone(values.timezone)) errors.timezone = 'Use um fuso IANA real, como America/Sao_Paulo.'
     if (!validCurrency(values.currency)) errors.currency = 'Use um código de moeda ISO 4217, como BRL.'
-    const tariff = decimal(values.tariff)
-    if (tariff === undefined || tariff < 0) errors.tariff = 'Informe uma tarifa finita igual ou maior que zero.'
+    if (tariffMinor(values.tariff) === undefined) errors.tariff = 'Use uma tarifa não negativa com no máximo duas casas decimais.'
     const retention = integer(values.retentionDays)
     if (retention === undefined || retention < 30 || retention > 3650) errors.retentionDays = 'Escolha um número inteiro entre 30 e 3650 dias.'
   }
@@ -123,7 +138,7 @@ export function toBootstrapPayload(values: OnboardingValues): BootstrapPayload {
       panelCount: requiredInteger(values.panelCount, 'panelCount'),
       panelWattage: requiredInteger(values.panelWattage, 'panelWattage'),
       retentionDays: requiredInteger(values.retentionDays, 'retentionDays'),
-      tariffMinorPerKWh: Math.round(requiredDecimal(values.tariff, 'tariff') * 100),
+      tariffMinorPerKWh: requiredTariffMinor(values.tariff),
       timezone: values.timezone.trim(),
     },
   }
@@ -164,8 +179,8 @@ export function serverFieldError(message: string, code = 'invalid_settings'): [O
 }
 
 function validIPv4(value: string) {
-  const parts = value.split('.').map(Number)
-  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+  const parts = value.split('.')
+  return parts.length === 4 && parts.every((part) => /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255)
 }
 
 function validLoggerSerial(value: string) {
@@ -183,12 +198,7 @@ function validTimezone(value: string) {
   }
 }
 
-const fallbackCurrencies = new Set('AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BOV BRL BSD BTN BWP BYN BZD CAD CDF CHE CHF CHW CLF CLP CNY COP COU CRC CUC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MXV MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SLL SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD USN UYI UYU UYW UZS VED VES VND VUV WST XAF XAG XAU XBA XBB XBC XBD XCD XDR XOF XPD XPF XPT XSU XTS XUA XXX YER ZAR ZMW ZWL'.split(' '))
-
 function validCurrency(value: string) {
   const normalized = value.trim().toUpperCase()
-  if (!/^[A-Z]{3}$/.test(normalized)) return false
-  const intl = Intl as typeof Intl & { supportedValuesOf?: (key: 'currency') => string[] }
-  const supported = intl.supportedValuesOf?.('currency')
-  return supported ? supported.includes(normalized) : fallbackCurrencies.has(normalized)
+  return /^[A-Z]{3}$/.test(normalized) && HELIO_ISO_4217_SET.has(normalized)
 }

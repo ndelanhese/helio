@@ -60,7 +60,10 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
         <div className="form-field"><label htmlFor="login-username">Usuário</label><div><input autoComplete="username" id="login-username" onChange={(event) => setUsername(event.target.value)} value={username} /></div></div>
         <div className="form-field"><label htmlFor="login-password">Senha</label><div><input autoComplete="current-password" id="login-password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} /></div></div>
         <p className="security-note"><LockKeyhole aria-hidden="true" /> Conexão local sem HTTPS: não reutilize uma senha importante.</p>
-        {remaining > 0 && <p aria-live="polite" className="form-alert" role="status">Muitas tentativas. Tente novamente em {countdown}.</p>}
+        {remaining > 0 && <>
+          <p aria-live="polite" className="sr-only" role="status">Muitas tentativas. Aguarde antes de tentar novamente.</p>
+          <p aria-hidden="true" className="form-alert">Muitas tentativas. Tente novamente em {countdown}.</p>
+        </>}
         {message && <p aria-live="assertive" className="form-alert" role="alert">{message}</p>}
         <button className="primary-action" disabled={mutation.isPending || remaining > 0} type="submit">
           {mutation.isPending ? 'Verificando acesso…' : remaining > 0 ? `Tente novamente em ${countdown}` : 'Entrar no Helio'}

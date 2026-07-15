@@ -47,3 +47,17 @@
 - RED observado separadamente para redirects/401, 22 casos de schema/mapeamento, double-submit, 409, contraste, fallback ISO e falha do refetch.
 - GREEN final: `npm --prefix web test -- --run` — 14 arquivos, 73 testes aprovados.
 - `typecheck`, `lint` e `build` aprovados; `git diff --check` limpo.
+
+## Correções finais da revisão
+
+- Moedas agora usam sempre uma constante TypeScript gerada do conjunto autoritativo de `internal/config/validation.go`, sem delegar autoridade ao `Intl`.
+- Um teste de drift compara a constante frontend com o validador Go inteiro; códigos especiais como XAU, XTS, XXX, BOV, CHE, CLF e USN permanecem aceitos.
+- IPv4 exige quatro octetos ASCII decimais não vazios, sem espaços, sinais ou zeros à esquerda ambíguos, cada um entre 0 e 255.
+- Tarifa aceita somente decimal não negativo com até duas casas; conversão para unidade menor usa `BigInt`, sem expoente/arredondamento e só retorna inteiro JSON seguro.
+- Rate limit anuncia uma mensagem estável uma única vez em região `polite`; a contagem regressiva visual fica fora da região e com `aria-hidden`.
+
+### Verificação final
+
+- RED observado para conjunto monetário especial, IPv4 ambíguo, tarifa inexata/overflow e live region mutável.
+- GREEN: `npm --prefix web test -- --run` — 15 arquivos, 96 testes aprovados.
+- `typecheck`, `lint`, `build` e `git diff --check` aprovados.

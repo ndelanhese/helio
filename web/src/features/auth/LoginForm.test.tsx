@@ -38,8 +38,10 @@ describe('LoginForm', () => {
     await user.type(screen.getByLabelText('Senha'), 'senha incorreta longa')
     await user.click(screen.getByRole('button', { name: 'Entrar no Helio' }))
 
-    expect(await screen.findByRole('status')).toHaveTextContent(/15:00/)
-    expect(screen.getByText(/Muitas tentativas/)).toHaveAttribute('aria-live', 'polite')
+    const announcement = await screen.findByRole('status')
+    expect(announcement).toHaveTextContent('Muitas tentativas. Aguarde antes de tentar novamente.')
+    expect(announcement).not.toHaveTextContent(/\d+:\d+/)
+    expect(screen.getByText(/Muitas tentativas.*15:00/)).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByRole('button', { name: /tente novamente em/i })).toBeDisabled()
   })
 
