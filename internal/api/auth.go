@@ -67,6 +67,43 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"userId": principal.UserID, "username": principal.Username, "expiresAt": principal.ExpiresAt.UTC(), "csrfToken": csrf})
 }
 
+func (a *API) confirmPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	cookie, err := r.Cookie("helio_session")
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	remote := r.RemoteAddr
+	if host, _, splitErr := net.SplitHostPort(r.RemoteAddr); splitErr == nil {
+		remote = host
+	}
+	err = a.dependencies.Auth.ConfirmPassword(r.Context(), cookie.Value, remote, body.Password)
+	if errors.Is(err, auth.ErrRateLimited) {
+		seconds := int(math.Ceil(auth.RetryAfter(err).Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many password confirmation attempts")
+		return
+	}
+	if errors.Is(err, auth.ErrInvalidCredentials) || errors.Is(err, auth.ErrPasswordLength) || errors.Is(err, auth.ErrPasswordEncoding) {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "password is invalid")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "password confirmation failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, _ := r.Cookie("helio_session")
 	if cookie != nil {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/ndelanhese/helio/internal/auth"
 	"github.com/ndelanhese/helio/internal/config"
+	"github.com/ndelanhese/helio/internal/domain"
 )
 
 type auditor interface {
@@ -44,6 +45,18 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_settings", err.Error())
 		return
 	}
+	current, err := a.dependencies.Store.GetSettings(r.Context(), a.dependencies.AllowPublicLogger)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "settings could not be loaded")
+		return
+	}
+	if loggerConnectionIdentityChanged(current, settings) {
+		cookie, cookieErr := r.Cookie("helio_session")
+		if cookieErr != nil || a.dependencies.Auth == nil || !a.dependencies.Auth.ConsumeRecentConfirmation(cookie.Value) {
+			writeError(w, http.StatusForbidden, "reauthentication_required", "recent password confirmation is required")
+			return
+		}
+	}
 	principal, _ := auth.PrincipalFromRequest(r)
 	if principal == nil || a.dependencies.ApplySettings == nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "settings update is unavailable")
@@ -54,4 +67,9 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func loggerConnectionIdentityChanged(current, next domain.Settings) bool {
+	return current.LoggerHost != next.LoggerHost || current.LoggerSerial != next.LoggerSerial ||
+		current.LoggerPort != next.LoggerPort || current.ModbusSlave != next.ModbusSlave
 }

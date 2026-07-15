@@ -39,10 +39,10 @@ Authenticated:
 - `GET /api/v1/auth/session`; `POST /api/v1/auth/logout`.
 - `GET /api/v1/live`; `GET /api/v1/live/events`.
 - `GET /api/v1/history?from=<RFC3339>&to=<RFC3339>&resolution=minute|hour|day|month`. Minute ranges are limited to 366 days.
-- `GET /api/v1/history.csv?from=<RFC3339>&to=<RFC3339>`.
+- `GET /api/v1/history.csv?from=<RFC3339>&to=<RFC3339>`. CSV ranges are limited to 31 days to bound server memory and staging-disk use.
 - `GET /api/v1/insights?day=YYYY-MM-DD` in the configured local timezone.
 - `GET /api/v1/alerts?state=open|resolved`; newest-first, maximum 100.
-- `GET /api/v1/settings`; `PUT /api/v1/settings` with CSRF and same-origin checks.
+- `GET /api/v1/settings`; `PUT /api/v1/settings` with CSRF and same-origin checks. Logger host, serial, port, or Modbus-slave changes additionally require a successful `POST /api/v1/auth/confirm-password` for the same session immediately beforehand; confirmation is short-lived and one-shot.
 - `GET /api/v1/data/backup` — consistent SQLite snapshot, audited.
 
 ## SSE, CSV, and errors
@@ -70,4 +70,4 @@ JSON errors use one stable envelope; the HTTP status remains authoritative:
 {"error":{"code":"invalid_range","message":"from must be before to and both must be RFC3339 timestamps"}}
 ```
 
-Common statuses are `400` invalid JSON, `401` missing/invalid session, `403` origin or CSRF failure, `409` closed bootstrap, `422` validation, `429` login rate limit, `500` internal failure, and `503` unavailable dependency.
+Common statuses are `400` invalid JSON, `401` missing/invalid session or password confirmation, `403` origin/CSRF failure or missing recent confirmation, `409` closed bootstrap, `422` validation, `429` login/confirmation rate limit, `500` internal failure, and `503` unavailable dependency.

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { isScreenshotProject, preparePage, screenshotOptions, startKeyboard, tabUntil } from './support'
+import { isScreenshotProject, preparePage, screenshotOptions, startKeyboard, tabUntil, TEST_PASSWORD } from './support'
 
 test('settings validate, edit, save, back up, and reveal insights by keyboard', async ({ page }, testInfo) => {
   await preparePage(page)
@@ -30,6 +30,22 @@ test('settings validate, edit, save, back up, and reveal insights by keyboard', 
   await tabUntil(page, page.getByRole('link', { name: 'Insights' }), testInfo.project.name)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { name: 'Telemetria insuficiente para comparar' })).toBeVisible()
+})
+
+test('logger identity change confirms the current session without logging in again', async ({ page }) => {
+	await preparePage(page)
+	await page.goto('/settings')
+	const host = page.getByLabel('Endereço IP do logger')
+	await host.fill('192.0.2.55')
+	await expect(page.getByLabel('Senha atual')).toBeVisible()
+	await page.getByLabel('Senha atual').fill('wrong-password-value')
+	await page.getByRole('button', { name: 'Salvar configurações' }).click()
+	await expect(page.getByText('A senha atual não foi confirmada. Tente novamente.')).toBeVisible()
+	await expect(page).toHaveURL(/\/settings$/)
+	await page.getByLabel('Senha atual').fill(TEST_PASSWORD)
+	await page.getByRole('button', { name: 'Salvar configurações' }).click()
+	await expect(page.getByRole('status', { name: 'Configurações salvas.' })).toBeVisible()
+	await expect(host).toHaveValue('192.0.2.55')
 })
 
 test('@screenshot Settings desktop', async ({ page }, testInfo) => {

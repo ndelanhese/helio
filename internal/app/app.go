@@ -147,7 +147,13 @@ func New(cfg config.Config) *App {
 		defer cancel()
 		return db.Ready(ctx)
 	}
-	a.server = &http.Server{Addr: cfg.HTTPAddr, Handler: httpserver.New(httpserver.Dependencies{Ready: ready, API: apiHandler}), ReadHeaderTimeout: 5 * time.Second}
+	a.server = &http.Server{
+		Addr: cfg.HTTPAddr, Handler: httpserver.New(httpserver.Dependencies{Ready: ready, API: apiHandler}),
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 2 * time.Minute,
+		// SSE streams use per-write ResponseController deadlines; a global
+		// WriteTimeout would terminate every healthy long-lived stream.
+		WriteTimeout: 0,
+	}
 	return a
 }
 

@@ -51,8 +51,9 @@ type liveState struct {
 }
 
 type fakeSession struct {
-	CSRF     string
-	Username string
+	CSRF      string
+	Username  string
+	Confirmed bool
 }
 
 type fixtureServer struct {
@@ -87,6 +88,7 @@ func (s *fixtureServer) handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/bootstrap", s.bootstrap)
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("GET /api/v1/auth/session", s.protected(false, s.session))
+	mux.HandleFunc("POST /api/v1/auth/confirm-password", s.protected(true, s.confirmPassword))
 	mux.HandleFunc("POST /api/v1/auth/logout", s.protected(true, s.logout))
 	mux.HandleFunc("GET /api/v1/live", s.protected(false, s.getLive))
 	mux.HandleFunc("GET /api/v1/live/events", s.protected(false, s.events))
@@ -340,6 +342,32 @@ func (s *fixtureServer) logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *fixtureServer) confirmPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if !decodeStrict(w, r, &body) {
+		return
+	}
+	if body.Password != testPassword {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "password is invalid")
+		return
+	}
+	cookie, _ := r.Cookie("helio_session")
+	s.mu.Lock()
+	session, ok := s.sessions[cookie.Value]
+	if ok {
+		session.Confirmed = true
+		s.sessions[cookie.Value] = session
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *fixtureServer) getLive(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	state := s.live
@@ -397,10 +425,26 @@ func (s *fixtureServer) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_settings", err.Error())
 		return
 	}
+	cookie, _ := r.Cookie("helio_session")
 	s.mu.Lock()
+	if fakeLoggerIdentityChanged(s.settings, settings) {
+		session := s.sessions[cookie.Value]
+		if !session.Confirmed {
+			s.mu.Unlock()
+			writeError(w, http.StatusForbidden, "reauthentication_required", "recent password confirmation is required")
+			return
+		}
+		session.Confirmed = false
+		s.sessions[cookie.Value] = session
+	}
 	s.settings = settings
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func fakeLoggerIdentityChanged(current, next domain.Settings) bool {
+	return current.LoggerHost != next.LoggerHost || current.LoggerSerial != next.LoggerSerial ||
+		current.LoggerPort != next.LoggerPort || current.ModbusSlave != next.ModbusSlave
 }
 
 func (s *fixtureServer) history(w http.ResponseWriter, r *http.Request) {
@@ -433,6 +477,10 @@ func (s *fixtureServer) historyCSV(w http.ResponseWriter, r *http.Request) {
 	to, toErr := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
 	if fromErr != nil || toErr != nil || !from.Before(to) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_range", "from must be before to and both must be RFC3339 timestamps")
+		return
+	}
+	if to.Sub(from) > 31*24*time.Hour {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_range", "CSV history cannot exceed 31 days")
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")

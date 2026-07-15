@@ -158,6 +158,43 @@ func TestAuthTopologyCSRFAndRequestMetadata(t *testing.T) {
 	}
 }
 
+func TestSensitiveLoggerSettingsRequireSessionBoundPasswordConfirmation(t *testing.T) {
+	f := newFixture(t)
+	cookie, csrf := bootstrap(t, f)
+	original := strings.TrimPrefix(settingsJSON, `"settings":`)
+	changed := strings.Replace(original, `"loggerHost":"10.0.0.50"`, `"loggerHost":"10.0.0.60"`, 1)
+
+	blocked := request(t, f.handler, http.MethodPut, "/api/v1/settings", changed, cookie, csrf)
+	if blocked.Code != http.StatusForbidden || !strings.Contains(blocked.Body.String(), `"code":"reauthentication_required"`) {
+		t.Fatalf("unconfirmed identity update: %d %s", blocked.Code, blocked.Body.String())
+	}
+	wrong := request(t, f.handler, http.MethodPost, "/api/v1/auth/confirm-password", `{"password":"wrong password value"}`, cookie, csrf)
+	if wrong.Code != http.StatusUnauthorized || len(wrong.Result().Cookies()) != 0 {
+		t.Fatalf("wrong confirmation: %d cookies=%v body=%s", wrong.Code, wrong.Result().Cookies(), wrong.Body.String())
+	}
+	if stillAuthenticated := request(t, f.handler, http.MethodGet, "/api/v1/settings", "", cookie, ""); stillAuthenticated.Code != http.StatusOK {
+		t.Fatalf("wrong confirmation logged out current session: %d", stillAuthenticated.Code)
+	}
+	confirmed := request(t, f.handler, http.MethodPost, "/api/v1/auth/confirm-password", `{"password":"correct horse battery staple"}`, cookie, csrf)
+	if confirmed.Code != http.StatusNoContent || len(confirmed.Result().Cookies()) != 0 {
+		t.Fatalf("confirmation: %d cookies=%v body=%s", confirmed.Code, confirmed.Result().Cookies(), confirmed.Body.String())
+	}
+	updated := request(t, f.handler, http.MethodPut, "/api/v1/settings", changed, cookie, csrf)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("confirmed identity update: %d %s", updated.Code, updated.Body.String())
+	}
+	changedAgain := strings.Replace(changed, `"loggerHost":"10.0.0.60"`, `"loggerHost":"10.0.0.70"`, 1)
+	reuse := request(t, f.handler, http.MethodPut, "/api/v1/settings", changedAgain, cookie, csrf)
+	if reuse.Code != http.StatusForbidden {
+		t.Fatalf("confirmation was reusable: %d %s", reuse.Code, reuse.Body.String())
+	}
+
+	ordinary := strings.Replace(changed, `"panelCount":7`, `"panelCount":8`, 1)
+	if rec := request(t, f.handler, http.MethodPut, "/api/v1/settings", ordinary, cookie, csrf); rec.Code != http.StatusOK {
+		t.Fatalf("ordinary settings unexpectedly required confirmation: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSettingsPresenceRangeHistoryCSVAndBackup(t *testing.T) {
 	f := newFixture(t)
 	cookie, csrf := bootstrap(t, f)
@@ -177,6 +214,14 @@ func TestSettingsPresenceRangeHistoryCSVAndBackup(t *testing.T) {
 	tooLong := request(t, f.handler, http.MethodGet, "/api/v1/history?from="+from.Format(time.RFC3339)+"&to="+from.Add(367*24*time.Hour).Format(time.RFC3339)+"&resolution=minute", "", cookie, "")
 	if tooLong.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("long minute range: %d", tooLong.Code)
+	}
+	csvBoundary := request(t, f.handler, http.MethodGet, "/api/v1/history.csv?from="+from.Format(time.RFC3339)+"&to="+from.Add(31*24*time.Hour).Format(time.RFC3339), "", cookie, "")
+	if csvBoundary.Code != http.StatusOK {
+		t.Fatalf("31-day CSV boundary: %d %s", csvBoundary.Code, csvBoundary.Body.String())
+	}
+	csvTooLong := request(t, f.handler, http.MethodGet, "/api/v1/history.csv?from="+from.Format(time.RFC3339)+"&to="+from.Add(31*24*time.Hour+time.Second).Format(time.RFC3339), "", cookie, "")
+	if csvTooLong.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("over-limit CSV: %d %s", csvTooLong.Code, csvTooLong.Body.String())
 	}
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	if err := f.repo.SaveMinute(context.Background(), domain.TelemetrySnapshot{ObservedAt: now, ACPowerW: 123, EnergyTodayWh: 456, Status: "normal"}); err != nil {

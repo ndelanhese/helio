@@ -66,8 +66,8 @@ export function login(payload: LoginPayload) {
   return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload })
 }
 
-export function confirmCurrentPassword(payload: LoginPayload) {
-  return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload, suppressUnauthorized: true })
+export function confirmCurrentPassword(payload: Pick<LoginPayload, 'password'>) {
+  return api.request<void>('/auth/confirm-password', { method: 'POST', body: payload, suppressUnauthorized: true })
 }
 
 export function logout() {

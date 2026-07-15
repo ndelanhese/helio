@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
@@ -19,6 +20,7 @@ const (
 	sessionLifetime      = 30 * 24 * time.Hour
 	sessionIdleTime      = 24 * time.Hour
 	sessionTouchInterval = 5 * time.Minute
+	confirmationLifetime = 5 * time.Minute
 	tokenBytes           = 32
 )
 
@@ -41,11 +43,14 @@ type Store interface {
 }
 
 type Manager struct {
-	store         Store
-	now           func() time.Time
-	random        io.Reader
-	limiter       *Limiter
-	secureCookies bool
+	store            Store
+	now              func() time.Time
+	random           io.Reader
+	limiter          *Limiter
+	secureCookies    bool
+	passwordVerifier func(string, string) (bool, error)
+	confirmMu        sync.Mutex
+	confirmed        map[string]time.Time
 }
 
 type Option func(*Manager)
@@ -74,7 +79,7 @@ func WithLimiter(limiter *Limiter) Option {
 func WithSecureCookies(secure bool) Option { return func(m *Manager) { m.secureCookies = secure } }
 
 func NewManager(store Store, options ...Option) *Manager {
-	m := &Manager{store: store, now: time.Now, random: rand.Reader}
+	m := &Manager{store: store, now: time.Now, random: rand.Reader, passwordVerifier: VerifyPassword, confirmed: make(map[string]time.Time)}
 	secret := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, secret); err != nil {
 		panic("auth: system entropy unavailable")
@@ -154,13 +159,14 @@ func (m *Manager) Login(ctx context.Context, remoteAddr, username, password stri
 	user, err := m.store.FindUserByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
+			_, _ = m.passwordVerifier(dummyPasswordHash, password)
 			attempt.Failure()
 			return nil, ErrInvalidCredentials
 		}
 		attempt.Cancel()
 		return nil, fmt.Errorf("login lookup: %w", err)
 	}
-	valid, err := VerifyPassword(user.PasswordHash, password)
+	valid, err := m.passwordVerifier(user.PasswordHash, password)
 	if err != nil && !errors.Is(err, ErrPasswordLength) && !errors.Is(err, ErrPasswordEncoding) {
 		attempt.Cancel()
 		return nil, fmt.Errorf("verify credentials: %w", err)
@@ -213,10 +219,74 @@ func (m *Manager) Logout(ctx context.Context, rawToken string) error {
 	if rawToken == "" {
 		return nil
 	}
+	m.clearConfirmation(rawToken)
 	if err := m.store.DeleteSession(ctx, digestToken(rawToken)); err != nil {
 		return fmt.Errorf("logout: %w", err)
 	}
 	return nil
+}
+
+// ConfirmPassword verifies the authenticated user's password and grants this
+// exact session a short-lived, in-memory confirmation. It never creates or
+// replaces a durable session.
+func (m *Manager) ConfirmPassword(ctx context.Context, rawSessionToken, remoteAddr, password string) error {
+	if _, err := m.Authenticate(ctx, rawSessionToken); err != nil {
+		return err
+	}
+	hash := digestToken(rawSessionToken)
+	key := string(hash)
+	m.confirmMu.Lock()
+	delete(m.confirmed, key)
+	m.confirmMu.Unlock()
+	session, err := m.store.LookupSession(ctx, hash)
+	if err != nil {
+		return fmt.Errorf("confirm session password: %w", err)
+	}
+	attempt, retry := m.limiter.Admit(remoteAddr, session.Username)
+	if attempt == nil {
+		return rateLimitError{retryAfter: retry}
+	}
+	valid, err := m.passwordVerifier(session.PasswordHash, password)
+	if err != nil && !errors.Is(err, ErrPasswordLength) && !errors.Is(err, ErrPasswordEncoding) {
+		attempt.Cancel()
+		return fmt.Errorf("confirm session password: %w", err)
+	}
+	if !valid {
+		attempt.Failure()
+		return ErrInvalidCredentials
+	}
+	attempt.Success()
+	m.confirmMu.Lock()
+	m.confirmed[key] = m.now().UTC().Add(confirmationLifetime)
+	m.confirmMu.Unlock()
+	return nil
+}
+
+func (m *Manager) RecentlyConfirmed(rawSessionToken string) bool {
+	key := string(digestToken(rawSessionToken))
+	m.confirmMu.Lock()
+	defer m.confirmMu.Unlock()
+	expires, ok := m.confirmed[key]
+	if !ok || !m.now().UTC().Before(expires) {
+		delete(m.confirmed, key)
+		return false
+	}
+	return true
+}
+
+// ConsumeRecentConfirmation makes sensitive settings authorization one-shot.
+func (m *Manager) ConsumeRecentConfirmation(rawSessionToken string) bool {
+	if !m.RecentlyConfirmed(rawSessionToken) {
+		return false
+	}
+	m.clearConfirmation(rawSessionToken)
+	return true
+}
+
+func (m *Manager) clearConfirmation(rawSessionToken string) {
+	m.confirmMu.Lock()
+	delete(m.confirmed, string(digestToken(rawSessionToken)))
+	m.confirmMu.Unlock()
 }
 
 // RotateCSRF issues a fresh 256-bit CSRF token and atomically makes it the

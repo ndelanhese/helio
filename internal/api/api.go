@@ -85,6 +85,7 @@ func New(d Dependencies) http.Handler {
 		private.Use(func(next http.Handler) http.Handler { return auth.RequireSession(d.Auth, next) })
 		private.Use(func(next http.Handler) http.Handler { return auth.BootstrapGate(d.Auth, next) })
 		private.Get("/auth/session", a.session)
+		private.With(auth.RequireCSRF).Post("/auth/confirm-password", a.confirmPassword)
 		private.With(auth.RequireCSRF).Post("/auth/logout", a.logout)
 		private.Get("/live", a.live)
 		private.Get("/live/events", a.events)

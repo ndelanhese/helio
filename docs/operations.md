@@ -20,7 +20,7 @@ docker compose logs --since=30m --timestamps helio
 docker compose logs --follow --timestamps helio
 ```
 
-Logs intentionally avoid credentials, sessions, logger serials, raw frames, and full addresses. Stored timestamps are UTC. Calendars, aggregation, and display use the configured IANA timezone (for example, `America/Sao_Paulo`) and therefore honor daylight-saving transitions where applicable. Change timezone deliberately: it changes future local-calendar grouping and does not rewrite old UTC observations.
+Logs intentionally avoid credentials, sessions, logger serials, raw frames, and full addresses. Stored timestamps are UTC. Calendars, aggregation, and display use the configured IANA timezone (for example, `America/Sao_Paulo`) and therefore honor daylight-saving transitions where applicable. Change timezone deliberately: old UTC observations remain intact, daily/monthly summaries are rebuilt, and timezone-derived daily analyses plus persistent-underproduction evidence are invalidated until the jobs recompute them under the new calendar.
 
 ## Storage, retention, and ownership
 

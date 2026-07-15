@@ -9,6 +9,8 @@ Local-first solar monitoring for Solarman/SOFAR systems. Built with Go, React, S
 
 Vendor solar apps often hide useful telemetry behind slow cloud interfaces and weak history views. Helio is designed to talk directly to a Solarman V5 logger on your local network, preserve your own data, and explain system health without depending on vendor cloud availability.
 
+“Local-first” describes telemetry ownership, storage, and inverter access—not a fully offline process. Weather-aware analysis makes an outbound HTTPS request about once per hour to Open-Meteo, sending the configured latitude/longitude and bounded dates. Raw inverter telemetry, credentials, logger identity, and database contents are not sent. See [Privacy](docs/privacy.md) for the exact boundary.
+
 ## Release-candidate features
 
 - Live inverter and PV string telemetry
@@ -52,7 +54,7 @@ One Go process serves the API, SSE live stream, embedded React app, collector, s
 
 ## Install and operate
 
-The source checkout runs with `docker compose up -d` and binds to localhost by default. Start with [Install](docs/install.md), then keep [Operations](docs/operations.md), [Backup and restore](docs/backup-restore.md), [Hardware testing](docs/hardware-testing.md), and the [local API](docs/api.md) nearby.
+The source checkout runs with `docker compose up -d` and binds to localhost by default. Start with [Install](docs/install.md), then keep [Operations](docs/operations.md), [Privacy](docs/privacy.md), [Backup and restore](docs/backup-restore.md), [Hardware testing](docs/hardware-testing.md), and the [local API](docs/api.md) nearby.
 
 Future release image commands are documented but clearly conditional on publication. Do not assume `ghcr.io/ndelanhese/helio:v0.1.0` exists until the matching GitHub release and immutable digest are visible.
 

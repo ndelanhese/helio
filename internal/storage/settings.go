@@ -63,9 +63,29 @@ func (db *DB) ApplySettings(ctx context.Context, settings domain.Settings, actor
 		if err := rebuildCalendarSummaries(ctx, tx, location); err != nil {
 			return err
 		}
+		if err := invalidateTimezoneDerivedEvidence(ctx, tx, actorUserID, previousTimezone, settings.Timezone); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit settings update: %w", err)
+	}
+	return nil
+}
+
+func invalidateTimezoneDerivedEvidence(ctx context.Context, tx *sql.Tx, actorUserID, previousTimezone, nextTimezone string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM daily_analysis`); err != nil {
+		return fmt.Errorf("invalidate daily analysis after timezone change: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM alert_rule_state WHERE rule='persistent_underproduction'`); err != nil {
+		return fmt.Errorf("reset underproduction state after timezone change: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM alerts WHERE rule='persistent_underproduction'`); err != nil {
+		return fmt.Errorf("invalidate underproduction alerts after timezone change: %w", err)
+	}
+	detail := map[string]any{"previousTimezone": previousTimezone, "timezone": nextTimezone}
+	if err := insertAudit(ctx, tx, actorUserID, "analysis.invalidate_timezone", detail); err != nil {
+		return fmt.Errorf("audit timezone evidence invalidation: %w", err)
 	}
 	return nil
 }

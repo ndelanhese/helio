@@ -2,6 +2,8 @@
 
 Helio runs as one local container on `linux/amd64` and `linux/arm64`. It is a release candidate: build it from this checkout until a signed release image is published. Keep port 8080 on a trusted private network; never expose it to the public internet.
 
+The container requires outbound HTTPS for weather-aware analysis. About once per hour it queries Open-Meteo with the configured latitude/longitude and bounded dates. Blocking that egress leaves logger collection, local history, and the UI working, but weather health becomes unavailable and weather-dependent conclusions remain limited. v0.1 has no in-app switch to disable these requests; block outbound access at the container/network layer only if you accept that degradation. See [Privacy](privacy.md).
+
 ## Requirements
 
 - macOS: Docker Desktop with Compose v2.

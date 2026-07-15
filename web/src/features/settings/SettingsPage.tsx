@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { Check, MonitorCog } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { ApiError, authMemory } from '../../api/client'
+import { ApiError } from '../../api/client'
 import { componentHealthQuery, confirmCurrentPassword, queryKeys, sessionQuery, settingsQuery, updateSettings } from '../../api/queries'
 import type { ComponentHealth, Settings } from '../../api/types'
 import { useTheme } from '../../app/theme'
@@ -17,16 +17,16 @@ const themeChoices = [
 
 export function SettingsPage() {
   const settings = useQuery(settingsQuery)
-  const session = useQuery(sessionQuery)
+  useQuery(sessionQuery)
   const health = useQuery(componentHealthQuery)
 
   if (settings.isPending) return <section className="settings-state" aria-busy="true"><p>Carregando configurações locais…</p></section>
   if (settings.isError || !settings.data) return <section className="settings-state"><h1>Não foi possível carregar as configurações.</h1><p>Os dados inseridos não foram alterados.</p><button className="secondary-action" onClick={() => { void settings.refetch() }} type="button">Tentar carregar configurações</button></section>
 
-  return <SettingsEditor health={health} initial={settings.data} sessionUsername={session.data?.username} />
+  return <SettingsEditor health={health} initial={settings.data} />
 }
 
-function SettingsEditor({ health, initial, sessionUsername }: { health: UseQueryResult<ComponentHealth, Error>; initial: Settings; sessionUsername?: string }) {
+function SettingsEditor({ health, initial }: { health: UseQueryResult<ComponentHealth, Error>; initial: Settings }) {
   const queryClient = useQueryClient()
   const { setTheme, theme } = useTheme()
   const [original, setOriginal] = useState(initial)
@@ -78,9 +78,7 @@ function SettingsEditor({ health, initial, sessionUsername }: { health: UseQuery
     setErrors({})
     try {
       if (changedIdentity) {
-        if (!sessionUsername) throw new Error('session unavailable')
-        const credentials = await confirmCurrentPassword({ username: sessionUsername, password: currentPassword })
-        authMemory.setCSRFToken(credentials.csrfToken)
+        await confirmCurrentPassword({ password: currentPassword })
       }
       const saved = await updateSettings(valuesToSettings(values))
       queryClient.setQueryData(queryKeys.settings, saved)

@@ -26,6 +26,10 @@ var (
 	ErrPasswordEncoding = errors.New("password must be valid UTF-8")
 )
 
+// dummyPasswordHash has production-bounded Argon2id parameters and fixed
+// non-secret material. Missing-user logins still perform the same KDF work.
+const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 func HashPassword(password string) (string, error) { return hashPassword(password, rand.Reader) }
 
 func hashPassword(password string, entropy io.Reader) (string, error) {

@@ -41,7 +41,7 @@ export function InsightsPage() {
       <InsightCard insight={insight.data} />
       <section className="trends-section" aria-labelledby="trends-title"><div><p className="eyebrow">Comparação recente</p><h2 id="trends-title">Tendências com contexto.</h2></div><div className="trend-grid"><Trend label="Potência de pico" trend={insight.data.trends.peakPower} unit="W" /><Trend label="Minutos produtivos" trend={insight.data.trends.productiveMinutes} unit="min" /></div></section>
       <section className="generated-value" aria-label="Valor estimado"><span>{insight.data.generatedEnergyValue.label}</span><strong>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: insight.data.generatedEnergyValue.currency }).format(insight.data.generatedEnergyValue.minor / 100)}</strong><p>Estimativa baseada somente na energia gerada medida e na tarifa configurada.</p></section>
-      <div className="alerts-layout"><AlertList alerts={active.data.alerts} state="open" /><AlertList alerts={resolved.data.alerts} state="resolved" /></div>
+      <div className="alerts-layout"><AlertList alerts={active.data.alerts} state="open" timezone={settings.data.timezone} /><AlertList alerts={resolved.data.alerts} state="resolved" timezone={settings.data.timezone} /></div>
     </article>
   )
 }

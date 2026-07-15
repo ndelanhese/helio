@@ -54,7 +54,7 @@ describe('InsightsPage', () => {
   })
   it('explains low confidence, evidence, observation window, active alerts and recovery', async () => {
     server.use(
-      http.get('/api/v1/settings', () => HttpResponse.json(settings)),
+      http.get('/api/v1/settings', () => HttpResponse.json({ ...settings, timezone: 'Pacific/Kiritimati' })),
       http.get('/api/v1/insights', () => HttpResponse.json({
         version: 'v1', day: '2026-07-14', actualWh: 7_200, expectedWh: 10_000, ratio: 0.72,
         confidence: 'low', qualifying: false,
@@ -71,7 +71,7 @@ describe('InsightsPage', () => {
         return HttpResponse.json({ version: 'v1', state, alerts: state === 'open' ? [{
           kind: 'persistent_underproduction', state: 'open', severity: 'warning',
           title: 'Produção abaixo da referência', summary: 'Três dias qualificáveis abaixo da expectativa.',
-          openedAt: '2026-07-14T03:05:00Z', resolvedAt: null,
+          openedAt: '2026-07-14T12:05:00Z', resolvedAt: null,
           evidence: [{ label: 'Relação real/esperada', value: 0.62, unit: 'ratio' }],
         }] : [{
           kind: 'telemetry_stale', state: 'resolved', severity: 'warning',
@@ -93,6 +93,7 @@ describe('InsightsPage', () => {
     expect(screen.getByText(/72% de cobertura/)).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Alertas ativos' })).toBeVisible()
     expect(screen.getByText('Produção abaixo da referência')).toBeVisible()
+    expect(screen.getByText('15 de jul. de 2026')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Recuperações recentes' })).toBeVisible()
     expect(screen.getByText('A leitura voltou a ficar atualizada.')).toBeVisible()
     const unsupportedClaims = new RegExp(['con', 'sumo|auto', 'consumo|import', 'ação|export', 'ação|econo', 'mia|poup', 'ança'].join(''), 'i')

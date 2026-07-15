@@ -42,7 +42,7 @@ func TestBuildReadRequestRejectsInvalidCount(t *testing.T) {
 }
 
 func TestParseReadResponse(t *testing.T) {
-	got, err := ParseReadResponse(fixture(t, "read_holding_response.hex"), 123456789, 7)
+	got, err := ParseReadResponse(fixture(t, "read_holding_response.hex"), 123456789, 7, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,16 +51,29 @@ func TestParseReadResponse(t *testing.T) {
 	}
 }
 
+func TestParseRejectsResponseForDifferentModbusRequest(t *testing.T) {
+	for name, frame := range map[string][]byte{
+		"slave": responseFrame([]byte{2, 3, 2, 0x12, 0x34}),
+		"count": responseFrame([]byte{1, 3, 4, 0x12, 0x34, 0x56, 0x78}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrIdentityMismatch) {
+				t.Fatalf("got %v, want ErrIdentityMismatch", err)
+			}
+		})
+	}
+}
+
 func TestParseRejectsWrongSerialAndWriteFunction(t *testing.T) {
 	frame := fixture(t, "read_holding_response.hex")
-	if _, err := ParseReadResponse(frame, 1, 7); !errors.Is(err, ErrIdentityMismatch) {
+	if _, err := ParseReadResponse(frame, 1, 7, 1, 1); !errors.Is(err, ErrIdentityMismatch) {
 		t.Fatalf("got %v, want ErrIdentityMismatch", err)
 	}
 
 	frame = fixture(t, "read_holding_response.hex")
 	frame[len(frame)-8] = 0x06
 	refreshChecksums(frame)
-	if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrUnsupportedFunction) {
+	if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrUnsupportedFunction) {
 		t.Fatalf("got %v, want ErrUnsupportedFunction", err)
 	}
 }
@@ -87,7 +100,7 @@ func TestParseRejectsMalformedEnvelope(t *testing.T) {
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			frame := mutate(fixture(t, "read_holding_response.hex"))
-			if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrMalformedFrame) {
+			if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrMalformedFrame) {
 				t.Fatalf("got %v, want ErrMalformedFrame", err)
 			}
 		})
@@ -95,7 +108,7 @@ func TestParseRejectsMalformedEnvelope(t *testing.T) {
 }
 
 func TestParseRejectsWrongSequence(t *testing.T) {
-	if _, err := ParseReadResponse(fixture(t, "read_holding_response.hex"), 123456789, 8); !errors.Is(err, ErrIdentityMismatch) {
+	if _, err := ParseReadResponse(fixture(t, "read_holding_response.hex"), 123456789, 8, 1, 1); !errors.Is(err, ErrIdentityMismatch) {
 		t.Fatalf("got %v, want ErrIdentityMismatch", err)
 	}
 }
@@ -104,7 +117,7 @@ func TestParseRejectsBadModbusCRC(t *testing.T) {
 	frame := fixture(t, "read_holding_response.hex")
 	frame[len(frame)-4]++
 	refreshFrameChecksum(frame)
-	if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrCRC) {
+	if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrCRC) {
 		t.Fatalf("got %v, want ErrCRC", err)
 	}
 }
@@ -119,7 +132,7 @@ func TestParseChecksCRCBeforeFunctionAndByteCount(t *testing.T) {
 			frame := fixture(t, "read_holding_response.hex")
 			mutate(frame)
 			refreshFrameChecksum(frame)
-			if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrCRC) {
+			if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrCRC) {
 				t.Fatalf("got %v, want ErrCRC", err)
 			}
 		})
@@ -129,13 +142,13 @@ func TestParseChecksCRCBeforeFunctionAndByteCount(t *testing.T) {
 func TestParseRejectsModbusException(t *testing.T) {
 	t.Run("read holding exception", func(t *testing.T) {
 		frame := responseFrame([]byte{1, 0x83, 2})
-		if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrModbusException) {
+		if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrModbusException) {
 			t.Fatalf("got %v, want ErrModbusException", err)
 		}
 	})
 	t.Run("write exception", func(t *testing.T) {
 		frame := responseFrame([]byte{1, 0x86, 2})
-		if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrUnsupportedFunction) {
+		if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrUnsupportedFunction) {
 			t.Fatalf("got %v, want ErrUnsupportedFunction", err)
 		}
 	})
@@ -145,14 +158,14 @@ func TestParseRejectsOddByteCount(t *testing.T) {
 	frame := fixture(t, "read_holding_response.hex")
 	frame[len(frame)-7] = 1
 	refreshChecksums(frame)
-	if _, err := ParseReadResponse(frame, 123456789, 7); !errors.Is(err, ErrMalformedFrame) {
+	if _, err := ParseReadResponse(frame, 123456789, 7, 1, 1); !errors.Is(err, ErrMalformedFrame) {
 		t.Fatalf("got %v, want ErrMalformedFrame", err)
 	}
 }
 
 func TestParseRejectsMoreThan125Registers(t *testing.T) {
 	modbus := append([]byte{1, 3, 252}, make([]byte, 252)...)
-	if _, err := ParseReadResponse(responseFrame(modbus), 123456789, 7); !errors.Is(err, ErrMalformedFrame) {
+	if _, err := ParseReadResponse(responseFrame(modbus), 123456789, 7, 1, 1); !errors.Is(err, ErrMalformedFrame) {
 		t.Fatalf("got %v, want ErrMalformedFrame", err)
 	}
 }
@@ -160,7 +173,7 @@ func TestParseRejectsMoreThan125Registers(t *testing.T) {
 func FuzzParseReadResponse(f *testing.F) {
 	f.Add(fixture(f, "read_holding_response.hex"))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		_, _ = ParseReadResponse(b, 123456789, 7)
+		_, _ = ParseReadResponse(b, 123456789, 7, 1, 1)
 	})
 }
 

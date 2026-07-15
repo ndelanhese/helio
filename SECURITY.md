@@ -31,3 +31,4 @@ Maintainers aim to acknowledge reports within three business days and provide a 
 - MVP must not write inverter registers.
 - Treat inverter writes as safety-sensitive operations.
 - Secrets belong in Docker secrets or protected environment injection, not source control.
+- Local-first does not mean zero egress: weather analysis sends configured coordinates and bounded dates to Open-Meteo over HTTPS about hourly. It does not send inverter telemetry, credentials, logger identity, or the SQLite database. Operators requiring zero external traffic must block container egress and accept unavailable weather-dependent analysis; see [Privacy](docs/privacy.md).

@@ -149,6 +149,97 @@ func TestApplySettingsRebuildsDailyAndMonthlyFromPermanentHourlyRows(t *testing.
 	}
 }
 
+func TestTimezoneChangeInvalidatesCalendarAnalysisAndUnderproductionEvidenceAtomically(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "settings.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	old := validStoredSettings()
+	if err := db.PutSettings(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('actor','Admin','x','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO daily_analysis(day,expected_wh,actual_wh,ratio,confidence,evidence_json,qualifying,updated_at) VALUES('2026-01-01',100,50,.5,'high','[]',1,'2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO alert_rule_state(rule,state_json,updated_at) VALUES('persistent_underproduction','{"consecutive":3,"lastKey":"2026-01-01","lastEvaluatedAt":"2026-01-02T00:00:00Z"}','2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO alerts(id,rule,state,severity,opened_at,evidence_json) VALUES('under','persistent_underproduction','open','warning','2026-01-02T00:00:00Z','{"values":{"ratio":0.5}}')`); err != nil {
+		t.Fatal(err)
+	}
+	updated := old
+	updated.Timezone = "Asia/Tokyo"
+	if err := db.ApplySettings(ctx, updated, "actor", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"daily_analysis", "alert_rule_state", "alerts"} {
+		var count int
+		query := `SELECT COUNT(*) FROM ` + table
+		if table != "daily_analysis" {
+			query += ` WHERE rule='persistent_underproduction'`
+		}
+		if err := db.sql.QueryRowContext(ctx, query).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s retained %d stale calendar rows", table, count)
+		}
+	}
+	var auditCount int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM action_audit WHERE action='analysis.invalidate_timezone'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("invalidation audit count=%d", auditCount)
+	}
+}
+
+func TestTimezoneInvalidationRollsBackWithSettingsWhenItsAuditFails(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "settings.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	old := validStoredSettings()
+	if err := db.PutSettings(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('actor','Admin','x','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO daily_analysis(day,expected_wh,actual_wh,ratio,confidence,evidence_json,qualifying,updated_at) VALUES('2026-01-01',100,50,.5,'high','[]',1,'2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `CREATE TRIGGER reject_calendar_audit BEFORE INSERT ON action_audit WHEN NEW.action='analysis.invalidate_timezone' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	updated := old
+	updated.Timezone = "Asia/Tokyo"
+	if err := db.ApplySettings(ctx, updated, "actor", false); err == nil {
+		t.Fatal("timezone change succeeded without invalidation audit")
+	}
+	got, err := db.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Timezone != old.Timezone {
+		t.Fatalf("timezone committed on rollback: %s", got.Timezone)
+	}
+	var count int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM daily_analysis`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("analysis removed on rollback: %d", count)
+	}
+}
+
 func TestCalendarRebuildSplitsHourlyIntervalsAtFractionalZoneMidnight(t *testing.T) {
 	for _, tc := range []struct {
 		zone                    string

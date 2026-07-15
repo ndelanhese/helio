@@ -77,7 +77,7 @@ func (c *Client) ReadHoldingRegisters(ctx context.Context, slave byte, start, co
 		response, err := c.conn.RoundTrip(requestCtx, request)
 		if err == nil {
 			var registers []uint16
-			registers, err = ParseReadResponse(response, c.config.Serial, sequence)
+			registers, err = ParseReadResponse(response, c.config.Serial, sequence, slave, count)
 			if err == nil {
 				return registers, nil
 			}

@@ -18,11 +18,16 @@ type csvHistoryStore interface {
 }
 
 const HistoryCSVHeader = "timestamp,power_w,energy_today_wh,status"
+const maxCSVHistoryRange = 31 * 24 * time.Hour
 
 func (a *API) csv(w http.ResponseWriter, r *http.Request) {
 	window, _, err := parseRange(r, false)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_range", err.Error())
+		return
+	}
+	if window.to.Sub(window.from) > maxCSVHistoryRange {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_range", "CSV history cannot exceed 31 days")
 		return
 	}
 	var snapshots []domain.TelemetrySnapshot

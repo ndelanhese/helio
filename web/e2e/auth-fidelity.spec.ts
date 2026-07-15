@@ -53,6 +53,9 @@ test('closed bootstrap and invalid CSV ranges return exact envelopes', async ({ 
   const csv = await context.request.get('/api/v1/history.csv?from=2026-07-15T00:00:00Z&to=2026-07-14T00:00:00Z')
   expect(csv.status()).toBe(422)
   expect(await csv.json()).toEqual({ error: { code: 'invalid_range', message: 'from must be before to and both must be RFC3339 timestamps' } })
+  const oversized = await context.request.get('/api/v1/history.csv?from=2026-01-01T00:00:00Z&to=2026-02-02T00:00:00Z')
+  expect(oversized.status()).toBe(422)
+  expect(await oversized.json()).toEqual({ error: { code: 'invalid_range', message: 'CSV history cannot exceed 31 days' } })
 })
 
 test('bootstrap and login reject missing, referer-only, and cross-origin requests', async ({ browser, request }) => {

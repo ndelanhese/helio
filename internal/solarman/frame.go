@@ -49,7 +49,7 @@ func BuildReadRequest(serial uint32, sequence uint16, slave byte, start, count u
 
 // ParseReadResponse validates a complete Solarman V5 client response and
 // returns its read-only Modbus holding-register values.
-func ParseReadResponse(frame []byte, expectedSerial uint32, expectedSequence uint16) ([]uint16, error) {
+func ParseReadResponse(frame []byte, expectedSerial uint32, expectedSequence uint16, expectedSlave byte, expectedCount uint16) ([]uint16, error) {
 	minimumSize := v5HeaderSize + responseMetadataSize + 5 + v5TrailerSize
 	if len(frame) < minimumSize {
 		return nil, fmt.Errorf("%w: frame too short", ErrMalformedFrame)
@@ -80,6 +80,9 @@ func ParseReadResponse(frame []byte, expectedSerial uint32, expectedSequence uin
 		return nil, err
 	}
 	function := modbus[1]
+	if modbus[0] != expectedSlave {
+		return nil, ErrIdentityMismatch
+	}
 	if function == readHoldingFunction|0x80 {
 		if len(modbus) != 5 {
 			return nil, fmt.Errorf("%w: invalid exception length", ErrMalformedFrame)
@@ -96,6 +99,9 @@ func ParseReadResponse(frame []byte, expectedSerial uint32, expectedSequence uin
 	}
 	if len(modbus) != 3+byteCount+2 {
 		return nil, fmt.Errorf("%w: Modbus response length mismatch", ErrMalformedFrame)
+	}
+	if byteCount != int(expectedCount)*2 {
+		return nil, ErrIdentityMismatch
 	}
 
 	registers := make([]uint16, byteCount/2)

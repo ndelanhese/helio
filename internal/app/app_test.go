@@ -64,6 +64,27 @@ func TestStartJobsReadyRegistersOrderedAlertConsumerBeforeFirstPublish(t *testin
 	a.stopServices()
 }
 
+func TestProductionHTTPServerHasSlowClientDeadlinesWithoutGlobalWriteTimeout(t *testing.T) {
+	a := New(config.Config{HTTPAddr: "127.0.0.1:0", DatabasePath: filepath.Join(t.TempDir(), "helio.db")})
+	t.Cleanup(func() {
+		if a.shutdownCancel != nil {
+			a.shutdownCancel()
+		}
+		if a.db != nil {
+			_ = a.db.Close()
+		}
+	})
+	if a.initErr != nil {
+		t.Fatal(a.initErr)
+	}
+	if a.server.ReadHeaderTimeout != 5*time.Second || a.server.ReadTimeout != 30*time.Second || a.server.IdleTimeout != 2*time.Minute {
+		t.Fatalf("server deadlines: header=%v read=%v idle=%v", a.server.ReadHeaderTimeout, a.server.ReadTimeout, a.server.IdleTimeout)
+	}
+	if a.server.WriteTimeout != 0 {
+		t.Fatalf("global write timeout=%v would terminate SSE", a.server.WriteTimeout)
+	}
+}
+
 func TestStartJobsReadyDoesNotDeadlockWhenIntegrationDisabled(t *testing.T) {
 	runner := jobs.New(startupRepository{}, func(context.Context) (domain.Settings, error) {
 		return domain.Settings{Timezone: "UTC"}, nil

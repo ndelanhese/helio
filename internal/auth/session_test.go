@@ -26,6 +26,16 @@ func testManager(t *testing.T, now *time.Time) (*Manager, *storage.DB) {
 
 type counterReader struct{ value byte }
 
+type createCountingStore struct {
+	Store
+	creates int
+}
+
+func (s *createCountingStore) CreateSession(ctx context.Context, session storage.Session) error {
+	s.creates++
+	return s.Store.CreateSession(ctx, session)
+}
+
 func (r *counterReader) Read(p []byte) (int, error) {
 	for i := range p {
 		r.value++
@@ -94,16 +104,22 @@ func TestRotateCSRFReplacesSingleCurrentTokenWithoutStoringRawMaterial(t *testin
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	m, db := testManager(t, &now)
 	creds, err := m.Bootstrap(context.Background(), "Admin", "correct horse battery staple")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	fresh, err := m.RotateCSRF(context.Background(), creds.Token)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if fresh == "" || fresh == creds.CSRF {
 		t.Fatalf("csrf was not freshly rotated")
 	}
 	tokenHash := sha256.Sum256([]byte(creds.Token))
 	session, err := db.LookupSession(context.Background(), tokenHash[:])
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := sha256.Sum256([]byte(fresh))
 	if string(session.CSRFHash) != string(want[:]) {
 		t.Fatal("database does not contain the fresh CSRF digest")
@@ -139,6 +155,63 @@ func TestSessionLogoutRevokesTokenAndClearsCookie(t *testing.T) {
 	cookie := m.ClearSessionCookie()
 	if cookie.Value != "" || cookie.MaxAge != -1 || !cookie.Expires.Before(now) {
 		t.Fatalf("clear cookie=%#v", cookie)
+	}
+}
+
+func TestConfirmPasswordIsSessionBoundRecentAndCreatesNoReplacementSession(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	m, db := testManager(t, &now)
+	creds, err := m.Bootstrap(context.Background(), "Admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter := &createCountingStore{Store: m.store}
+	m.store = counter
+	if err := m.ConfirmPassword(context.Background(), creds.Token, "203.0.113.8", "wrong password value"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong confirmation: %v", err)
+	}
+	if m.RecentlyConfirmed(creds.Token) {
+		t.Fatal("wrong password granted confirmation")
+	}
+	if err := m.ConfirmPassword(context.Background(), creds.Token, "203.0.113.8", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	if !m.RecentlyConfirmed(creds.Token) {
+		t.Fatal("session was not marked recently confirmed")
+	}
+	// Confirmation preserves the current durable session instead of issuing a replacement.
+	tokenHash := sha256.Sum256([]byte(creds.Token))
+	if _, err := db.LookupSession(context.Background(), tokenHash[:]); err != nil {
+		t.Fatalf("current session replaced: %v", err)
+	}
+	if counter.creates != 0 {
+		t.Fatalf("confirmation created %d replacement sessions", counter.creates)
+	}
+	now = now.Add(5*time.Minute + time.Second)
+	if m.RecentlyConfirmed(creds.Token) {
+		t.Fatal("confirmation did not expire")
+	}
+}
+
+func TestMissingUserLoginPerformsDummyPasswordVerification(t *testing.T) {
+	if valid, err := VerifyPassword(dummyPasswordHash, "unknown user password"); err != nil || valid {
+		t.Fatalf("dummy hash must run bounded Argon2 and never validate: valid=%v err=%v", valid, err)
+	}
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	m, _ := testManager(t, &now)
+	called := 0
+	m.passwordVerifier = func(encoded, password string) (bool, error) {
+		called++
+		if encoded != dummyPasswordHash || password != "unknown user password" {
+			t.Fatalf("dummy verification inputs were not stable")
+		}
+		return false, nil
+	}
+	if _, err := m.Login(context.Background(), "203.0.113.8", "missing", "unknown user password"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("login: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("dummy verifications=%d", called)
 	}
 }
 

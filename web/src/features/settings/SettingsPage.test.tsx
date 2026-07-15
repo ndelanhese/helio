@@ -298,16 +298,16 @@ describe('SettingsPage', () => {
     expect(requests).toBe(1)
   })
 
-  it('re-authenticates a logger identity change, rotates CSRF in memory, and never sends password to settings', async () => {
+  it('confirms the current session password without creating a login session or sending it to settings', async () => {
     useSettingsHandlers()
     let current = settings
-    let loginBody: unknown
+    let confirmationBody: unknown
     let updateBody: unknown
     let updateCSRF: string | null = null
     server.use(
-      http.post('/api/v1/auth/login', async ({ request }) => {
-        loginBody = await request.json()
-        return HttpResponse.json({ ...authenticatedSession, csrfToken: 'rotated-csrf' })
+      http.post('/api/v1/auth/confirm-password', async ({ request }) => {
+        confirmationBody = await request.json()
+        return new HttpResponse(null, { status: 204 })
       }),
       http.put('/api/v1/settings', async ({ request }) => {
         updateBody = await request.json()
@@ -328,11 +328,11 @@ describe('SettingsPage', () => {
     await userEvent.type(screen.getByLabelText('Senha atual'), 'senha somente na memória')
     await userEvent.click(screen.getByRole('button', { name: 'Salvar configurações' }))
     expect(await screen.findByText('Configurações salvas.')).toBeVisible()
-    expect(loginBody).toEqual({ username: authenticatedSession.username, password: 'senha somente na memória' })
+    expect(confirmationBody).toEqual({ password: 'senha somente na memória' })
     expect(updateBody).not.toHaveProperty('currentPassword')
     expect(updateBody).not.toHaveProperty('password')
-    expect(updateCSRF).toBe('rotated-csrf')
-    expect(authMemory.getCSRFToken()).toBe('rotated-csrf')
+    expect(updateCSRF).toBe(authenticatedSession.csrfToken)
+    expect(authMemory.getCSRFToken()).toBe(authenticatedSession.csrfToken)
     expect(localStorage.getItem('senha somente na memória')).toBeNull()
     expect(screen.queryByLabelText('Senha atual')).not.toBeInTheDocument()
   })
@@ -372,7 +372,7 @@ describe('SettingsPage', () => {
     const unauthorized = vi.fn()
     configureUnauthorizedHandler(unauthorized)
     authMemory.setCSRFToken('session-csrf')
-    server.use(http.post('/api/v1/auth/login', () => HttpResponse.json({ error: { code: 'invalid_credentials', message: 'invalid' } }, { status: 401 })))
+    server.use(http.post('/api/v1/auth/confirm-password', () => HttpResponse.json({ error: { code: 'invalid_credentials', message: 'invalid' } }, { status: 401 })))
     renderApp(<SettingsPage />)
     const host = await screen.findByRole('textbox', { name: 'Endereço IP do logger' })
     await userEvent.clear(host)
