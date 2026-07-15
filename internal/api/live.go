@@ -23,7 +23,8 @@ func utcSnapshot(snapshot *domain.TelemetrySnapshot) *domain.TelemetrySnapshot {
 	}
 	copy := *snapshot
 	copy.ObservedAt = copy.ObservedAt.UTC()
-	copy.FaultCodes = append([]uint16(nil), snapshot.FaultCodes...)
+	// JSON clients require an array even when inverter reports no active faults.
+	copy.FaultCodes = append([]uint16{}, snapshot.FaultCodes...)
 	return &copy
 }
 
