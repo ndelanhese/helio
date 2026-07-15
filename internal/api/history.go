@@ -11,9 +11,9 @@ import (
 type timeRange struct{ from, to time.Time }
 
 type summaryHistoryStore interface {
-	HourlyHistory(context.Context, time.Time, time.Time, *time.Location) ([]domain.AggregatePoint, error)
-	DailyHistory(context.Context, time.Time, time.Time, *time.Location) ([]domain.AggregatePoint, error)
-	MonthlyHistory(context.Context, time.Time, time.Time, *time.Location) ([]domain.AggregatePoint, error)
+	HourlyHistory(context.Context, time.Time, time.Time) ([]domain.AggregatePoint, error)
+	DailyHistory(context.Context, time.Time, time.Time) ([]domain.AggregatePoint, error)
+	MonthlyHistory(context.Context, time.Time, time.Time) ([]domain.AggregatePoint, error)
 }
 
 func parseRange(r *http.Request, requireResolution bool) (timeRange, string, error) {
@@ -69,24 +69,14 @@ func (a *API) history(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "unavailable", "summary history is unavailable")
 			return
 		}
-		settings, settingsErr := a.dependencies.Store.GetSettings(r.Context(), a.dependencies.AllowPublicLogger)
-		if settingsErr != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", "history timezone is unavailable")
-			return
-		}
-		location, locationErr := time.LoadLocation(settings.Timezone)
-		if locationErr != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", "history timezone is invalid")
-			return
-		}
 		var points []domain.AggregatePoint
 		switch resolution {
 		case "hour":
-			points, err = summaries.HourlyHistory(r.Context(), window.from, window.to, location)
+			points, err = summaries.HourlyHistory(r.Context(), window.from, window.to)
 		case "day":
-			points, err = summaries.DailyHistory(r.Context(), window.from, window.to, location)
+			points, err = summaries.DailyHistory(r.Context(), window.from, window.to)
 		case "month":
-			points, err = summaries.MonthlyHistory(r.Context(), window.from, window.to, location)
+			points, err = summaries.MonthlyHistory(r.Context(), window.from, window.to)
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "history could not be loaded")

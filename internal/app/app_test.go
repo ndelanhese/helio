@@ -200,7 +200,7 @@ func TestTimezoneChangeRebuildsCalendarThenUsesNewProducerLocation(t *testing.T)
 		t.Fatalf("repository timezone=%q", got)
 	}
 	tokyo, _ := time.LoadLocation(updated.Timezone)
-	points, err := repository.DailyHistory(ctx, time.Date(2026, 1, 1, 0, 0, 0, 0, tokyo).UTC(), time.Date(2026, 1, 2, 0, 0, 0, 0, tokyo).UTC(), tokyo)
+	points, err := repository.DailyHistory(ctx, time.Date(2026, 1, 1, 0, 0, 0, 0, tokyo).UTC(), time.Date(2026, 1, 2, 0, 0, 0, 0, tokyo).UTC())
 	if err != nil {
 		t.Fatal(err)
 	}

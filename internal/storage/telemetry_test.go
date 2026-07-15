@@ -412,7 +412,7 @@ func TestSummaryHistoryUsesPersistedRowsAndLocalDSTBoundaries(t *testing.T) {
 	if _, err := db.sql.ExecContext(ctx, `DELETE FROM telemetry_minute`); err != nil {
 		t.Fatal(err)
 	}
-	points, err := repo.DailyHistory(ctx, start.UTC(), end.UTC(), loc)
+	points, err := repo.DailyHistory(ctx, start.UTC(), end.UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestMonthlyHistoryConvertsLocalBucketStartToUTC(t *testing.T) {
 	if _, err := db.sql.ExecContext(ctx, `INSERT INTO monthly_summary(month,energy_wh,peak_power_w,productive_minutes,coverage_pct) VALUES('2026-02',5000,900,100,90)`); err != nil {
 		t.Fatal(err)
 	}
-	points, err := repo.MonthlyHistory(ctx, start.UTC(), end.UTC(), loc)
+	points, err := repo.MonthlyHistory(ctx, start.UTC(), end.UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,6 +512,48 @@ func TestRepositoryApplyLocationSerializesCalendarWorkAndRollsBackLocation(t *te
 	}
 	if repo.Location() != time.UTC {
 		t.Fatalf("location changed after rollback: %s", repo.Location())
+	}
+}
+
+func TestDailyHistoryUsesSameCalendarSnapshotAsRebuiltRows(t *testing.T) {
+	ctx := context.Background()
+	db, repo := telemetryRepository(t, time.UTC)
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := make(chan struct{})
+	release := make(chan struct{})
+	applyDone := make(chan error, 1)
+	go func() {
+		applyDone <- repo.ApplyLocation(tokyo, func() error {
+			if _, err := db.sql.ExecContext(ctx, `INSERT INTO daily_summary(day,energy_wh,peak_power_w,productive_minutes,coverage_pct) VALUES('2026-01-02',100,50,10,90)`); err != nil {
+				return err
+			}
+			close(rebuilt)
+			<-release
+			return nil
+		})
+	}()
+	<-rebuilt
+	queryDone := make(chan []domain.AggregatePoint, 1)
+	go func() {
+		points, _ := repo.DailyHistory(ctx, time.Date(2026, 1, 1, 15, 0, 0, 0, time.UTC), time.Date(2026, 1, 2, 15, 0, 0, 0, time.UTC))
+		queryDone <- points
+	}()
+	select {
+	case <-queryDone:
+		t.Fatal("summary query escaped calendar snapshot lock")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-applyDone; err != nil {
+		t.Fatal(err)
+	}
+	points := <-queryDone
+	wantStart := time.Date(2026, 1, 2, 0, 0, 0, 0, tokyo).UTC()
+	if len(points) != 1 || !points[0].At.Equal(wantStart) {
+		t.Fatalf("points=%#v want start=%v", points, wantStart)
 	}
 }
 

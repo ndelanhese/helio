@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ndelanhese/helio/internal/config"
 	"github.com/ndelanhese/helio/internal/domain"
@@ -144,6 +146,69 @@ func TestApplySettingsRebuildsDailyAndMonthlyFromPermanentHourlyRows(t *testing.
 	}
 	if day != "2026-01-01" || month != "2026-01" || dayEnergy != 100 || monthEnergy != 100 || productive != 17 {
 		t.Fatalf("rebuilt day=%q/%v month=%q/%v", day, dayEnergy, month, monthEnergy)
+	}
+}
+
+func TestCalendarRebuildSplitsHourlyIntervalsAtFractionalZoneMidnight(t *testing.T) {
+	for _, tc := range []struct {
+		zone                    string
+		hour                    time.Time
+		firstStart, secondStart time.Time
+		firstMinutes            float64
+		firstProductive         int
+	}{
+		{"Australia/Adelaide", time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC), time.Date(2025, 12, 31, 13, 30, 0, 0, time.UTC), time.Date(2026, 1, 1, 13, 30, 0, 0, time.UTC), 30, 16},
+		{"Asia/Kathmandu", time.Date(2026, 1, 1, 17, 30, 0, 0, time.UTC), time.Date(2025, 12, 31, 18, 15, 0, 0, time.UTC), time.Date(2026, 1, 1, 18, 15, 0, 0, time.UTC), 45, 23},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := Open(ctx, filepath.Join(t.TempDir(), "settings.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			old := validStoredSettings()
+			if err := db.PutSettings(ctx, old); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.sql.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('actor','Admin','x','2026-01-01T00:00:00Z')`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.sql.ExecContext(ctx, `INSERT INTO hourly_summary(hour,energy_wh,peak_power_w,coverage_pct,productive_minutes) VALUES(?,?,?,?,?)`, tc.hour.Format(time.RFC3339), 120, 500, 80, 31); err != nil {
+				t.Fatal(err)
+			}
+			updated := old
+			updated.Timezone = tc.zone
+			if err := db.ApplySettings(ctx, updated, "actor", false); err != nil {
+				t.Fatal(err)
+			}
+			loc, _ := time.LoadLocation(tc.zone)
+			repo := NewTelemetryRepository(db, loc)
+			points, err := repo.DailyHistory(ctx, tc.firstStart, tc.secondStart.AddDate(0, 0, 1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(points) != 2 {
+				t.Fatalf("daily points=%#v", points)
+			}
+			minutes := []float64{tc.firstMinutes, 60 - tc.firstMinutes}
+			for index, wantStart := range []time.Time{tc.firstStart, tc.secondStart} {
+				point := points[index]
+				if !point.At.Equal(wantStart) || math.Abs(point.EnergyWh-(120*minutes[index]/60)) > 1e-9 || math.Abs(point.CoveragePct-(80*minutes[index]/1440.0)) > 1e-9 || point.PeakPowerW != 500 {
+					t.Fatalf("point[%d]=%#v", index, point)
+				}
+			}
+			if points[0].ProductiveMinutes != tc.firstProductive || points[1].ProductiveMinutes != 31-tc.firstProductive {
+				t.Fatalf("productive split=%d,%d", points[0].ProductiveMinutes, points[1].ProductiveMinutes)
+			}
+			months, err := repo.MonthlyHistory(ctx, tc.firstStart, tc.secondStart.AddDate(0, 1, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(months) != 1 || !months[0].At.Equal(tc.firstStart) || months[0].EnergyWh != 120 || months[0].ProductiveMinutes != 31 || months[0].PeakPowerW != 500 || math.Abs(months[0].CoveragePct-(80*60/(2*1440.0))) > 1e-9 {
+				t.Fatalf("monthly points=%#v", months)
+			}
+		})
 	}
 }
 

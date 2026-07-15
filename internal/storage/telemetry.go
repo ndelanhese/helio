@@ -69,7 +69,9 @@ func (r *TelemetryRepository) operationLocation() (*time.Location, func()) {
 	return location, r.locationMu.RUnlock
 }
 
-func (r *TelemetryRepository) HourlyHistory(ctx context.Context, from, to time.Time, _ *time.Location) ([]domain.AggregatePoint, error) {
+func (r *TelemetryRepository) HourlyHistory(ctx context.Context, from, to time.Time) ([]domain.AggregatePoint, error) {
+	_, releaseLocation := r.operationLocation()
+	defer releaseLocation()
 	rows, err := r.db.sql.QueryContext(ctx, `SELECT hour, energy_wh, peak_power_w, coverage_pct, productive_minutes FROM hourly_summary
 		WHERE unixepoch(hour) >= unixepoch(?) AND unixepoch(hour) < unixepoch(?) ORDER BY unixepoch(hour) LIMIT ?`,
 		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), maximumSummaryRows+1)
@@ -97,10 +99,9 @@ func (r *TelemetryRepository) HourlyHistory(ctx context.Context, from, to time.T
 	return boundedSummary(points)
 }
 
-func (r *TelemetryRepository) DailyHistory(ctx context.Context, from, to time.Time, location *time.Location) ([]domain.AggregatePoint, error) {
-	if location == nil {
-		location = time.UTC
-	}
+func (r *TelemetryRepository) DailyHistory(ctx context.Context, from, to time.Time) ([]domain.AggregatePoint, error) {
+	location, releaseLocation := r.operationLocation()
+	defer releaseLocation()
 	rows, err := r.db.sql.QueryContext(ctx, `SELECT day, energy_wh, peak_power_w, coverage_pct, productive_minutes FROM daily_summary
 		WHERE day >= ? AND day <= ? ORDER BY day LIMIT ?`, from.In(location).Format("2006-01-02"), to.In(location).Format("2006-01-02"), maximumSummaryRows+1)
 	if err != nil {
@@ -129,10 +130,9 @@ func (r *TelemetryRepository) DailyHistory(ctx context.Context, from, to time.Ti
 	return boundedSummary(points)
 }
 
-func (r *TelemetryRepository) MonthlyHistory(ctx context.Context, from, to time.Time, location *time.Location) ([]domain.AggregatePoint, error) {
-	if location == nil {
-		location = time.UTC
-	}
+func (r *TelemetryRepository) MonthlyHistory(ctx context.Context, from, to time.Time) ([]domain.AggregatePoint, error) {
+	location, releaseLocation := r.operationLocation()
+	defer releaseLocation()
 	rows, err := r.db.sql.QueryContext(ctx, `SELECT month, energy_wh, peak_power_w, coverage_pct, productive_minutes FROM monthly_summary
 		WHERE month >= ? AND month <= ? ORDER BY month LIMIT ?`, from.In(location).Format("2006-01"), to.In(location).Format("2006-01"), maximumSummaryRows+1)
 	if err != nil {

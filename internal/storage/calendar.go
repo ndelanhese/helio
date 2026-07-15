@@ -15,6 +15,13 @@ type calendarSummary struct {
 	minutes                              float64
 }
 
+type calendarSegment struct {
+	dayKey     string
+	duration   time.Duration
+	productive int
+	remainder  int64
+}
+
 // rebuildCalendarSummaries reassigns every permanent hourly bucket to the new
 // local calendar. The caller owns the transaction containing settings/audit.
 func rebuildCalendarSummaries(ctx context.Context, tx *sql.Tx, location *time.Location) error {
@@ -36,21 +43,26 @@ func rebuildCalendarSummaries(ctx context.Context, tx *sql.Tx, location *time.Lo
 			rows.Close()
 			return fmt.Errorf("parse calendar rebuild hour: %w", err)
 		}
-		dayKey := at.In(location).Format("2006-01-02")
-		summary := days[dayKey]
-		if summary == nil {
-			start, err := time.ParseInLocation("2006-01-02", dayKey, location)
-			if err != nil {
-				rows.Close()
-				return fmt.Errorf("parse calendar rebuild day: %w", err)
+		segments := splitCalendarHour(at, location, productive)
+		for _, segment := range segments {
+			summary := days[segment.dayKey]
+			if summary == nil {
+				start, err := time.ParseInLocation("2006-01-02", segment.dayKey, location)
+				if err != nil {
+					rows.Close()
+					return fmt.Errorf("parse calendar rebuild day: %w", err)
+				}
+				summary = &calendarSummary{minutes: start.AddDate(0, 0, 1).Sub(start).Minutes()}
+				days[segment.dayKey] = summary
 			}
-			summary = &calendarSummary{minutes: start.AddDate(0, 0, 1).Sub(start).Minutes()}
-			days[dayKey] = summary
+			fraction := float64(segment.duration) / float64(time.Hour)
+			summary.energyWh += energy * fraction
+			// The hourly schema has no peak timestamp, so conservatively expose
+			// its peak in every overlapped local day.
+			summary.peakPowerW = math.Max(summary.peakPowerW, peak)
+			summary.coverageWeight += coverage * segment.duration.Minutes()
+			summary.productiveMinutes += segment.productive
 		}
-		summary.energyWh += energy
-		summary.peakPowerW = math.Max(summary.peakPowerW, peak)
-		summary.coverageWeight += coverage * 60
-		summary.productiveMinutes += productive
 	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close calendar rebuild hours: %w", err)
@@ -99,6 +111,39 @@ func rebuildCalendarSummaries(ctx context.Context, tx *sql.Tx, location *time.Lo
 		}
 	}
 	return nil
+}
+
+func splitCalendarHour(at time.Time, location *time.Location, productive int) []calendarSegment {
+	end := at.Add(time.Hour)
+	segments := make([]calendarSegment, 0, 2)
+	for cursor := at; cursor.Before(end); {
+		local := cursor.In(location)
+		dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
+		nextDay := dayStart.AddDate(0, 0, 1)
+		segmentEnd := end
+		if nextDay.Before(segmentEnd) {
+			segmentEnd = nextDay
+		}
+		duration := segmentEnd.Sub(cursor)
+		numerator := int64(productive) * int64(duration)
+		segments = append(segments, calendarSegment{dayKey: local.Format("2006-01-02"), duration: duration,
+			productive: int(numerator / int64(time.Hour)), remainder: numerator % int64(time.Hour)})
+		cursor = segmentEnd
+	}
+	allocated := 0
+	for _, segment := range segments {
+		allocated += segment.productive
+	}
+	remaining := productive - allocated
+	order := make([]int, len(segments))
+	for index := range order {
+		order[index] = index
+	}
+	sort.SliceStable(order, func(left, right int) bool { return segments[order[left]].remainder > segments[order[right]].remainder })
+	for index := 0; index < remaining; index++ {
+		segments[order[index%len(order)]].productive++
+	}
+	return segments
 }
 
 func sortedCalendarKeys(values map[string]*calendarSummary) []string {

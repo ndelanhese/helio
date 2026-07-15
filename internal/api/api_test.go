@@ -267,6 +267,32 @@ func TestBackupPreparationFailureIsStructuredBeforeHeaders(t *testing.T) {
 	}
 }
 
+type settingsReadFailStore struct{ *storage.DB }
+
+func (settingsReadFailStore) GetSettings(context.Context, ...bool) (domain.Settings, error) {
+	return domain.Settings{}, errors.New("settings read should not be needed")
+}
+
+func TestSummaryHistoryUsesRepositoryCalendarSnapshotWithoutSeparateSettingsRead(t *testing.T) {
+	f := newFixture(t)
+	cookie, _ := bootstrap(t, f)
+	base := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	for minute := range 2 {
+		if err := f.repo.SaveMinute(context.Background(), domain.TelemetrySnapshot{ObservedAt: base.Add(time.Duration(minute) * time.Minute), ACPowerW: 60}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.repo.AggregateHour(context.Background(), base, base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	handler := api.New(api.Dependencies{Auth: auth.NewManager(f.db), Store: settingsReadFailStore{f.db}, History: f.repo, Hub: f.hub})
+	target := "/api/v1/history?from=" + base.Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339) + "&resolution=hour"
+	rec := request(t, handler, http.MethodGet, target, "", cookie, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("summary history: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestComponentHealthIncludesExplicitWeatherState(t *testing.T) {
 	f := newFixture(t)
 	rec := request(t, f.handler, http.MethodGet, "/health/components", "", nil, "")
