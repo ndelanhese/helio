@@ -80,14 +80,24 @@ export interface LiveState {
   stale: boolean
 }
 
-export interface HistoryPoint {
-  timestamp: string
-  watts: number | null
+export interface MinuteHistoryPointDTO {
+  at: string
+  powerW: number
+}
+
+export interface AggregateHistoryPointDTO {
+  at: string
+  coveragePct: number
+  energyWh: number
+  peakPowerW: number
+  productiveMinutes?: number
 }
 
 export interface HistoryResponse {
-  [field: string]: unknown
-  points: HistoryPoint[]
+  from: string
+  points: Array<MinuteHistoryPointDTO | AggregateHistoryPointDTO>
+  resolution: 'minute' | 'hour' | 'day' | 'month'
+  to: string
 }
 
 export type LiveEvent =

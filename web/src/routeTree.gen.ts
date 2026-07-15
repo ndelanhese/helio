@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as BootstrapRouteImport } from './routes/bootstrap'
 import { Route as IndexRouteImport } from './routes/index'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BootstrapRoute = BootstrapRouteImport.update({
@@ -32,30 +38,34 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/bootstrap': typeof BootstrapRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/bootstrap': typeof BootstrapRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/bootstrap': typeof BootstrapRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/bootstrap' | '/login'
+  fullPaths: '/' | '/bootstrap' | '/history' | '/login'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/bootstrap' | '/login'
-  id: '__root__' | '/' | '/bootstrap' | '/login'
+  to: '/' | '/bootstrap' | '/history' | '/login'
+  id: '__root__' | '/' | '/bootstrap' | '/history' | '/login'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BootstrapRoute: typeof BootstrapRoute
+  HistoryRoute: typeof HistoryRoute
   LoginRoute: typeof LoginRoute
 }
 
@@ -66,6 +76,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/bootstrap': {
@@ -88,6 +105,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BootstrapRoute: BootstrapRoute,
+  HistoryRoute: HistoryRoute,
   LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport

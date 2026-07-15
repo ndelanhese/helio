@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  plugins: [tanstackRouter(), react()],
+  plugins: [tanstackRouter({ autoCodeSplitting: true }), react()],
   build: {
     outDir: '../internal/webui/dist',
     emptyOutDir: true,
