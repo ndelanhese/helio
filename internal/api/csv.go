@@ -17,6 +17,8 @@ type csvHistoryStore interface {
 	HistorySnapshots(context.Context, time.Time, time.Time) ([]domain.TelemetrySnapshot, error)
 }
 
+const HistoryCSVHeader = "timestamp,power_w,energy_today_wh,status"
+
 func (a *API) csv(w http.ResponseWriter, r *http.Request) {
 	window, _, err := parseRange(r, false)
 	if err != nil {
@@ -45,7 +47,7 @@ func (a *API) csv(w http.ResponseWriter, r *http.Request) {
 	stagedPath := staged.Name()
 	defer func() { _ = staged.Close(); _ = os.Remove(stagedPath) }()
 	writer := csv.NewWriter(staged)
-	_ = writer.Write([]string{"at", "power_w", "energy_today_wh", "status"})
+	_ = writer.Write([]string{"timestamp", "power_w", "energy_today_wh", "status"})
 	for _, snapshot := range snapshots {
 		_ = writer.Write([]string{snapshot.ObservedAt.UTC().Format(time.RFC3339), strconv.FormatFloat(snapshot.ACPowerW, 'f', -1, 64), strconv.FormatFloat(snapshot.EnergyTodayWh, 'f', -1, 64), snapshot.Status})
 	}

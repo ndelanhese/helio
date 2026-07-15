@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ndelanhese/helio/internal/api"
 	"github.com/ndelanhese/helio/internal/config"
 	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/webui"
@@ -436,7 +437,7 @@ func (s *fixtureServer) historyCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="helio-history.csv"`)
-	_, _ = w.Write([]byte("at,power_w,energy_today_wh,status\n2026-07-14T12:00:00Z,2070,12340,normal\n"))
+	_, _ = w.Write([]byte(api.HistoryCSVHeader + "\n2026-07-14T12:00:00Z,2070,12340,normal\n"))
 }
 
 func (s *fixtureServer) insights(w http.ResponseWriter, _ *http.Request) {

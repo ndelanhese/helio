@@ -19,7 +19,7 @@ test('history exposes a gap and exports the exact selected range by keyboard', a
   const exported = exportURL.searchParams
   expect(exported.get('from')).toBe(selected.get('from'))
   expect(exported.get('to')).toBe(selected.get('to'))
-  expect(await readFile(await download.path(), 'utf8')).toBe('at,power_w,energy_today_wh,status\n2026-07-14T12:00:00Z,2070,12340,normal\n')
+  expect(await readFile(await download.path(), 'utf8')).toBe('timestamp,power_w,energy_today_wh,status\n2026-07-14T12:00:00Z,2070,12340,normal\n')
 })
 
 test('@screenshot History gap desktop', async ({ page, setScenario }, testInfo) => {
