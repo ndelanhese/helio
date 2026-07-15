@@ -13,10 +13,11 @@ import (
 )
 
 type fakeClock struct {
-	mu        sync.Mutex
-	now       time.Time
-	waits     []*fakeWait
-	requested []time.Duration
+	mu         sync.Mutex
+	now        time.Time
+	waits      []*fakeWait
+	requested  []time.Duration
+	registered chan struct{}
 }
 
 type fakeWait struct {
@@ -25,7 +26,9 @@ type fakeWait struct {
 	fired bool
 }
 
-func newFakeClock(now time.Time) *fakeClock { return &fakeClock{now: now} }
+func newFakeClock(now time.Time) *fakeClock {
+	return &fakeClock{now: now, registered: make(chan struct{}, 1)}
+}
 
 func (c *fakeClock) Now() time.Time {
 	c.mu.Lock()
@@ -44,6 +47,10 @@ func (c *fakeClock) After(delay time.Duration) <-chan time.Time {
 	}
 	c.waits = append(c.waits, wait)
 	c.requested = append(c.requested, delay)
+	select {
+	case c.registered <- struct{}{}:
+	default:
+	}
 	return ch
 }
 
@@ -64,6 +71,30 @@ func (c *fakeClock) delays() []time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]time.Duration(nil), c.requested...)
+}
+
+func (c *fakeClock) waitForRequest(t *testing.T, delay time.Duration, minimum int) {
+	t.Helper()
+	watchdog := time.NewTimer(10 * time.Second)
+	defer watchdog.Stop()
+	for {
+		c.mu.Lock()
+		count := 0
+		for _, requested := range c.requested {
+			if requested == delay {
+				count++
+			}
+		}
+		c.mu.Unlock()
+		if count >= minimum {
+			return
+		}
+		select {
+		case <-c.registered:
+		case <-watchdog.C:
+			t.Fatalf("clock never registered %s timer %d time(s)", delay, minimum)
+		}
+	}
 }
 
 type readResult struct {
@@ -321,10 +352,13 @@ func TestCollectorStaleTransitionDoesNotMovePendingRetryDeadline(t *testing.T) {
 	eventually(t, func() bool { return reader.count() == 1 })
 
 	for call, delay := range []time.Duration{10 * time.Second, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second} {
+		clock.waitForRequest(t, delay, 1)
 		clock.Advance(delay)
 		eventually(t, func() bool { return reader.count() == call+2 })
 	}
 	// The next 16-second retry was scheduled at t+25, hence is due at t+41.
+	clock.waitForRequest(t, 16*time.Second, 1)
+	clock.waitForRequest(t, 30*time.Second, 1)
 	clock.Advance(5 * time.Second)
 	eventually(t, func() bool { return collector.Latest().Stale })
 	clock.Advance(10*time.Second + 999*time.Millisecond)

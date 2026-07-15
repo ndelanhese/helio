@@ -32,9 +32,12 @@ MAX_TOTAL_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_MEMBERS = 5000
 MAX_MEMBER_BYTES = 25 * 1024 * 1024
 MAX_EXPANDED_BYTES = 100 * 1024 * 1024
+MAX_LOCAL_OUTPUT_FILES = 100
+MAX_LOCAL_OUTPUT_BYTES = 100 * 1024 * 1024
 
 CORE_MEMBER = re.compile(r"^(?:trace|[0-9]+-trace)\.(?:trace|network)$|^(?:[0-9]+-)?stack\.stacks$")
 RESOURCE_MEMBER = re.compile(r"^resources/[A-Za-z0-9][A-Za-z0-9._@-]{0,255}$")
+PLAYWRIGHT_SCREENSHOT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,240}-(?:actual|expected|diff)\.png$")
 FORBIDDEN_NAME = re.compile(r"(?:^|[/._-])(?:env|auth|cookie|credential|database|session|storage[-_]?state)(?:[/._-]|$)", re.I)
 FORBIDDEN_SUFFIXES = (
     ".zip", ".tar", ".tgz", ".gz", ".bz2", ".xz", ".7z", ".rar",
@@ -67,6 +70,8 @@ if root.is_symlink() or not root.is_dir():
 
 archives = []
 total_archive_bytes = 0
+local_output_files = 0
+local_output_bytes = 0
 for current, directories, files in os.walk(root, followlinks=False):
     for directory in directories:
         if (Path(current) / directory).is_symlink():
@@ -92,6 +97,24 @@ for current, directories, files in os.walk(root, followlinks=False):
             if any(not isinstance(test_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,200}", test_id) for test_id in failed_tests):
                 reject("invalid Playwright last-run metadata test identifier")
             continue
+        if path.parent != root and PLAYWRIGHT_SCREENSHOT.fullmatch(filename):
+            size = path.stat().st_size
+            local_output_files += 1
+            local_output_bytes += size
+            if size > 25 * 1024 * 1024 or path.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+                reject("invalid Playwright screenshot output")
+            continue
+        if path.parent != root and filename == "error-context.md":
+            size = path.stat().st_size
+            local_output_files += 1
+            local_output_bytes += size
+            if size > 1024 * 1024:
+                reject("Playwright error context exceeds size bound")
+            try:
+                path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                reject(f"invalid Playwright error context: {error}")
+            continue
         if filename != "trace.zip":
             reject(f"outer file is not an allowlisted trace.zip: {path.relative_to(root)}")
         size = path.stat().st_size
@@ -99,6 +122,9 @@ for current, directories, files in os.walk(root, followlinks=False):
             reject("trace archive exceeds compressed size bound")
         total_archive_bytes += size
         archives.append(path)
+
+if local_output_files > MAX_LOCAL_OUTPUT_FILES or local_output_bytes > MAX_LOCAL_OUTPUT_BYTES:
+    reject("Playwright local output count or size exceeds bounds")
 
 if len(archives) > MAX_ARCHIVES or total_archive_bytes > MAX_TOTAL_ARCHIVE_BYTES:
     reject("trace archive count or total size exceeds bounds")

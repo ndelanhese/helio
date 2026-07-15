@@ -129,6 +129,29 @@ class ValidateE2EArtifactsTest < Minitest::Test
     end
   end
 
+  def test_known_playwright_screenshot_outputs_do_not_block_a_valid_trace
+    Dir.mktmpdir("helio-e2e-artifacts") do |directory|
+      create_trace(directory, { "trace.trace" => "safe" })
+      result = File.join(directory, "browser-test")
+      png = "\x89PNG\r\n\x1a\n" + "synthetic pixels"
+      %w[actual expected diff].each { |kind| File.binwrite(File.join(result, "history-gap-#{kind}.png"), png) }
+      File.write(File.join(result, "error-context.md"), "# Synthetic Playwright context\n")
+      stdout, stderr, status = run_validator(directory)
+      assert status.success?, stderr
+      assert_includes stdout, "has_artifacts=true"
+    end
+  end
+
+  def test_malformed_known_playwright_screenshot_is_rejected
+    Dir.mktmpdir("helio-e2e-artifacts") do |directory|
+      create_trace(directory, { "trace.trace" => "safe" })
+      File.binwrite(File.join(directory, "browser-test", "history-gap-expected.png"), "not a PNG")
+      _stdout, stderr, status = run_validator(directory)
+      refute status.success?
+      assert_match(/invalid|screenshot|PNG/i, stderr)
+    end
+  end
+
   def test_playwright_last_run_metadata_is_validated_but_not_treated_as_an_artifact
     Dir.mktmpdir("helio-e2e-artifacts") do |directory|
       File.write(File.join(directory, ".last-run.json"), JSON.generate({ status: "failed", failedTests: ["0123456789abcdef-test-id"] }))

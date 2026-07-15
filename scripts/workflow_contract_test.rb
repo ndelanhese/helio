@@ -90,10 +90,16 @@ class WorkflowContractTest < Minitest::Test
 
   def test_e2e_artifacts_require_failure_and_a_successful_privacy_scan
     ci = workflow("ci.yml")
+    job = ci.fetch("jobs").fetch("e2e")
     e2e_steps = steps(ci, "e2e")
     commands = run_commands(ci, "e2e")
 
-    assert_includes commands, "playwright install --with-deps chromium webkit"
+    assert_equal(
+      "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48",
+      job.fetch("container").fetch("image")
+    )
+    assert_equal "--ipc=host", job.fetch("container").fetch("options")
+    refute_includes commands, "playwright install"
     assert_includes commands, "make test-e2e"
     scan_index = e2e_steps.index { |step| step["id"] == "artifact-validator" }
     upload_index = e2e_steps.index { |step| step["uses"]&.start_with?("actions/upload-artifact@") }
