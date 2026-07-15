@@ -1,0 +1,23 @@
+services:
+  helio:
+    image: ${HELIO_IMAGE:-helio:local}
+    build:
+      context: .
+    ports:
+      - "${HELIO_BIND_IP:-127.0.0.1}:8080:8080"
+    env_file:
+      - path: deploy/helio.env
+        required: false
+    volumes:
+      - helio-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  helio-data:

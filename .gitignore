@@ -1,9 +1,12 @@
 .DS_Store
+.env
+.env.hardware
+deploy/helio.env
 .superpowers/
+.worktrees/
 work/
 outputs/
 data/
 *.db
 *.db-shm
 *.db-wal
-

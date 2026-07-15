@@ -1,0 +1,18 @@
+{
+  "blocks": [
+    {"start": 1028, "values": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+    {"start": 1156, "values": [6001, 150, 0, 0, 0, 0, 0, 0, 0, 2300]},
+    {"start": 1412, "values": [3000, 500, 150, 0, 0, 0]},
+    {"start": 1668, "values": [25, 0, 1000, 0]}
+  ],
+  "expected": {
+    "status": "normal",
+    "acPowerW": 1500,
+    "energyTodayWh": 250,
+    "energyLifetimeWh": 100000,
+    "pv1": {"active": true, "voltageV": 300, "currentA": 5, "powerW": 1500},
+    "pv2": {"active": false, "voltageV": 0, "currentA": 0, "powerW": 0},
+    "grid": {"voltageV": 230, "frequencyHz": 60.01},
+    "faultCodes": []
+  }
+}

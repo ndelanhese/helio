@@ -2,20 +2,27 @@
 
 ## Supported versions
 
-Helio has no released version yet. Security fixes will target the default branch until a release policy is published.
+Helio is currently pre-release. Security fixes target the latest commit on the default branch; older commits and unpublished development builds are not supported. This table will list supported release lines when the first stable image is published.
+
+| Version | Supported |
+| --- | --- |
+| Default branch | Yes |
+| Older commits and forks | No |
 
 ## Reporting a vulnerability
 
 Do not open a public issue for suspected vulnerabilities.
 
-Use GitHub private vulnerability reporting from the repository Security tab. Include:
+Use GitHub private vulnerability reporting from the repository Security tab. This creates a private maintainer discussion without exposing the report in a public issue. Include:
 
 - affected component and revision
 - reproduction steps or proof of concept
 - expected impact
 - suggested mitigation, if known
 
-Do not include real logger serials, passwords, tokens, public IP addresses, or unredacted energy data. Maintainers will acknowledge a valid report as soon as practical and coordinate disclosure after a fix is available.
+Do not include passwords, session cookies, CSRF values, tokens, public IP addresses, real logger serials or other hardware identifiers, private protocol captures, database files, precise locations, or unredacted energy data. Use synthetic fixtures and remove metadata from attachments.
+
+Maintainers aim to acknowledge reports within three business days and provide a status update within ten business days. Triage and remediation timing depends on severity and reproducibility. Maintainers will coordinate disclosure with the reporter after a fix or mitigation is available and will credit reporters who want attribution.
 
 ## Security boundaries
 
@@ -24,4 +31,4 @@ Do not include real logger serials, passwords, tokens, public IP addresses, or u
 - MVP must not write inverter registers.
 - Treat inverter writes as safety-sensitive operations.
 - Secrets belong in Docker secrets or protected environment injection, not source control.
-
+- Local-first does not mean zero egress: weather analysis sends configured coordinates and bounded dates to Open-Meteo over HTTPS about hourly. It does not send inverter telemetry, credentials, logger identity, or the SQLite database. Operators requiring zero external traffic must block container egress and accept unavailable weather-dependent analysis; see [Privacy](docs/privacy.md).
