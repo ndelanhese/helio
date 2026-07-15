@@ -122,6 +122,16 @@ func TestWeatherCacheAtSixHoursIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestWeatherCacheFutureDatedRowDoesNotBypassProvider(t *testing.T) {
+	now := time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC)
+	repo := &fakeRepository{cache: Cache{Hours: []Hour{cachedHour(now, now.Add(24*time.Hour))}}}
+	provider := &fakeProvider{err: errors.New("offline")}
+	result := NewService(repo, provider, func() time.Time { return now }).Get(context.Background(), Request{Start: now, End: now.Add(time.Hour)})
+	if provider.calls != 1 || result.Available || result.Stale || result.ErrorClass != ErrorClassProvider {
+		t.Fatalf("future cache bypassed provider: result=%+v calls=%d", result, provider.calls)
+	}
+}
+
 func TestWeatherCacheExpiredRowsAreRemovedFromStaleFallback(t *testing.T) {
 	now := time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC)
 	repo := &fakeRepository{cache: Cache{Hours: []Hour{

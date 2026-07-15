@@ -62,7 +62,9 @@ func (s *Service) Get(ctx context.Context, request Request) Result {
 		if err != nil {
 			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
 		}
-		return resultFromHours(persisted.Hours, !allYoungerThan(persisted.Hours, now, freshFor), "")
+		completedAt := s.now().UTC()
+		stale := !completeCoverage(persisted.Hours, request.Start, request.End) || !allYoungerThan(persisted.Hours, completedAt, freshFor)
+		return resultFromHours(persisted.Hours, stale, "")
 	}
 
 	usable := make([]Hour, 0, len(cache.Hours))

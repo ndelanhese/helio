@@ -97,8 +97,8 @@ func TestWeatherCacheConcurrentOlderRefreshReturnsNewerDatabaseWinner(t *testing
 	oldProvider := &controlledWeatherProvider{hours: []weather.Hour{{Time: hour, CloudCoverPct: 90, IrradianceWM2: 50}}, started: make(chan struct{}), release: make(chan struct{})}
 	newProvider := &controlledWeatherProvider{hours: []weather.Hour{{Time: hour, CloudCoverPct: 10, IrradianceWM2: 700}}, started: make(chan struct{}), release: make(chan struct{})}
 	close(newProvider.release)
-	oldService := weather.NewService(repo, oldProvider, func() time.Time { return hour.Add(10 * time.Minute) })
-	newService := weather.NewService(repo, newProvider, func() time.Time { return hour.Add(20 * time.Minute) })
+	oldService := weather.NewService(repo, oldProvider, sequenceClock(hour.Add(10*time.Minute), hour.Add(21*time.Minute)))
+	newService := weather.NewService(repo, newProvider, sequenceClock(hour.Add(20*time.Minute), hour.Add(21*time.Minute)))
 	oldResult := make(chan weather.Result, 1)
 	go func() { oldResult <- oldService.Get(ctx, request) }()
 	<-oldProvider.started
@@ -109,5 +109,23 @@ func TestWeatherCacheConcurrentOlderRefreshReturnsNewerDatabaseWinner(t *testing
 		if len(result.Hours) != 1 || result.Hours[0].CloudCoverPct != 10 || result.Hours[0].IrradianceWM2 != 700 || !result.FetchedAt.Equal(hour.Add(20*time.Minute)) {
 			t.Fatalf("%s result did not use database winner: %+v", name, result)
 		}
+		if result.Stale || result.ErrorClass != "" {
+			t.Fatalf("%s coherent winner marked degraded: %+v", name, result)
+		}
+	}
+}
+
+func sequenceClock(times ...time.Time) func() time.Time {
+	var mu sync.Mutex
+	index := 0
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		if index >= len(times) {
+			return times[len(times)-1]
+		}
+		value := times[index]
+		index++
+		return value
 	}
 }
