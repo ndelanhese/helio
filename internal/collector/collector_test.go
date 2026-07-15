@@ -243,10 +243,10 @@ func TestCollectorRetriesWithCappedBackoffAndResetsAfterSuccess(t *testing.T) {
 	go func() { done <- collector.Run(ctx) }()
 
 	for call, delay := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second} {
-		eventually(t, func() bool { return reader.count() == call+1 })
+		clock.waitForRequest(t, delay, 1)
 		clock.Advance(delay)
+		eventually(t, func() bool { return reader.count() == call+2 })
 	}
-	eventually(t, func() bool { return reader.count() == 4 })
 	eventually(t, func() bool {
 		delays := clock.delays()
 		return slices.Contains(delays, 10*time.Second)

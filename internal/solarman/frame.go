@@ -17,8 +17,8 @@ var (
 const (
 	v5Start              = 0xA5
 	v5End                = 0x15
-	v5RequestControl     = 0x1045
-	v5ResponseControl    = 0x1015
+	v5RequestControl     = 0x4510
+	v5ResponseControl    = 0x1510
 	v5HeaderSize         = 11
 	v5TrailerSize        = 2
 	requestMetadataSize  = 15
@@ -66,7 +66,7 @@ func ParseReadResponse(frame []byte, expectedSerial uint32, expectedSequence uin
 	if additiveChecksum(frame[1:len(frame)-2]) != frame[len(frame)-2] {
 		return nil, fmt.Errorf("%w: frame checksum mismatch", ErrMalformedFrame)
 	}
-	if binary.LittleEndian.Uint16(frame[5:7]) != expectedSequence ||
+	if frame[5] != byte(expectedSequence) ||
 		binary.LittleEndian.Uint32(frame[7:11]) != expectedSerial {
 		return nil, ErrIdentityMismatch
 	}
