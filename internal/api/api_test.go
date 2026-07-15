@@ -73,7 +73,7 @@ func request(t *testing.T, h http.Handler, method, target, body string, cookie *
 	return rec
 }
 
-const settingsJSON = `"settings":{"loggerHost":"192.168.1.50","loggerSerial":"123","panelCount":7,"panelWattage":610,"activeMPPT":[1],"latitude":-23.5,"longitude":-46.6,"timezone":"America/Sao_Paulo","currency":"BRL","tariffMinorPerKWh":95}`
+const settingsJSON = `"settings":{"loggerHost":"10.0.0.50","loggerSerial":"123","panelCount":7,"panelWattage":610,"activeMPPT":[1],"latitude":-23.5,"longitude":-46.6,"timezone":"America/Sao_Paulo","currency":"BRL","tariffMinorPerKWh":95}`
 
 func bootstrap(t *testing.T, f fixture) (*http.Cookie, string) {
 	t.Helper()
@@ -161,7 +161,7 @@ func TestAuthTopologyCSRFAndRequestMetadata(t *testing.T) {
 func TestSettingsPresenceRangeHistoryCSVAndBackup(t *testing.T) {
 	f := newFixture(t)
 	cookie, csrf := bootstrap(t, f)
-	zero := request(t, f.handler, http.MethodPut, "/api/v1/settings", `{"loggerHost":"192.168.1.50","loggerSerial":"123","loggerPort":0,"panelCount":7,"panelWattage":610,"activeMPPT":[1],"latitude":-23.5,"longitude":-46.6,"timezone":"America/Sao_Paulo","currency":"BRL"}`, cookie, csrf)
+	zero := request(t, f.handler, http.MethodPut, "/api/v1/settings", `{"loggerHost":"10.0.0.50","loggerSerial":"123","loggerPort":0,"panelCount":7,"panelWattage":610,"activeMPPT":[1],"latitude":-23.5,"longitude":-46.6,"timezone":"America/Sao_Paulo","currency":"BRL"}`, cookie, csrf)
 	if zero.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("explicit zero: %d %s", zero.Code, zero.Body.String())
 	}
@@ -345,14 +345,14 @@ func TestComponentHealthExposesAnalysisPipelineState(t *testing.T) {
 func TestComponentHealthExposesSanitizedFailureClassAndTimestamp(t *testing.T) {
 	at := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	handler := api.New(api.Dependencies{Latest: func() collector.State {
-		return collector.State{LastError: "dial 192.168.1.50 raw-frame", LastErrorAt: at, ErrorClass: "communication"}
+		return collector.State{LastError: "dial 10.0.0.50 raw-frame", LastErrorAt: at, ErrorClass: "communication"}
 	}})
 	rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `"loggerErrorClass":"communication"`) || !strings.Contains(body, `"loggerUpdatedAt":"2026-07-14T12:00:00Z"`) {
 		t.Fatalf("health=%d %s", rec.Code, body)
 	}
-	if strings.Contains(body, "192.168.1.50") || strings.Contains(body, "raw-frame") {
+	if strings.Contains(body, "10.0.0.50") || strings.Contains(body, "raw-frame") {
 		t.Fatalf("health leaked private error: %s", body)
 	}
 }

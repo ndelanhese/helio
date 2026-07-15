@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome lint . --error-on-warnings",
     "test": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "../scripts/run-e2e.sh",
     "test:e2e:update-snapshots": "playwright test --project=desktop-chromium --grep @screenshot --update-snapshots"
   },
   "dependencies": {

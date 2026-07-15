@@ -16,8 +16,13 @@ container-down:
 
 docs-check:
 	ruby scripts/pwa_contract_test.rb
+	ruby scripts/icon_repro_test.rb
 	ruby scripts/docs_contract_test.rb
+	ruby scripts/check_doc_links_test.rb
 	ruby scripts/check-doc-links.rb
+	ruby scripts/e2e_runner_test.rb
+	ruby scripts/privacy_check_test.rb
+	ruby scripts/privacy-check.rb
 
 test:
 	go test ./...

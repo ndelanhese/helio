@@ -7,8 +7,8 @@ export const TEST_LOGGER_HOST = '192.0.2.44'
 export const TEST_LOGGER_SERIAL = '42424242'
 export const TEST_CONTROL_TOKEN = 'HELIO-E2E-CONTROL-v1'
 export const TEST_SETTINGS = {
-  activeMPPT: [1], currency: 'BRL', latitude: -23.55, loggerHost: TEST_LOGGER_HOST, loggerPort: 8899,
-  loggerSerial: TEST_LOGGER_SERIAL, longitude: -46.63, modbusSlave: 1, panelCount: 7, panelWattage: 610,
+  activeMPPT: [1], currency: 'BRL', latitude: -10, loggerHost: TEST_LOGGER_HOST, loggerPort: 8899,
+  loggerSerial: TEST_LOGGER_SERIAL, longitude: -20, modbusSlave: 1, panelCount: 7, panelWattage: 610,
   retentionDays: 730, tariffMinorPerKWh: 95, timezone: 'America/Sao_Paulo',
 }
 export const FIXED_NOW = new Date('2026-07-14T15:43:00.000Z')

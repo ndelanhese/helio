@@ -36,6 +36,12 @@ test('first bootstrap completes every accessible step by keyboard only', async (
     await expect(page.getByRole('heading', { name: heading })).toBeVisible()
     await expectAccessible(page)
     await startKeyboard(page)
+    if (heading === 'Local e tarifa') {
+      await tabUntil(page, page.getByLabel('Latitude'), testInfo.project.name)
+      await page.keyboard.type('-10')
+      await tabUntil(page, page.getByLabel('Longitude'), testInfo.project.name)
+      await page.keyboard.type('-20')
+    }
     await tabUntil(page, page.getByRole('button', { name: button }), testInfo.project.name)
     await page.keyboard.press('Enter')
   }

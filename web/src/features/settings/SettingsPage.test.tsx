@@ -12,7 +12,7 @@ import { SettingsPage } from './SettingsPage'
 
 const settings = {
   activeMPPT: [1], currency: 'BRL', installedPowerW: 4_270, latitude: -23.5, longitude: -46.6,
-  loggerHost: '192.168.1.50', loggerPort: 8899, loggerSerial: '123', modbusSlave: 1,
+  loggerHost: '192.0.2.50', loggerPort: 8899, loggerSerial: '123', modbusSlave: 1,
   panelCount: 7, panelWattage: 610, retentionDays: 730, tariffMinorPerKWh: 95,
   timezone: 'America/Sao_Paulo',
 }
@@ -95,16 +95,16 @@ describe('SettingsPage', () => {
     await userEvent.clear(wattage)
     await userEvent.type(wattage, '620')
 
-    current = { ...settings, loggerHost: '192.168.1.60', loggerSerial: '456' }
+    current = { ...settings, loggerHost: '192.0.2.60', loggerSerial: '456' }
     act(() => {
       client.setQueryData(queryKeys.settings, current)
     })
 
     expect(wattage).toHaveValue(620)
-    expect(screen.getByRole('textbox', { name: 'Endereço IP do logger' })).toHaveValue('192.168.1.50')
+    expect(screen.getByRole('textbox', { name: 'Endereço IP do logger' })).toHaveValue('192.0.2.50')
     const conflict = await screen.findByRole('status', { name: 'Configurações alteradas no servidor' })
     await userEvent.click(within(conflict).getByRole('button', { name: 'Carregar alterações do servidor' }))
-    expect(screen.getByRole('textbox', { name: 'Endereço IP do logger' })).toHaveValue('192.168.1.60')
+    expect(screen.getByRole('textbox', { name: 'Endereço IP do logger' })).toHaveValue('192.0.2.60')
     expect(wattage).toHaveValue(610)
     expect(screen.queryByLabelText('Senha atual')).not.toBeInTheDocument()
   })
@@ -312,7 +312,7 @@ describe('SettingsPage', () => {
       http.put('/api/v1/settings', async ({ request }) => {
         updateBody = await request.json()
         updateCSRF = request.headers.get('X-CSRF-Token')
-        current = { ...settings, loggerHost: '192.168.1.60' }
+        current = { ...settings, loggerHost: '192.0.2.60' }
         return HttpResponse.json(current)
       }),
       http.get('/api/v1/settings', () => HttpResponse.json(current)),
@@ -320,7 +320,7 @@ describe('SettingsPage', () => {
     renderApp(<SettingsPage />)
     const host = await screen.findByRole('textbox', { name: 'Endereço IP do logger' })
     await userEvent.clear(host)
-    await userEvent.type(host, '192.168.1.60')
+    await userEvent.type(host, '192.0.2.60')
     expect(screen.getByText(/confirme a senha atual/i)).toBeVisible()
     await userEvent.click(screen.getByRole('button', { name: 'Salvar configurações' }))
     expect(screen.getByText('Informe a senha atual para alterar a identidade do logger.')).toBeVisible()
@@ -376,7 +376,7 @@ describe('SettingsPage', () => {
     renderApp(<SettingsPage />)
     const host = await screen.findByRole('textbox', { name: 'Endereço IP do logger' })
     await userEvent.clear(host)
-    await userEvent.type(host, '192.168.1.60')
+    await userEvent.type(host, '192.0.2.60')
     await userEvent.type(screen.getByLabelText('Senha atual'), 'não persistir esta senha')
     await userEvent.click(screen.getByRole('button', { name: 'Salvar configurações' }))
     expect(await screen.findByText('A senha atual não foi confirmada. Tente novamente.')).toBeVisible()

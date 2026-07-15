@@ -5,7 +5,7 @@ import { settingsToValues, validateSettings } from './settings-model'
 
 const settings = {
   activeMPPT: [1], currency: 'BRL', installedPowerW: 4_270, latitude: -23.5, longitude: -46.6,
-  loggerHost: '192.168.1.50', loggerPort: 8899, loggerSerial: '123', modbusSlave: 1,
+  loggerHost: '192.0.2.50', loggerPort: 8899, loggerSerial: '123', modbusSlave: 1,
   panelCount: 7, panelWattage: 610, retentionDays: 730, tariffMinorPerKWh: 95,
   timezone: 'America/Sao_Paulo',
 }

@@ -645,7 +645,7 @@ func TestDeterministic35DayAcceptance(t *testing.T) {
 func Test35DayCrossStackReplayPersistsAndServesHonestAnalysis(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
-	settings := domain.Settings{LoggerHost: "192.168.1.50", LoggerSerial: "123", LoggerPort: 8899, ModbusSlave: 1,
+	settings := domain.Settings{LoggerHost: "10.0.0.50", LoggerSerial: "123", LoggerPort: 8899, ModbusSlave: 1,
 		PanelCount: 7, PanelWattage: 610, ActiveMPPT: []int{1}, Latitude: -23.5, Longitude: -46.6,
 		Timezone: "UTC", Currency: "BRL", TariffMinorPerKWh: 95, RetentionDays: 730}
 	repository := &replayRepository{profiles: map[string]replayProfile{}}

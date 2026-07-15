@@ -117,7 +117,7 @@ func baseSnapshot(power float64, observedAt string) *liveSnapshot {
 }
 
 func defaultSettings() domain.Settings {
-	return domain.Settings{ActiveMPPT: []int{1}, Currency: "BRL", Latitude: -23.55, Longitude: -46.63,
+	return domain.Settings{ActiveMPPT: []int{1}, Currency: "BRL", Latitude: -10, Longitude: -20,
 		LoggerHost: "192.0.2.44", LoggerPort: 8899, LoggerSerial: "42424242", ModbusSlave: 1,
 		PanelCount: 7, PanelWattage: 610, InstalledPowerW: 4270, RetentionDays: 730,
 		TariffMinorPerKWh: 95, Timezone: "America/Sao_Paulo"}

@@ -11,7 +11,7 @@ import (
 
 func validSettings() domain.Settings {
 	return domain.Settings{
-		LoggerHost: "192.168.1.50", LoggerPort: 8899, LoggerSerial: "1234567890",
+		LoggerHost: "10.0.0.50", LoggerPort: 8899, LoggerSerial: "1234567890",
 		ModbusSlave: 1, PanelCount: 7, PanelWattage: 610, ActiveMPPT: []int{1},
 		Latitude: -23.5505, Longitude: -46.6333, Timezone: "America/Sao_Paulo",
 		Currency: "BRL", TariffMinorPerKWh: 95, RetentionDays: 730,
@@ -65,7 +65,7 @@ func TestSettingsConnectionDefaults(t *testing.T) {
 }
 
 func TestSettingsHostPolicy(t *testing.T) {
-	for _, host := range []string{"https://192.168.1.50", "logger.local", "8.8.8.8"} {
+	for _, host := range []string{"https://10.0.0.50", "logger.local", "8.8.8.8"} {
 		t.Run(host, func(t *testing.T) {
 			in := validSettings()
 			in.LoggerHost = host
@@ -135,7 +135,7 @@ func TestSettingsValidationMatrix(t *testing.T) {
 }
 
 func TestDecodeSettingsJSONRejectsUnknownAndDerivedFields(t *testing.T) {
-	base := `{"loggerHost":"192.168.1.50","loggerSerial":"123","loggerPort":8899,"modbusSlave":1,"panelCount":7,"panelWattage":610,"activeMPPT":[1],"latitude":-23.5,"longitude":-46.6,"timezone":"America/Sao_Paulo","currency":"BRL","tariffMinorPerKWh":95,"retentionDays":730}`
+	base := `{"loggerHost":"10.0.0.50","loggerSerial":"123","loggerPort":8899,"modbusSlave":1,"panelCount":7,"panelWattage":610,"activeMPPT":[1],"latitude":-23.5,"longitude":-46.6,"timezone":"America/Sao_Paulo","currency":"BRL","tariffMinorPerKWh":95,"retentionDays":730}`
 	for _, extra := range []string{`,"unknown":1`, `,"installedPowerW":1`} {
 		payload := strings.TrimSuffix(base, "}") + extra + "}"
 		if _, err := config.DecodeSettingsJSON(strings.NewReader(payload)); err == nil {

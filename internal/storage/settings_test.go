@@ -22,7 +22,7 @@ func TestSettingsVersionedRoundTripAndUpsert(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	in := domain.Settings{LoggerHost: "192.168.1.50", LoggerSerial: "000123", LoggerPort: 8899, ModbusSlave: 1, PanelCount: 7, PanelWattage: 610, ActiveMPPT: []int{2, 1}, Latitude: -23.5505, Longitude: -46.6333, Timezone: "America/Sao_Paulo", Currency: "BRL", TariffMinorPerKWh: 95, RetentionDays: 730}
+	in := domain.Settings{LoggerHost: "10.0.0.50", LoggerSerial: "000123", LoggerPort: 8899, ModbusSlave: 1, PanelCount: 7, PanelWattage: 610, ActiveMPPT: []int{2, 1}, Latitude: -23.5505, Longitude: -46.6333, Timezone: "America/Sao_Paulo", Currency: "BRL", TariffMinorPerKWh: 95, RetentionDays: 730}
 	want, err := config.ValidateSettings(in)
 	if err != nil {
 		t.Fatal(err)
@@ -306,5 +306,5 @@ func TestSettingsGetRejectsNoncanonicalStoredValues(t *testing.T) {
 }
 
 func validStoredSettings() domain.Settings {
-	return domain.Settings{LoggerHost: "192.168.1.50", LoggerSerial: "123", LoggerPort: 8899, ModbusSlave: 1, PanelCount: 7, PanelWattage: 610, ActiveMPPT: []int{1}, InstalledPowerW: 4270, Latitude: -23.5505, Longitude: -46.6333, Timezone: "America/Sao_Paulo", Currency: "BRL", TariffMinorPerKWh: 95, RetentionDays: 730}
+	return domain.Settings{LoggerHost: "10.0.0.50", LoggerSerial: "123", LoggerPort: 8899, ModbusSlave: 1, PanelCount: 7, PanelWattage: 610, ActiveMPPT: []int{1}, InstalledPowerW: 4270, Latitude: -23.5505, Longitude: -46.6333, Timezone: "America/Sao_Paulo", Currency: "BRL", TariffMinorPerKWh: 95, RetentionDays: 730}
 }

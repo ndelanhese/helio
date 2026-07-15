@@ -680,7 +680,7 @@ func (*discardCollectorStore) SaveMinute(context.Context, domain.TelemetrySnapsh
 func (*discardCollectorStore) SaveEvent(context.Context, time.Time, string, any) error    { return nil }
 
 func testSettings(panels int) domain.Settings {
-	return domain.Settings{LoggerHost: "192.168.1.50", LoggerSerial: "123", LoggerPort: 8899, ModbusSlave: 1,
+	return domain.Settings{LoggerHost: "10.0.0.50", LoggerSerial: "123", LoggerPort: 8899, ModbusSlave: 1,
 		PanelCount: panels, PanelWattage: 610, ActiveMPPT: []int{1}, Latitude: -23.5, Longitude: -46.6,
 		Timezone: "America/Sao_Paulo", Currency: "BRL", TariffMinorPerKWh: 95, RetentionDays: 730}
 }

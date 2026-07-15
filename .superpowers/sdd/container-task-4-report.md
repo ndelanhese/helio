@@ -1,52 +1,50 @@
 # Container Task 4 Report
 
-Status: DONE, with the local E2E host issue reported below.
+Status: DONE. All local release-candidate gates pass.
 
 ## Scope delivered
 
-- Added exact installable metadata for `Helio`: `/` start URL, standalone display, light theme/background `#F3F1E8`, light/dark HTML theme-color media tags, any-purpose 192/512 icons, and a maskable 512 icon.
+- Added exact installable metadata for Helio: `/` start URL, standalone display, light theme/background `#F3F1E8`, light/dark HTML theme-color media tags, any-purpose 192/512 icons, and a maskable 512 icon.
 - Deliberately added no service worker, offline cache, or offline telemetry claim.
-- Created a restrained Helio solar mark as editable JSON design tokens plus generated SVG and deterministic RGBA PNGs. The mark keeps its sun/horizon geometry within the maskable safe zone. A Ruby generator and byte-for-byte check make all committed assets reproducible without design binaries or network tools.
-- Added executable PWA, documentation-contract, internal-link, and anchor checks under `make docs-check`.
-- Added install, operations, hardware-test, API, and RC-checklist documentation; updated README, CHANGELOG, and SUPPORT to describe source RC availability without claiming a tag or GHCR artifact exists.
-- Corrected runtime UI IP examples to the reserved documentation address `192.0.2.1`; the copy states that it is an unusable format example and still directs operators to their private reserved logger address.
+- Created a restrained Helio solar mark as editable JSON design tokens plus generated SVG and deterministic RGBA PNGs. `--check` compares decoded dimensions and pixels, so harmless PNG recompression passes while a one-pixel mutation fails.
+- Added executable PWA, icon, documentation-contract, traversal-safe Markdown link/anchor, E2E-runner, and structural privacy checks under `make docs-check`.
+- Added install, operations, hardware-test, API, and RC-checklist documentation; updated README, CHANGELOG, and SUPPORT without claiming a tag or published GHCR artifact exists.
+- Replaced authored runtime network examples with RFC 5737 TEST-NET values. The production onboarding model now starts with blank required latitude/longitude fields and uses the browser's resolved IANA timezone at runtime.
 - Corrected `make smoke` so the mandated `HELIO_IMAGE=helio:rc make smoke` invocation builds and tests that image instead of silently substituting `helio:local`.
+- Added one deterministic E2E entrypoint: one single-worker desktop Chromium run, followed by three small single-worker mobile WebKit groups, with zero retries and fail-fast behavior. Every spec runs exactly once per project; desktop-only screenshot cases are skipped intentionally on mobile.
 
-## RED evidence
+## Regression evidence
 
-1. `make docs-check` failed because the manifest, icons, theme metadata, generator, and operator documents did not exist.
-2. The smoke image-variable contract failed because `Makefile` ignored `HELIO_IMAGE` and forced `helio:local`.
-3. The runtime-example privacy contract failed because authored onboarding/settings copy embedded `192.168.1.50` in the production bundle.
-
-## GREEN evidence
-
-- `make docs-check` — PWA: 4 tests/25 assertions; docs: 3 tests/42 assertions; links and anchors: 18 Markdown files; all passed.
-- Focused IP-example/onboarding/settings regression — 69 tests passed; typecheck and lint passed; production build passed.
-- Icon visual review — 512px mark is crisp, intentionally solar, uses the shipped light canvas/ink/sun tokens, and retains generous mask-safe spacing.
+- Link-checker tests reject decoded traversal outside the selected root, ignore links and headings inside variable-length backtick/tilde fences, and validate duplicate GitHub-style anchors: 4 tests / 14 assertions.
+- Icon reproduction accepts different zlib encodings of identical pixels and rejects a changed pixel: 1 test / 4 assertions.
+- E2E runner coverage proves one desktop invocation, sequential mobile groups, every spec exactly once, `--retries=0`, and `--max-failures=1`: 1 test / 14 assertions.
+- Privacy tests reject RFC 1918 addresses, precise baked coordinates, unclassified serial values, a Node runtime, database/trace/capture artifacts, and sensitive strings inside an exported image archive: 2 tests / 12 assertions.
+- The stale visual baselines were traced to the committed global `scrollbar-gutter` change in `5b5c6c5`; only History had been refreshed then. Regenerating the three other affected baselines records that existing global layout behavior, and the screenshot update suite passes 4/4.
 
 ## Release-candidate gate
 
+- `make docs-check` — PWA 4/25; icon 1/4; docs 4/48; dynamic links 4/14; 21 Markdown files; runner 1/14; privacy 2/12; all passed.
 - `go test -race ./...` — 426 tests passed across 21 packages.
 - `go vet ./...` — passed.
-- `npm --prefix web ci` — 274 packages installed, zero reported vulnerabilities.
-- `npm --prefix web test -- --run` — 167 tests passed across 23 files.
+- `npm --prefix web ci` — 274 packages installed; zero reported vulnerabilities.
+- `npm --prefix web test -- --run` — 168 tests passed across 23 files.
 - `npm --prefix web run typecheck` — passed.
 - `npm --prefix web run lint` — passed with zero warnings.
 - `npm --prefix web run build` — passed; manifest and icons copied into `internal/webui/dist`.
-- `npm --prefix web run test:e2e` — attempted, but reproduced the known local host issue: no Playwright reporter/server output for 90 seconds. The run was interrupted and is reported as inconclusive, not passed. CI remains the authoritative browser gate.
-- `docker build -t helio:rc .` — passed.
+- `npm --prefix web run test:e2e` — passed exactly: desktop Chromium 71/71; mobile WebKit groups 61/61, 3 passed + 3 intentional screenshot skips, and 3 passed + 1 intentional screenshot skip. Total: 138 passed, 4 intentional skips, no retries.
+- `docker build -t helio:rc .` — passed; local candidate digest `sha256:a1e9781676b28508879aef2690127d83ff54dfdeb75622a950666efd4eaf4182`.
 - `HELIO_IMAGE=helio:rc make smoke` — passed cleanup, bootstrap, persistence after recreation, session/settings/history durability, degraded-logger readiness, and backup integrity checks.
-- Image inspection — local candidate is `linux/arm64`; user is `65532:65532`; healthcheck and entrypoint are the dedicated static binaries; exported filesystem has no Node/npm/npx path; Compose resolves read-only root, dropped capabilities, `no-new-privileges`, and bounded `/tmp` tmpfs.
-- Exported-image strings scan after the privacy fix found no `192.168.*`, `node_modules`, or Node binary path. Documentation/PWA checks reject private-IP examples in authored runtime copy and docs.
-- The broad requested repository grep still lists established synthetic private-network addresses in unit/E2E fixtures and the `loggerSerial` schema field name. They are test values/identifiers, not deployment data. No real logger IP or serial was introduced. The runtime image contains the schema field name because it is part of the public settings API; it contains no serial value.
+- `ruby scripts/privacy-check.rb --image helio:rc` — passed; 15 explicitly synthetic serial fixtures classified and 1,446 exported filesystem entries scanned. No RFC 1918 address, precise default coordinate, Node runtime, database, trace, HAR, or raw capture was found.
+- Image inspection — `linux/arm64`; user `65532:65532`; static `/usr/local/bin/helio` entrypoint; static `/usr/local/bin/helio-healthcheck` healthcheck. Compose resolves a read-only root, all capabilities dropped, `no-new-privileges`, localhost-only default publishing, `/data` volume, and bounded `/tmp` tmpfs.
+- Broad repository audit — no remaining common private-/16 fixture. Required private-host policy fixtures use the conspicuously synthetic `10.0.0.50`; scientific solar/weather tests retain São Paulo coordinates because location is their test subject. `loggerSerial` occurrences are API/schema identifiers or classified synthetic values, never deployment data.
 - `git diff --check` — passed.
 
 ## Documentation coverage
 
-- macOS Docker Desktop, Linux, Raspberry Pi, amd64/arm64, LAN/VLAN logger routing, bootstrap, explicit private `HELIO_BIND_IP` phone access, no public port, HTTPS/Tailscale caveats.
+- macOS Docker Desktop, Linux, Raspberry Pi, amd64/arm64, LAN/VLAN logger routing, bootstrap, explicit private `HELIO_BIND_IP` phone access, no public port, and HTTPS/Tailscale caveats.
 - One-tag-at-a-time updates with release concurrency/queue caveat; future GHCR commands explicitly conditional on publication.
-- Exact health semantics, sanitized logs, IANA timezone behavior, default 730-day minute retention and indefinite aggregates, UID/GID 65532, backup/restore/rollback, uninstall preserve/delete choices.
+- Exact health semantics, sanitized logs, IANA timezone behavior, default 730-day minute retention and indefinite aggregates, UID/GID 65532, backup/restore/rollback, and uninstall preserve/delete choices.
 - Hardware probe is skip-by-default, explicit opt-in, owner-authorized, read-only, and privacy-redacted.
-- API endpoint inventory, Strict cookie/session lifetimes, CSRF/same-origin requirements, login rate, SSE framing/heartbeat/retry, CSV header, error envelope, and explicit absence of inverter/logger write endpoints.
+- API endpoint inventory, strict cookie/session lifetimes, CSRF/same-origin requirements, login rate, SSE framing/heartbeat/retry, CSV header, error envelope, and explicit absence of inverter/logger write endpoints.
 
 No tag, image push, GitHub Release, or external publication was performed.

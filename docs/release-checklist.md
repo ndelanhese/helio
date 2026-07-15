@@ -15,7 +15,8 @@ npm --prefix web run lint
 npm --prefix web run build
 npm --prefix web run test:e2e
 docker build -t helio:rc .
-HELIO_IMAGE=helio:rc IMAGE=helio:rc make smoke
+HELIO_IMAGE=helio:rc make smoke
+ruby scripts/privacy-check.rb --image helio:rc
 ```
 
 Inspect the image for runtime user `65532:65532`, read-only Compose root filesystem, amd64/arm64 release platforms, absence of Node, and only `/data` plus bounded `/tmp` writable. Scan source, docs, built UI, and image contents for private IPs, real serials, coordinates, credentials, cookies, traces, databases, and raw captures.

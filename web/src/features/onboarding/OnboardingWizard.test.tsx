@@ -19,7 +19,7 @@ async function reachLogger(user: ReturnType<typeof userEvent.setup>) {
 
 async function reachPanels(user: ReturnType<typeof userEvent.setup>) {
   await reachLogger(user)
-  await user.type(screen.getByLabelText('Endereço IP do logger'), '192.168.1.50')
+  await user.type(screen.getByLabelText('Endereço IP do logger'), '192.0.2.50')
   await user.type(screen.getByLabelText('Número de série do logger'), '123456789')
   await user.click(screen.getByRole('button', { name: 'Continuar para os painéis' }))
 }
@@ -27,6 +27,8 @@ async function reachPanels(user: ReturnType<typeof userEvent.setup>) {
 async function reachReview(user: ReturnType<typeof userEvent.setup>) {
   await reachPanels(user)
   await user.click(screen.getByRole('button', { name: 'Continuar para local e tarifa' }))
+  await user.type(screen.getByLabelText('Latitude'), '-10')
+  await user.type(screen.getByLabelText('Longitude'), '-20')
   await user.click(screen.getByRole('button', { name: 'Revisar configuração' }))
 }
 
@@ -125,10 +127,8 @@ describe('OnboardingWizard', () => {
 
     await reachPanels(user)
     await user.click(screen.getByRole('button', { name: 'Continuar para local e tarifa' }))
-    await user.clear(screen.getByLabelText('Latitude'))
-    await user.type(screen.getByLabelText('Latitude'), '-23.55')
-    await user.clear(screen.getByLabelText('Longitude'))
-    await user.type(screen.getByLabelText('Longitude'), '-46.63')
+    await user.type(screen.getByLabelText('Latitude'), '-10.5')
+    await user.type(screen.getByLabelText('Longitude'), '-20.25')
     await user.click(screen.getByRole('button', { name: 'Revisar configuração' }))
 
     const review = screen.getByRole('region', { name: 'Revisão da configuração' })
@@ -141,7 +141,7 @@ describe('OnboardingWizard', () => {
     expect(submitted).toMatchObject({
       username: 'Admin',
       settings: {
-        loggerHost: '192.168.1.50', loggerSerial: '123456789', loggerPort: 8899, modbusSlave: 1,
+        loggerHost: '192.0.2.50', loggerSerial: '123456789', loggerPort: 8899, modbusSlave: 1,
         panelCount: 7, panelWattage: 610, activeMPPT: [1], currency: 'BRL',
         tariffMinorPerKWh: 95, retentionDays: 730,
       },
@@ -161,6 +161,8 @@ describe('OnboardingWizard', () => {
     renderApp(<OnboardingWizard />)
     await reachPanels(user)
     await user.click(screen.getByRole('button', { name: 'Continuar para local e tarifa' }))
+    await user.type(screen.getByLabelText('Latitude'), '-10')
+    await user.type(screen.getByLabelText('Longitude'), '-20')
     await user.click(screen.getByRole('button', { name: 'Revisar configuração' }))
     await user.click(screen.getByRole('button', { name: 'Criar Helio' }))
 

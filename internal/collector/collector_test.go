@@ -240,7 +240,7 @@ func TestCollectorFailureMetadataIsClassifiedTimestampedAndClearedOnRecovery(t *
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	clock := newFakeClock(now)
 	collector := New(testConfig(clock), &fakeReader{}, &fakeStore{}, NewHub())
-	collector.recordError(errors.New("dial 192.168.1.50 secret-frame"))
+	collector.recordError(errors.New("dial 10.0.0.50 secret-frame"))
 	state := collector.Latest()
 	if state.ErrorClass != "communication" || !state.LastErrorAt.Equal(now) {
 		t.Fatalf("failure metadata=%+v", state)

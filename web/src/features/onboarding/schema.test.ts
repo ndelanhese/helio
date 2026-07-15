@@ -14,11 +14,20 @@ const valid: OnboardingValues = {
   username: 'Admin',
   password: 'senha segura 123',
   confirmPassword: 'senha segura 123',
-  loggerHost: '192.168.1.50',
+  loggerHost: '192.0.2.50',
   loggerSerial: '4294967295',
+  latitude: '-10',
+  longitude: '-20',
+  timezone: 'UTC',
 }
 
 describe('onboarding numeric validation', () => {
+  it('starts without location coordinates and requires explicit user input', () => {
+    expect(initialOnboardingValues.latitude).toBe('')
+    expect(initialOnboardingValues.longitude).toBe('')
+    expect(validateStep(3, initialOnboardingValues).latitude).toBeDefined()
+    expect(validateStep(3, initialOnboardingValues).longitude).toBeDefined()
+  })
   it.each([
     [1, 'loggerPort'], [1, 'modbusSlave'], [2, 'panelCount'], [2, 'panelWattage'], [3, 'retentionDays'],
   ] as const)('rejects empty and unsafe integer values for %s', (step, field) => {
@@ -67,13 +76,13 @@ describe('onboarding account and installation validation', () => {
     expect(validateStep(1, { ...valid, loggerSerial: '１２３' }).loggerSerial).toBeDefined()
   })
 
-  it.each(['...', '192.168..1', ' 192.168.1.1', '192.168.1.1 ', '+192.168.1.1', '192.168.001.1'])(
+  it.each(['...', '192.0..1', ' 192.0.2.1', '192.0.2.1 ', '+192.0.2.1', '192.0.002.1'])(
     'rejects ambiguous IPv4 text %s',
     (loggerHost) => expect(validateStep(1, { ...valid, loggerHost }).loggerHost).toBeDefined(),
   )
 
   it('accepts a strict private IPv4 address', () => {
-    expect(validateStep(1, { ...valid, loggerHost: '192.168.1.50' }).loggerHost).toBeUndefined()
+    expect(validateStep(1, { ...valid, loggerHost: '192.0.2.50' }).loggerHost).toBeUndefined()
   })
 
   it('validates real IANA timezones and ISO currencies', () => {

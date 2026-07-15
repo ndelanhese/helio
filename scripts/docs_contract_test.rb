@@ -44,4 +44,11 @@ class DocsContractTest < Minitest::Test
     makefile = read("Makefile")
     assert_includes makefile, "IMAGE ?= $(if $(HELIO_IMAGE),$(HELIO_IMAGE),helio:local)"
   end
+
+  def test_release_checklist_uses_the_exact_smoke_gate
+    checklist = read("docs/release-checklist.md")
+    assert_includes checklist, "HELIO_IMAGE=helio:rc make smoke"
+    assert_includes checklist, "ruby scripts/privacy-check.rb --image helio:rc"
+    refute_match(/(?:^|\s)IMAGE=helio:rc/, checklist)
+  end
 end

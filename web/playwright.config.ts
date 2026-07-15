@@ -26,7 +26,7 @@ export default defineConfig({
       use: { ...devices['iPhone 13'], viewport: { width: 375, height: 812 } },
     },
   ],
-  webServer: {
+  webServer: process.env.HELIO_E2E_EXTERNAL_SERVER === '1' ? undefined : {
     command: 'npm run build && go run ../internal/fakeapp',
     cwd: '.',
     reuseExistingServer: false,

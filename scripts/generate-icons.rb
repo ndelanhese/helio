@@ -70,10 +70,39 @@ outputs = {
   "icon-512.png" => png(512),
   "maskable-512.png" => png(512)
 }
-if ARGV == ["--check"]
-  stale = outputs.reject { |name, data| File.binread(File.join(ICON_DIR, name)) == data rescue false }.keys
-  abort "regenerate icons: #{stale.join(', ')}" unless stale.empty?
-  puts "icons: reproducible"
+def decoded_png(data)
+  raise "invalid PNG signature" unless data.start_with?("\x89PNG\r\n\x1a\n".b)
+  offset, width, height, depth, color, compressed = 8, nil, nil, nil, nil, +"".b
+  while offset < data.bytesize
+    length = data.byteslice(offset, 4).unpack1("N")
+    type = data.byteslice(offset + 4, 4)
+    body = data.byteslice(offset + 8, length)
+    width, height, depth, color = body.unpack("NNCC") if type == "IHDR"
+    compressed << body if type == "IDAT"
+    offset += length + 12
+  end
+  raise "PNG must be 8-bit RGBA" unless depth == 8 && color == 6
+  raw = Zlib::Inflate.inflate(compressed)
+  stride = width * 4
+  pixels = height.times.map do |row|
+    start = row * (stride + 1)
+    raise "unsupported PNG row filter" unless raw.getbyte(start).zero?
+    raw.byteslice(start + 1, stride)
+  end.join
+  [width, height, pixels]
+end
+
+if ARGV.first == "--check" || ARGV.first == "--check-dir"
+  check_dir = ARGV.first == "--check-dir" ? ARGV.fetch(1) : ICON_DIR
+  stale = outputs.reject do |name, expected|
+    actual = File.binread(File.join(check_dir, name)) rescue nil
+    next false unless actual
+    name.end_with?(".png") ? decoded_png(actual) == decoded_png(expected) : actual == expected
+  rescue StandardError
+    false
+  end.keys
+  abort "regenerate icons; pixel/source mismatch: #{stale.join(', ')}" unless stale.empty?
+  puts "icons: pixel-semantic reproduction verified"
 else
   Dir.mkdir(ICON_DIR) unless Dir.exist?(ICON_DIR)
   outputs.each { |name, data| File.binwrite(File.join(ICON_DIR, name), data) }

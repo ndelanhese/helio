@@ -23,22 +23,26 @@ export interface OnboardingValues {
 export type OnboardingField = keyof OnboardingValues
 export type FieldErrors = Partial<Record<OnboardingField | 'general', string>>
 
+function browserTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch { return 'UTC' }
+}
+
 export const initialOnboardingValues: OnboardingValues = {
   activeMPPT: [1],
   confirmPassword: '',
   currency: 'BRL',
-  latitude: '-23.55',
+  latitude: '',
   loggerHost: '',
   loggerPort: '8899',
   loggerSerial: '',
-  longitude: '-46.63',
+  longitude: '',
   modbusSlave: '1',
   panelCount: '7',
   panelWattage: '610',
   password: '',
   retentionDays: '730',
   tariff: '0,95',
-  timezone: 'America/Sao_Paulo',
+  timezone: browserTimezone(),
   username: '',
 }
 
