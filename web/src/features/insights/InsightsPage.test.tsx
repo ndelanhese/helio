@@ -32,6 +32,26 @@ describe('InsightsPage', () => {
     }} />)
     expect(screen.getByText(label)).toBeVisible()
   })
+
+  it('never compares a nonqualifying day against the learned reference', () => {
+    renderApp(<InsightCard insight={{
+      version: 'v1', day: '2026-07-14', actualWh: 2_000, expectedWh: 10_000, ratio: 0.2,
+      confidence: 'medium', qualifying: false,
+      evidence: [{ code: 'coverage', label: 'Cobertura da telemetria', value: 42, unit: 'percent' }],
+      observationWindow: { qualifyingDays: 10, minimumDays: 7 },
+      trends: {
+        peakPower: { direction: 'insufficient', current: 0, previous: 0, delta: 0, deltaPct: 0, coveragePct: 42, windowDays: 7 },
+        productiveMinutes: { direction: 'insufficient', current: 0, previous: 0, delta: 0, deltaPct: 0, coveragePct: 42, windowDays: 7 },
+      },
+      generatedEnergyValue: { minor: 190, currency: 'BRL', label: 'valor estimado da energia gerada', estimate: true },
+    }} />)
+
+    expect(screen.getByRole('heading', { name: 'Telemetria insuficiente para comparar' })).toBeVisible()
+    expect(screen.getByText(/Este dia não reuniu dados qualificáveis/i)).toBeVisible()
+    expect(screen.getByText('Confiança média')).toBeVisible()
+    expect(screen.getByText('Cobertura da telemetria')).toBeVisible()
+    expect(screen.queryByText(/Produção abaixo da referência aprendida|Produção dentro da faixa observada/)).not.toBeInTheDocument()
+  })
   it('explains low confidence, evidence, observation window, active alerts and recovery', async () => {
     server.use(
       http.get('/api/v1/settings', () => HttpResponse.json(settings)),
@@ -62,7 +82,7 @@ describe('InsightsPage', () => {
     )
     renderApp(<InsightsPage />)
 
-    expect(await screen.findByRole('heading', { name: 'Histórico ainda insuficiente' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Telemetria insuficiente para comparar' })).toBeVisible()
     expect(screen.getByText('Confiança baixa')).toBeVisible()
     expect(screen.getByText(/4 de 7 dias qualificáveis/)).toBeVisible()
     expect(screen.getByText(/Histórico qualificável/)).toBeVisible()

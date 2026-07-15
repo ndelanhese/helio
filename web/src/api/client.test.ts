@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiClient, ApiError, authMemory } from './client'
+import { ApiClient, ApiError, authMemory, configureUnauthorizedHandler } from './client'
 
 describe('ApiClient', () => {
   afterEach(() => {
     authMemory.clear()
+    configureUnauthorizedHandler(() => { authMemory.clear() })
     vi.unstubAllGlobals()
   })
 
@@ -52,5 +53,36 @@ describe('ApiClient', () => {
     await expect(new ApiClient().request('/live')).rejects.toEqual(
       new ApiError('invalid_response', 502, 'Resposta JSON inválida do servidor'),
     )
+  })
+
+  it('keeps an expected credential-confirmation 401 local', async () => {
+    const unauthorized = vi.fn()
+    configureUnauthorizedHandler(unauthorized)
+    authMemory.setCSRFToken('session-csrf')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'invalid_credentials', message: 'invalid' },
+    }), { status: 401, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(new ApiClient().request('/auth/login', {
+      body: { username: 'Admin', password: 'wrong' },
+      method: 'POST',
+      suppressUnauthorized: true,
+    })).rejects.toEqual(new ApiError('invalid_credentials', 401, 'invalid'))
+    expect(unauthorized).not.toHaveBeenCalled()
+    expect(authMemory.getCSRFToken()).toBe('session-csrf')
+  })
+
+  it('still applies the global unauthorized path to settings mutations and backup', async () => {
+    const unauthorized = vi.fn()
+    configureUnauthorizedHandler(unauthorized)
+    const response = () => new Response(JSON.stringify({ error: { code: 'unauthorized', message: 'expired' } }), {
+      status: 401, headers: { 'Content-Type': 'application/json' },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(response))
+    const client = new ApiClient()
+
+    await expect(client.request('/settings', { method: 'PUT', body: {} })).rejects.toBeInstanceOf(ApiError)
+    await expect(client.download('/data/backup')).rejects.toBeInstanceOf(ApiError)
+    expect(unauthorized).toHaveBeenCalledTimes(2)
   })
 })

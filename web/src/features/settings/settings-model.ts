@@ -1,4 +1,5 @@
 import type { Settings } from '../../api/types'
+import { HELIO_ISO_4217_SET } from '../onboarding/currencies'
 import { serverFieldError } from '../onboarding/schema'
 
 export interface SettingsValues {
@@ -73,7 +74,7 @@ export function validateSettings(values: SettingsValues): SettingsErrors {
   if (latitude === undefined || latitude < -90 || latitude > 90) errors.latitude = 'Informe uma latitude finita entre -90 e 90.'
   if (longitude === undefined || longitude < -180 || longitude > 180) errors.longitude = 'Informe uma longitude finita entre -180 e 180.'
   if (!validTimezone(values.timezone)) errors.timezone = 'Use um fuso IANA real, como America/Sao_Paulo.'
-  if (!/^[A-Z]{3}$/.test(values.currency.trim().toUpperCase())) errors.currency = 'Use um código de moeda com três letras.'
+  if (!HELIO_ISO_4217_SET.has(values.currency.trim().toUpperCase())) errors.currency = 'Use uma moeda aceita pelo Helio, como BRL.'
   if (tariffMinor(values.tariff) === undefined) errors.tariff = 'Use uma tarifa não negativa com no máximo duas casas decimais.'
   const retention = integer(values.retentionDays)
   if (retention === undefined || retention < 30 || retention > 3650) errors.retentionDays = 'Escolha um número inteiro entre 30 e 3650 dias.'
@@ -103,6 +104,14 @@ export function loggerIdentityChanged(values: SettingsValues, original: Settings
     || values.loggerSerial !== original.loggerSerial
     || integer(values.loggerPort) !== original.loggerPort
     || integer(values.modbusSlave) !== original.modbusSlave
+}
+
+export function sameSettings(left: Settings, right: Settings) {
+  return JSON.stringify(settingsToValues(left)) === JSON.stringify(settingsToValues(right))
+}
+
+export function sameSettingsValues(left: SettingsValues, right: SettingsValues) {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 export function settingsServerError(message: string, code: string): [keyof SettingsErrors, string] {

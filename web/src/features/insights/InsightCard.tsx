@@ -12,14 +12,18 @@ function formatEvidence(value: number, unit: string) {
 
 export function InsightCard({ insight }: { insight: InsightsResponse }) {
   const insufficient = insight.observationWindow.qualifyingDays < insight.observationWindow.minimumDays
-  const conclusion = insufficient
+  const nonqualifying = !insight.qualifying
+  const conclusion = nonqualifying
+    ? 'Telemetria insuficiente para comparar'
+    : insufficient
     ? 'Histórico ainda insuficiente'
     : insight.ratio < 0.65 ? 'Produção abaixo da referência aprendida' : 'Produção dentro da faixa observada'
   return (
     <section className="insight-card" aria-labelledby="insight-conclusion">
-      <div className="insight-health"><CircleGauge aria-hidden="true" /><span>{insufficient ? 'Aprendendo a referência' : 'Análise diária'}</span></div>
+      <div className="insight-health"><CircleGauge aria-hidden="true" /><span>{nonqualifying ? 'Dia não qualificável' : insufficient ? 'Aprendendo a referência' : 'Análise diária'}</span></div>
       <h2 id="insight-conclusion">{conclusion}</h2>
       <span className={`confidence-pill is-${insight.confidence}`}>{confidenceLabel[insight.confidence]}</span>
+      {nonqualifying ? <p className="insight-qualification-note">Este dia não reuniu dados qualificáveis para uma conclusão. A confiança e as evidências abaixo explicam a limitação da telemetria.</p> : null}
       <dl className="insight-measures">
         <div><dt>Energia medida</dt><dd>{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(insight.actualWh / 1000)} kWh</dd></div>
         <div><dt>Referência estimada</dt><dd>{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(insight.expectedWh / 1000)} kWh</dd></div>

@@ -37,18 +37,20 @@ export function configureUnauthorizedHandler(handler: UnauthorizedHandler) {
 
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
+  suppressUnauthorized?: boolean
 }
 
 export class ApiClient {
   constructor(private readonly baseUrl = API_BASE) {}
 
   async request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
-    const method = (options.method ?? 'GET').toUpperCase()
+    const { body, suppressUnauthorized = false, ...requestOptions } = options
+    const method = (requestOptions.method ?? 'GET').toUpperCase()
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      ...Object.fromEntries(new Headers(options.headers).entries()),
+      ...Object.fromEntries(new Headers(requestOptions.headers).entries()),
     }
-    const hasBody = options.body !== undefined
+    const hasBody = body !== undefined
     if (hasBody) headers['Content-Type'] = 'application/json'
 
     const currentToken = authMemory.getCSRFToken()
@@ -57,14 +59,14 @@ export class ApiClient {
     }
 
     const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      body: hasBody ? JSON.stringify(options.body) : undefined,
+      ...requestOptions,
+      body: hasBody ? JSON.stringify(body) : undefined,
       credentials: 'same-origin',
       headers,
       method,
     })
 
-    if (response.status === 401) handleUnauthorized()
+    if (response.status === 401 && !suppressUnauthorized) handleUnauthorized()
     if (response.status === 204) return undefined as T
 
     const contentType = response.headers.get('content-type') ?? ''

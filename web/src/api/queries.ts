@@ -66,6 +66,10 @@ export function login(payload: LoginPayload) {
   return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload })
 }
 
+export function confirmCurrentPassword(payload: LoginPayload) {
+  return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload, suppressUnauthorized: true })
+}
+
 export function createBootstrap(payload: BootstrapPayload) {
   return api.request<AuthCredentials>('/bootstrap', { method: 'POST', body: payload })
 }

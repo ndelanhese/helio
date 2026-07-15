@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -38,6 +38,109 @@ afterEach(() => {
 })
 
 describe('SettingsPage', () => {
+  it('adopts a refreshed server document while the form is pristine', async () => {
+    let current = settings
+    server.use(
+      http.get('/api/v1/settings', () => HttpResponse.json(current)),
+      http.get('/api/v1/auth/session', () => HttpResponse.json(authenticatedSession)),
+      http.get('/health/components', () => HttpResponse.json(health)),
+    )
+    const { client } = renderApp(<SettingsPage />)
+    expect(await screen.findByRole('spinbutton', { name: 'Potência por painel (W)' })).toHaveValue(610)
+
+    current = { ...settings, panelWattage: 650, installedPowerW: 4_550 }
+    act(() => {
+      client.setQueryData(queryKeys.settings, current)
+    })
+
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Potência por painel (W)' })).toHaveValue(650))
+    expect(screen.getByText('4,55 kWp')).toBeVisible()
+  })
+
+  it('retains dirty edits across a nonidentity refetch and lets the user keep them', async () => {
+    let current = settings
+    server.use(
+      http.get('/api/v1/settings', () => HttpResponse.json(current)),
+      http.get('/api/v1/auth/session', () => HttpResponse.json(authenticatedSession)),
+      http.get('/health/components', () => HttpResponse.json(health)),
+    )
+    const { client } = renderApp(<SettingsPage />)
+    const wattage = await screen.findByRole('spinbutton', { name: 'Potência por painel (W)' })
+    await userEvent.clear(wattage)
+    await userEvent.type(wattage, '620')
+
+    current = { ...settings, panelCount: 8, installedPowerW: 4_880 }
+    act(() => {
+      client.setQueryData(queryKeys.settings, current)
+    })
+
+    const conflict = await screen.findByRole('status', { name: 'Configurações alteradas no servidor' })
+    expect(within(conflict).getByText(/foram alteradas em outra sessão/i)).toBeVisible()
+    expect(wattage).toHaveValue(620)
+    expect(screen.getByRole('spinbutton', { name: 'Quantidade de painéis' })).toHaveValue(7)
+    await userEvent.click(within(conflict).getByRole('button', { name: 'Manter minhas edições' }))
+    expect(screen.queryByRole('status', { name: 'Configurações alteradas no servidor' })).not.toBeInTheDocument()
+    expect(wattage).toHaveValue(620)
+  })
+
+  it('does not remount dirty fields when logger identity changes on the server and can reload safely', async () => {
+    let current = settings
+    server.use(
+      http.get('/api/v1/settings', () => HttpResponse.json(current)),
+      http.get('/api/v1/auth/session', () => HttpResponse.json(authenticatedSession)),
+      http.get('/health/components', () => HttpResponse.json(health)),
+    )
+    const { client } = renderApp(<SettingsPage />)
+    const wattage = await screen.findByRole('spinbutton', { name: 'Potência por painel (W)' })
+    await userEvent.clear(wattage)
+    await userEvent.type(wattage, '620')
+
+    current = { ...settings, loggerHost: '192.168.1.60', loggerSerial: '456' }
+    act(() => {
+      client.setQueryData(queryKeys.settings, current)
+    })
+
+    expect(wattage).toHaveValue(620)
+    expect(screen.getByRole('textbox', { name: 'Endereço IP do logger' })).toHaveValue('192.168.1.50')
+    const conflict = await screen.findByRole('status', { name: 'Configurações alteradas no servidor' })
+    await userEvent.click(within(conflict).getByRole('button', { name: 'Carregar alterações do servidor' }))
+    expect(screen.getByRole('textbox', { name: 'Endereço IP do logger' })).toHaveValue('192.168.1.60')
+    expect(wattage).toHaveValue(610)
+    expect(screen.queryByLabelText('Senha atual')).not.toBeInTheDocument()
+  })
+
+  it('preserves the edit during a server refetch racing a successful save and rebases afterward', async () => {
+    let current = settings
+    let finishSave: ((value: typeof settings) => void) | undefined
+    server.use(
+      http.get('/api/v1/settings', () => HttpResponse.json(current)),
+      http.get('/api/v1/auth/session', () => HttpResponse.json(authenticatedSession)),
+      http.get('/health/components', () => HttpResponse.json(health)),
+      http.put('/api/v1/settings', async () => new Promise<Response>((resolve) => {
+        finishSave = (value) => resolve(HttpResponse.json(value))
+      })),
+    )
+    const { client } = renderApp(<SettingsPage />)
+    const wattage = await screen.findByRole('spinbutton', { name: 'Potência por painel (W)' })
+    await userEvent.clear(wattage)
+    await userEvent.type(wattage, '620')
+    await userEvent.click(screen.getByRole('button', { name: 'Salvar configurações' }))
+    expect(await screen.findByRole('button', { name: 'Salvando configurações…' })).toBeDisabled()
+
+    current = { ...settings, panelCount: 8, installedPowerW: 4_880 }
+    act(() => {
+      client.setQueryData(queryKeys.settings, current)
+    })
+    expect(wattage).toHaveValue(620)
+    expect(await screen.findByRole('status', { name: 'Configurações alteradas no servidor' })).toBeVisible()
+
+    current = { ...settings, panelWattage: 620, installedPowerW: 4_340 }
+    finishSave?.(current)
+    expect(await screen.findByText('Configurações salvas.')).toBeVisible()
+    expect(screen.queryByRole('status', { name: 'Configurações alteradas no servidor' })).not.toBeInTheDocument()
+    expect(wattage).toHaveValue(620)
+  })
+
   it('shows the initial loading state and retries a failed settings request without inventing values', async () => {
     let requests = 0
     server.use(
@@ -57,11 +160,16 @@ describe('SettingsPage', () => {
 
   it('edits the array configuration, derives capacity, and invalidates only dependent queries after CSRF save', async () => {
     useSettingsHandlers()
+    let current = settings
     const requests: Array<{ body: unknown; csrf: string | null }> = []
-    server.use(http.put('/api/v1/settings', async ({ request }) => {
-      requests.push({ body: await request.json(), csrf: request.headers.get('X-CSRF-Token') })
-      return HttpResponse.json({ ...settings, panelCount: 8, panelWattage: 500, activeMPPT: [1, 2], installedPowerW: 4_000 })
-    }))
+    server.use(
+      http.get('/api/v1/settings', () => HttpResponse.json(current)),
+      http.put('/api/v1/settings', async ({ request }) => {
+        requests.push({ body: await request.json(), csrf: request.headers.get('X-CSRF-Token') })
+        current = { ...settings, panelCount: 8, panelWattage: 500, activeMPPT: [1, 2], installedPowerW: 4_000 }
+        return HttpResponse.json(current)
+      }),
+    )
     const { client } = renderApp(<SettingsPage />)
     const invalidate = vi.spyOn(client, 'invalidateQueries')
 
@@ -129,8 +237,25 @@ describe('SettingsPage', () => {
     expect(retention).toHaveAccessibleDescription('Escolha um número inteiro entre 30 e 3650 dias.')
   })
 
+  it('submits retention changes with Enter from the data field', async () => {
+    useSettingsHandlers()
+    let requests = 0
+    server.use(http.put('/api/v1/settings', async ({ request }) => {
+      requests += 1
+      return HttpResponse.json({ ...settings, ...await request.json() as object })
+    }))
+    renderApp(<SettingsPage />)
+    const retention = await screen.findByRole('spinbutton', { name: 'Retenção do histórico (dias)' })
+    expect(retention).toHaveProperty('form', document.getElementById('settings-form'))
+    await userEvent.clear(retention)
+    await userEvent.type(retention, '900{Enter}')
+    expect(await screen.findByText('Configurações salvas.')).toBeVisible()
+    expect(requests).toBe(1)
+  })
+
   it('re-authenticates a logger identity change, rotates CSRF in memory, and never sends password to settings', async () => {
     useSettingsHandlers()
+    let current = settings
     let loginBody: unknown
     let updateBody: unknown
     let updateCSRF: string | null = null
@@ -142,8 +267,10 @@ describe('SettingsPage', () => {
       http.put('/api/v1/settings', async ({ request }) => {
         updateBody = await request.json()
         updateCSRF = request.headers.get('X-CSRF-Token')
-        return HttpResponse.json({ ...settings, loggerHost: '192.168.1.60' })
+        current = { ...settings, loggerHost: '192.168.1.60' }
+        return HttpResponse.json(current)
       }),
+      http.get('/api/v1/settings', () => HttpResponse.json(current)),
     )
     renderApp(<SettingsPage />)
     const host = await screen.findByRole('textbox', { name: 'Endereço IP do logger' })
@@ -197,7 +324,9 @@ describe('SettingsPage', () => {
 
   it('handles a 401 while confirming the current password without leaking the secret', async () => {
     useSettingsHandlers()
-    configureUnauthorizedHandler(() => { authMemory.clear() })
+    const unauthorized = vi.fn()
+    configureUnauthorizedHandler(unauthorized)
+    authMemory.setCSRFToken('session-csrf')
     server.use(http.post('/api/v1/auth/login', () => HttpResponse.json({ error: { code: 'invalid_credentials', message: 'invalid' } }, { status: 401 })))
     renderApp(<SettingsPage />)
     const host = await screen.findByRole('textbox', { name: 'Endereço IP do logger' })
@@ -208,6 +337,8 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('A senha atual não foi confirmada. Tente novamente.')).toBeVisible()
     expect(screen.getByLabelText('Senha atual')).toHaveValue('não persistir esta senha')
     expect(JSON.stringify(localStorage)).not.toContain('não persistir esta senha')
+    expect(unauthorized).not.toHaveBeenCalled()
+    expect(authMemory.getCSRFToken()).toBe(authenticatedSession.csrfToken)
   })
 
   it.each([

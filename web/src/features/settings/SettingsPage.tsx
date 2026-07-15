@@ -3,12 +3,12 @@ import { Check, MonitorCog } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { ApiError, authMemory } from '../../api/client'
-import { componentHealthQuery, login, queryKeys, sessionQuery, settingsQuery, updateSettings } from '../../api/queries'
+import { componentHealthQuery, confirmCurrentPassword, queryKeys, sessionQuery, settingsQuery, updateSettings } from '../../api/queries'
 import type { ComponentHealth, Settings } from '../../api/types'
 import { useTheme } from '../../app/theme'
 import { ConnectionPanel } from './ConnectionPanel'
 import { DataPanel } from './DataPanel'
-import { type SettingsErrors, type SettingsField, type SettingsValues, loggerIdentityChanged, settingsServerError, settingsToValues, validateSettings, valuesToSettings } from './settings-model'
+import { type SettingsErrors, type SettingsField, type SettingsValues, loggerIdentityChanged, sameSettings, sameSettingsValues, settingsServerError, settingsToValues, validateSettings, valuesToSettings } from './settings-model'
 import { SystemForm } from './SystemForm'
 
 const themeChoices = [
@@ -23,7 +23,7 @@ export function SettingsPage() {
   if (settings.isPending) return <section className="settings-state" aria-busy="true"><p>Carregando configurações locais…</p></section>
   if (settings.isError || !settings.data) return <section className="settings-state"><h1>Não foi possível carregar as configurações.</h1><p>Os dados inseridos não foram alterados.</p><button className="secondary-action" onClick={() => { void settings.refetch() }} type="button">Tentar carregar configurações</button></section>
 
-  return <SettingsEditor key={settings.data.loggerHost + settings.data.loggerSerial} health={health} initial={settings.data} sessionUsername={session.data?.username} />
+  return <SettingsEditor health={health} initial={settings.data} sessionUsername={session.data?.username} />
 }
 
 function SettingsEditor({ health, initial, sessionUsername }: { health: UseQueryResult<ComponentHealth, Error>; initial: Settings; sessionUsername?: string }) {
@@ -33,11 +33,24 @@ function SettingsEditor({ health, initial, sessionUsername }: { health: UseQuery
   const [values, setValues] = useState<SettingsValues>(() => settingsToValues(initial))
   const [errors, setErrors] = useState<SettingsErrors>({})
   const [currentPassword, setCurrentPassword] = useState('')
+  const [conflict, setConflict] = useState<Settings | null>(null)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState('')
+  const dirty = !sameSettingsValues(values, settingsToValues(original))
   const changedIdentity = loggerIdentityChanged(values, original)
 
   useEffect(() => () => setCurrentPassword(''), [])
+  useEffect(() => {
+    if (sameSettings(initial, original)) return
+    if (dirty || saving) {
+      setConflict(initial)
+      return
+    }
+    setOriginal(initial)
+    setValues(settingsToValues(initial))
+    setConflict(null)
+    setErrors({})
+  }, [dirty, initial, original, saving])
 
   const setField = (field: SettingsField, value: string) => {
     setValues((current) => ({ ...current, [field]: value }))
@@ -66,13 +79,15 @@ function SettingsEditor({ health, initial, sessionUsername }: { health: UseQuery
     try {
       if (changedIdentity) {
         if (!sessionUsername) throw new Error('session unavailable')
-        const credentials = await login({ username: sessionUsername, password: currentPassword })
+        const credentials = await confirmCurrentPassword({ username: sessionUsername, password: currentPassword })
         authMemory.setCSRFToken(credentials.csrfToken)
       }
       const saved = await updateSettings(valuesToSettings(values))
+      queryClient.setQueryData(queryKeys.settings, saved)
       setOriginal(saved)
       setValues(settingsToValues(saved))
       setCurrentPassword('')
+      setConflict(null)
       setStatus('Configurações salvas.')
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings })
       await queryClient.invalidateQueries({ queryKey: queryKeys.live })
@@ -102,16 +117,34 @@ function SettingsEditor({ health, initial, sessionUsername }: { health: UseQuery
       <form id="settings-form" noValidate onSubmit={submit}>
         <SystemForm errors={errors} setField={setField} toggleMPPT={toggleMPPT} values={values} />
         <ConnectionPanel changed={changedIdentity} currentPassword={currentPassword} errors={errors} health={health.data} healthError={health.isError} onPassword={(value) => { setCurrentPassword(value); setErrors((current) => ({ ...current, currentPassword: undefined })) }} retryHealth={() => { void health.refetch() }} setField={setField} values={values} />
-      </form>
-      <section className="settings-section" aria-labelledby="appearance-title">
+        <section className="settings-section" aria-labelledby="appearance-title">
         <div className="settings-section-heading"><p className="eyebrow">03 · Aparência</p><h2 id="appearance-title">Luz para cada momento.</h2><p>O modo Sistema acompanha a preferência do dispositivo. A escolha manual fica apenas neste navegador.</p></div>
         <fieldset className="theme-fieldset settings-section-body"><legend className="sr-only">Tema da interface</legend>{themeChoices.map((choice) => <label key={choice.value}><input checked={theme === choice.value} name="settings-theme" onChange={() => setTheme(choice.value)} type="radio" />{choice.label}</label>)}</fieldset>
-      </section>
-      <DataPanel error={errors.retentionDays} retentionDays={values.retentionDays} setRetentionDays={(value) => setField('retentionDays', value)} />
-      <div className="settings-save-rail">
+        </section>
+        <DataPanel error={errors.retentionDays} retentionDays={values.retentionDays} setRetentionDays={(value) => setField('retentionDays', value)} />
+        {conflict ? <section aria-label="Configurações alteradas no servidor" aria-live="polite" className="settings-conflict" role="status">
+        <div><strong>As configurações foram alteradas em outra sessão.</strong><p>Escolha quais valores devem permanecer antes de continuar.</p></div>
+        <div className="conflict-actions">
+          <button className="secondary-action" onClick={() => {
+            setOriginal(conflict)
+            setValues(settingsToValues(conflict))
+            setCurrentPassword('')
+            setConflict(null)
+            setErrors({})
+            setStatus('Alterações do servidor carregadas.')
+          }} type="button">Carregar alterações do servidor</button>
+          <button className="secondary-action" onClick={() => {
+            setOriginal(conflict)
+            setConflict(null)
+            setStatus('Suas edições foram mantidas.')
+          }} type="button">Manter minhas edições</button>
+        </div>
+        </section> : null}
+        <div className="settings-save-rail">
         <div aria-live="polite">{errors.general ? <p className="form-alert">{errors.general}</p> : status ? <p className="save-success"><Check aria-hidden="true" />{status}</p> : <p>Revise os ajustes antes de salvar.</p>}</div>
-        <button className="primary-action" disabled={saving} form="settings-form" type="submit">{saving ? 'Salvando configurações…' : 'Salvar configurações'}</button>
-      </div>
+          <button className="primary-action" disabled={saving} type="submit">{saving ? 'Salvando configurações…' : 'Salvar configurações'}</button>
+        </div>
+      </form>
       <section className="settings-section about-section" aria-labelledby="about-title">
         <div className="settings-section-heading"><p className="eyebrow">05 · Sobre</p><h2 id="about-title">Helio v0.1</h2></div>
         <div className="settings-section-body"><MonitorCog aria-hidden="true" /><p>Monitor solar local e independente. Leituras do logger, histórico em SQLite e análises com evidências — sem comandos Modbus de escrita.</p></div>
