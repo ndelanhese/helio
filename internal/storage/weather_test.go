@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -54,6 +55,17 @@ func (p *controlledWeatherProvider) Hourly(ctx context.Context, _ weather.Reques
 }
 
 func (p *controlledWeatherProvider) Source() string { return "test-provider" }
+
+type staticWeatherProvider struct {
+	hours []weather.Hour
+	err   error
+}
+
+func (p staticWeatherProvider) Hourly(context.Context, weather.Request) ([]weather.Hour, error) {
+	return p.hours, p.err
+}
+
+func (p staticWeatherProvider) Source() string { return "test-provider" }
 
 func TestWeatherCacheOlderCompletionCannotOverwriteNewer(t *testing.T) {
 	ctx := context.Background()
@@ -112,6 +124,45 @@ func TestWeatherCacheConcurrentOlderRefreshReturnsNewerDatabaseWinner(t *testing
 		if result.Stale || result.ErrorClass != "" {
 			t.Fatalf("%s coherent winner marked degraded: %+v", name, result)
 		}
+	}
+}
+
+func TestWeatherCacheFuturePersistedRowDoesNotDefeatSuccessfulRefresh(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "weather-future-success.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewWeatherRepository(db)
+	hour := time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC)
+	if err := repo.Upsert(ctx, []weather.Hour{{Time: hour, CloudCoverPct: 99, IrradianceWM2: 1}}, "corrupt", hour.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	provider := staticWeatherProvider{hours: []weather.Hour{{Time: hour, CloudCoverPct: 10, IrradianceWM2: 700}}}
+	service := weather.NewService(repo, provider, sequenceClock(hour, hour.Add(time.Second)))
+	result := service.Get(ctx, weather.Request{Start: hour, End: hour.Add(time.Hour)})
+	if !result.Available || result.Stale || result.ErrorClass != weather.ErrorClassCache || result.Source != "test-provider" || len(result.Hours) != 1 || result.Hours[0].CloudCoverPct != 10 || result.Hours[0].IrradianceWM2 != 700 {
+		t.Fatalf("future persisted row defeated valid refresh: %+v", result)
+	}
+}
+
+func TestWeatherCacheFuturePersistedRowIsUnavailableOnProviderFailure(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "weather-future-failure.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewWeatherRepository(db)
+	hour := time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC)
+	if err := repo.Upsert(ctx, []weather.Hour{{Time: hour, CloudCoverPct: 99, IrradianceWM2: 1}}, "corrupt", hour.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	service := weather.NewService(repo, staticWeatherProvider{err: errors.New("offline")}, func() time.Time { return hour })
+	result := service.Get(ctx, weather.Request{Start: hour, End: hour.Add(time.Hour)})
+	if result.Available || result.Stale || result.ErrorClass != weather.ErrorClassProvider || len(result.Hours) != 0 {
+		t.Fatalf("future persisted row served during outage: %+v", result)
 	}
 }
 

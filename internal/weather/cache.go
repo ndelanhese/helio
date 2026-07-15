@@ -10,6 +10,7 @@ const (
 	ErrorClassCache    = "cache_unavailable"
 	freshFor           = 60 * time.Minute
 	staleFor           = 6 * time.Hour
+	maximumFutureSkew  = time.Minute
 )
 
 type Cache struct {
@@ -63,6 +64,9 @@ func (s *Service) Get(ctx context.Context, request Request) Result {
 			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
 		}
 		completedAt := s.now().UTC()
+		if hasMaterialFutureTimestamp(persisted.Hours, completedAt) {
+			return resultFromHours(withMetadata(refreshed, source, now), false, ErrorClassCache)
+		}
 		stale := !completeCoverage(persisted.Hours, request.Start, request.End) || !allYoungerThan(persisted.Hours, completedAt, freshFor)
 		return resultFromHours(persisted.Hours, stale, "")
 	}
@@ -82,6 +86,16 @@ func (s *Service) Get(ctx context.Context, request Request) Result {
 		errorClass = ErrorClassCache
 	}
 	return Result{ErrorClass: errorClass}
+}
+
+func hasMaterialFutureTimestamp(hours []Hour, completedAt time.Time) bool {
+	latestAllowed := completedAt.Add(maximumFutureSkew)
+	for _, hour := range hours {
+		if hour.FetchedAt.After(latestAllowed) {
+			return true
+		}
+	}
+	return false
 }
 
 func completeCoverage(hours []Hour, start, end time.Time) bool {
