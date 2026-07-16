@@ -14,6 +14,7 @@ import (
 
 const (
 	CopelGroupBURL      = "https://www.copel.com/site/copel-distribuicao/tarifas-de-energia-eletrica/"
+	ANEELTariffsURL     = "https://www.gov.br/aneel/pt-br/assuntos/tarifas"
 	copelParserVersion  = "copel-group-b-v1"
 	defaultAvailability = 100
 )

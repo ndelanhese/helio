@@ -12,6 +12,7 @@ import (
 	"github.com/ndelanhese/helio/internal/collector"
 	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/solar"
+	"github.com/ndelanhese/helio/internal/tariffs"
 	"github.com/ndelanhese/helio/internal/weather"
 )
 
@@ -119,6 +120,10 @@ type EventSource interface {
 	Subscribe() (<-chan collector.Event, func())
 }
 
+type TariffRefresher interface {
+	Refresh(context.Context) (tariffs.Status, error)
+}
+
 type bufferedEventSource interface {
 	SubscribeBuffered(int) (<-chan collector.Event, func())
 }
@@ -129,6 +134,7 @@ type Integration struct {
 	Weather        WeatherService
 	Alerts         AlertEvaluator
 	Events         EventSource
+	Tariffs        TariffRefresher
 }
 
 type WeatherStatus struct {
@@ -153,6 +159,7 @@ type WorkerStatus struct {
 type IntegrationStatus struct {
 	Alerts   WorkerStatus
 	Analysis WorkerStatus
+	Tariffs  tariffs.Status
 }
 
 type Option func(*Runner)
@@ -210,6 +217,7 @@ func New(repository Repository, settings Settings, options ...Option) *Runner {
 	runner.integrationStatus = IntegrationStatus{
 		Alerts:   WorkerStatus{State: "unavailable", UpdatedAt: runner.clock.Now().UTC()},
 		Analysis: WorkerStatus{State: "unavailable", UpdatedAt: runner.clock.Now().UTC()},
+		Tariffs:  tariffs.Status{State: "unavailable", UpdatedAt: runner.clock.Now().UTC()},
 	}
 	return runner
 }
@@ -380,6 +388,11 @@ func (r *Runner) runOnce(ctx context.Context, now time.Time, settings domain.Set
 		if err := r.analyzeDay(ctx, now, settings, location, dayStart, dayEnd, daily); err != nil {
 			return err
 		}
+	}
+	if r.integration.Tariffs != nil {
+		status, err := r.integration.Tariffs.Refresh(ctx)
+		r.setTariffStatus(status)
+		_ = err // A source refresh is proposal-only and must not fail daily telemetry processing.
 	}
 	if _, err := r.repository.AggregateMonth(ctx, dayStart); err != nil {
 		return staged("aggregate_month", fmt.Errorf("aggregate month: %w", err))
@@ -728,6 +741,18 @@ func (r *Runner) setAlertStatus(state, class string, at time.Time) {
 func (r *Runner) setAnalysisStatus(state, class string, at time.Time) {
 	r.mu.Lock()
 	r.integrationStatus.Analysis = WorkerStatus{State: state, UpdatedAt: at.UTC(), ErrorClass: class}
+	r.mu.Unlock()
+}
+
+func (r *Runner) setTariffStatus(status tariffs.Status) {
+	if status.State == "" {
+		status.State = "unavailable"
+	}
+	if status.UpdatedAt.IsZero() {
+		status.UpdatedAt = r.clock.Now().UTC()
+	}
+	r.mu.Lock()
+	r.integrationStatus.Tariffs = status
 	r.mu.Unlock()
 }
 

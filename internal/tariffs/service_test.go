@@ -43,6 +43,28 @@ func TestRefreshPersistsOnlyAValidPendingCandidate(t *testing.T) {
 	}
 }
 
+func TestOfficialSourceAllowlistUsesExactApprovedPaths(t *testing.T) {
+	for _, source := range []string{
+		tariffs.CopelGroupBURL,
+		tariffs.ANEELTariffsURL,
+	} {
+		if err := tariffs.ValidateOfficialURL(source); err != nil {
+			t.Errorf("ValidateOfficialURL(%q) error = %v", source, err)
+		}
+	}
+	for _, source := range []string{
+		"https://www.gov.br/",
+		"https://www.gov.br/aneel/pt-br/assuntos/tarifas/other",
+		"https://www.copel.com/site/copel-distribuicao/tarifas-de-energia-eletrica/other",
+		"https://copel.com/site/copel-distribuicao/tarifas-de-energia-eletrica/",
+		"https://www.copel.com/site/copel-distribuicao/tarifas-de-energia-eletrica/?source=test",
+	} {
+		if err := tariffs.ValidateOfficialURL(source); err == nil {
+			t.Errorf("ValidateOfficialURL(%q) error = nil, want rejection", source)
+		}
+	}
+}
+
 type failingFetcher struct{}
 
 func (failingFetcher) Fetch(context.Context, string) ([]byte, error) {

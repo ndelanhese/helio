@@ -361,6 +361,28 @@ func TestComponentHealthIncludesExplicitWeatherState(t *testing.T) {
 	}
 }
 
+func TestComponentHealthReportsTariffStateAndTimesOnly(t *testing.T) {
+	updated := "2026-07-16T12:00:00Z"
+	fetched := "2026-07-16T11:59:00Z"
+	handler := api.New(api.Dependencies{Components: func(context.Context) api.ComponentStatus {
+		return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: "available", Tariff: "stale", TariffUpdatedAt: updated, TariffFetchedAt: fetched}
+	}})
+	rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["tariff"] != "stale" || body["tariffUpdatedAt"] != updated || body["tariffFetchedAt"] != fetched {
+		t.Fatalf("tariff health = %#v", body)
+	}
+	if _, found := body["tariffErrorClass"]; found {
+		t.Fatalf("tariff health exposed an error class: %#v", body)
+	}
+}
+
 func TestComponentHealthWeatherUsesOnlyPublicAvailabilityEnum(t *testing.T) {
 	fetched := "2026-07-14T13:00:00Z"
 	for _, state := range []string{"available", "stale", "unavailable"} {

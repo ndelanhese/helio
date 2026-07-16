@@ -13,6 +13,7 @@ type ComponentStatus struct {
 	Collector          string   `json:"collector"`
 	Jobs               string   `json:"jobs,omitempty"`
 	Weather            string   `json:"weather"`
+	Tariff             string   `json:"tariff,omitempty"`
 	Alerts             string   `json:"alerts,omitempty"`
 	Analysis           string   `json:"analysis,omitempty"`
 	LastSuccess        string   `json:"lastSuccess,omitempty"`
@@ -22,6 +23,8 @@ type ComponentStatus struct {
 	DatabaseUpdatedAt  string   `json:"databaseUpdatedAt,omitempty"`
 	WeatherUpdatedAt   string   `json:"weatherUpdatedAt,omitempty"`
 	WeatherFetchedAt   string   `json:"weatherFetchedAt,omitempty"`
+	TariffUpdatedAt    string   `json:"tariffUpdatedAt,omitempty"`
+	TariffFetchedAt    string   `json:"tariffFetchedAt,omitempty"`
 	TemperatureC       *float64 `json:"temperatureC,omitempty"`
 	PrecipitationMM    *float64 `json:"precipitationMM,omitempty"`
 	WeatherCode        *int     `json:"weatherCode,omitempty"`

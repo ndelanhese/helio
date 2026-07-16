@@ -20,6 +20,7 @@ import (
 	"github.com/ndelanhese/helio/internal/jobs"
 	"github.com/ndelanhese/helio/internal/sofar"
 	"github.com/ndelanhese/helio/internal/storage"
+	"github.com/ndelanhese/helio/internal/tariffs"
 	"github.com/ndelanhese/helio/internal/weather"
 )
 
@@ -85,6 +86,8 @@ func New(cfg config.Config) *App {
 	weatherProvider := weather.NewOpenMeteo("https://api.open-meteo.com/v1/forecast", nil, time.Now)
 	weatherService := weather.NewService(weatherRepository, weatherProvider, time.Now)
 	analysisRepository := storage.NewAnalysisRepository(db)
+	tariffRepository := storage.NewFinanceRepository(db)
+	tariffService := tariffs.NewService(tariffs.NewHTTPFetcher(nil), tariffRepository, nil)
 	alertRepository := storage.NewAlertRepository(db)
 	alertEngine, alertErr := alerts.NewEngine(alertRepository, alerts.DefaultConfig())
 	if alertErr != nil {
@@ -93,7 +96,7 @@ func New(cfg config.Config) *App {
 	}
 	a.jobRunner = jobs.New(repository, a.settings, jobs.WithIntegration(jobs.Integration{
 		AnalysisData: repository, AnalysisWriter: analysisRepository, Weather: weatherService,
-		Alerts: alertEngine, Events: hub,
+		Alerts: alertEngine, Events: hub, Tariffs: tariffService,
 	}))
 	apiHandler := api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repository, Hub: hub,
@@ -139,6 +142,13 @@ func New(cfg config.Config) *App {
 				}
 				if !integrationStatus.Analysis.UpdatedAt.IsZero() {
 					status.AnalysisUpdatedAt = integrationStatus.Analysis.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+				status.Tariff = integrationStatus.Tariffs.State
+				if !integrationStatus.Tariffs.UpdatedAt.IsZero() {
+					status.TariffUpdatedAt = integrationStatus.Tariffs.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+				if !integrationStatus.Tariffs.FetchedAt.IsZero() {
+					status.TariffFetchedAt = integrationStatus.Tariffs.FetchedAt.UTC().Format(time.RFC3339)
 				}
 			}
 			if err := db.Ready(ctx); err != nil {

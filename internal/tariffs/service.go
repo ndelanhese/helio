@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
@@ -95,7 +94,7 @@ func NewHTTPFetcher(client *http.Client) *HTTPFetcher {
 }
 
 func (f *HTTPFetcher) Fetch(ctx context.Context, source string) ([]byte, error) {
-	if err := validateOfficialURL(source); err != nil {
+	if err := ValidateOfficialURL(source); err != nil {
 		return nil, err
 	}
 	if f == nil || f.client == nil {
@@ -123,14 +122,16 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, source string) ([]byte, error) 
 	return body, nil
 }
 
-func validateOfficialURL(raw string) error {
+// ValidateOfficialURL accepts only the fixed public documents that the tariff
+// parsers understand. It deliberately does not treat every page on an official
+// host as an approved source.
+func ValidateOfficialURL(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Host == "" || parsed.Port() != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Host == "" || parsed.Port() != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return errors.New("tariff source must be an official HTTPS URL")
 	}
-	host := strings.ToLower(parsed.Hostname())
-	if host != "www.copel.com" && host != "copel.com" && host != "www.gov.br" && host != "gov.br" {
-		return errors.New("tariff source host is not allowed")
+	if raw != CopelGroupBURL && raw != ANEELTariffsURL {
+		return errors.New("tariff source URL is not allowed")
 	}
 	return nil
 }
