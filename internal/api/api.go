@@ -41,6 +41,8 @@ type FinanceStore interface {
 	SaveCycle(context.Context, domain.BillingCycle, string) (domain.BillingCycle, domain.FinancialProjection, error)
 	ListCycles(context.Context, int) ([]domain.BillingCycle, error)
 	LatestProjection(context.Context, time.Time) (domain.FinancialProjection, bool, error)
+	CreditSummary(context.Context) (int64, *time.Time, error)
+	LatestTariff(context.Context) (domain.TariffVersion, bool, error)
 	ListTariffProposals(context.Context) ([]domain.TariffProposal, error)
 	ApproveProposal(context.Context, int64, string) (domain.TariffVersion, error)
 }

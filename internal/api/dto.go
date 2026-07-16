@@ -38,6 +38,7 @@ type billingCycleDTO struct {
 	CreditsUsedKWh       *json.Number `json:"creditsUsedKWh"`
 	CreditBalanceKWh     *json.Number `json:"creditBalanceKWh"`
 	TotalPaidMinor       *json.Number `json:"totalPaidMinor"`
+	FlagChargeMinor      *json.Number `json:"flagChargeMinor"`
 }
 
 func decodeBillingCycle(w http.ResponseWriter, r *http.Request, body *billingCycleDTO) error {
@@ -62,7 +63,7 @@ func decodeBillingCycle(w http.ResponseWriter, r *http.Request, body *billingCyc
 }
 
 func (d billingCycleDTO) domain() (domain.BillingCycle, error) {
-	if d.ReadingStart == nil || d.ReadingEnd == nil || d.ActiveConsumptionKWh == nil || d.InjectedKWh == nil || d.CreditsUsedKWh == nil || d.CreditBalanceKWh == nil || d.TotalPaidMinor == nil {
+	if d.ReadingStart == nil || d.ReadingEnd == nil || d.ActiveConsumptionKWh == nil || d.InjectedKWh == nil || d.CreditsUsedKWh == nil || d.CreditBalanceKWh == nil || d.TotalPaidMinor == nil || d.FlagChargeMinor == nil {
 		return domain.BillingCycle{}, errors.New("all billing cycle fields are required")
 	}
 	start, err := time.Parse(time.RFC3339, *d.ReadingStart)
@@ -100,7 +101,9 @@ func (d billingCycleDTO) domain() (domain.BillingCycle, error) {
 	if err != nil {
 		return domain.BillingCycle{}, err
 	}
-	cycle := domain.BillingCycle{ReadingStart: start, ReadingEnd: end, ActiveConsumptionKWh: active, InjectedKWh: injected, CreditsUsedKWh: used, CreditBalanceKWh: balance, TotalPaidMinor: paid}
+	flag, err := parse("flagChargeMinor", d.FlagChargeMinor)
+	if err != nil { return domain.BillingCycle{}, err }
+	cycle := domain.BillingCycle{ReadingStart: start, ReadingEnd: end, ActiveConsumptionKWh: active, InjectedKWh: injected, CreditsUsedKWh: used, CreditBalanceKWh: balance, TotalPaidMinor: paid, FlagChargeMinor: flag}
 	if err := domain.ValidateBillingCycle(cycle); err != nil {
 		return domain.BillingCycle{}, err
 	}

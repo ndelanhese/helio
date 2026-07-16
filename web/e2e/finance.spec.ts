@@ -12,6 +12,7 @@ test('approves tariff and records a completed bill', async ({ page, setScenario 
   await page.getByLabel('Energia injetada (kWh)').fill('100')
   await page.getByLabel('Créditos usados (kWh)').fill('25')
   await page.getByLabel('Saldo de créditos (kWh)').fill('800')
+  await page.getByLabel('Bandeira aplicada (centavos)').fill('1200')
   await page.getByLabel('Total pago (centavos)').fill('14176')
   await page.getByRole('button', { name: 'Salvar fatura' }).click()
   await expect(page.getByText('Real versus projetado')).toBeVisible()

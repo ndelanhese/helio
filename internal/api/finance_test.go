@@ -14,7 +14,7 @@ import (
 	"github.com/ndelanhese/helio/internal/domain"
 )
 
-const validCycleJSON = `{"readingStart":"2026-07-01T00:00:00Z","readingEnd":"2026-07-15T00:00:00Z","activeConsumptionKWh":150,"injectedKWh":20,"creditsUsedKWh":10,"creditBalanceKWh":10,"totalPaidMinor":12345}`
+const validCycleJSON = `{"readingStart":"2026-07-01T00:00:00Z","readingEnd":"2026-07-15T00:00:00Z","activeConsumptionKWh":150,"injectedKWh":20,"creditsUsedKWh":10,"creditBalanceKWh":10,"flagChargeMinor":50,"totalPaidMinor":12345}`
 
 func TestCreateCycleRequiresCSRFAndReturnsProjection(t *testing.T) {
 	f := newFixture(t)

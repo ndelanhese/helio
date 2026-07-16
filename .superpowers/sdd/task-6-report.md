@@ -27,3 +27,9 @@
 ## Concern
 
 The API requires two readings plus five numeric account inputs (seven fields total). The brief calls for “six bill fields plus reading start/end”; no sixth server-accepted billing value exists, so the UI deliberately exposes the exact server contract rather than inventing a client-only field.
+
+## Review follow-up
+
+- Added the legitimate, persisted `flagChargeMinor` billing input, making six bill fields plus readings.
+- Finance summary now provides credit balance and next expiry from credit lots.
+- Display-ready projection rows and tariff delta rows are generated server-side; React renders them without money/rate arithmetic.

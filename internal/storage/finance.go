@@ -142,10 +142,10 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO billing_cycles(
 			reading_start, reading_end, active_consumption_kwh, injected_kwh, credits_used_kwh,
-			credit_balance_kwh, total_paid_minor, tariff_version_id, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			credit_balance_kwh, total_paid_minor, flag_charge_minor, tariff_version_id, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		formatTime(cycle.ReadingStart), formatTime(cycle.ReadingEnd), cycle.ActiveConsumptionKWh,
-		cycle.InjectedKWh, cycle.CreditsUsedKWh, cycle.CreditBalanceKWh, cycle.TotalPaidMinor,
+		cycle.InjectedKWh, cycle.CreditsUsedKWh, cycle.CreditBalanceKWh, cycle.TotalPaidMinor, cycle.FlagChargeMinor,
 		cycle.TariffVersionID, formatTime(now))
 	if err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("insert billing cycle: %w", err)
@@ -217,12 +217,27 @@ func (r *FinanceRepository) LatestProjection(ctx context.Context, at time.Time) 
 	return projection, true, nil
 }
 
+func (r *FinanceRepository) CreditSummary(ctx context.Context) (int64, *time.Time, error) {
+	var balance int64; var expiry sql.NullString
+	err := r.db.sql.QueryRowContext(ctx, `SELECT COALESCE(SUM(available_kwh), 0), MIN(CASE WHEN available_kwh > 0 THEN expires_at END) FROM credit_lots`).Scan(&balance, &expiry)
+	if err != nil { return 0, nil, fmt.Errorf("credit summary: %w", err) }
+	if !expiry.Valid { return balance, nil, nil }; value, err := parseTime(expiry.String); if err != nil { return 0, nil, err }; return balance, &value, nil
+}
+
+func (r *FinanceRepository) LatestTariff(ctx context.Context) (domain.TariffVersion, bool, error) {
+	row := r.db.sql.QueryRowContext(ctx, `SELECT id, distributor, effective_from, effective_to, consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh, compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh, flag_micros_per_kwh, availability_kwh, cip_minor, source_url, retrieved_at, approved_at FROM tariff_versions ORDER BY approved_at DESC, id DESC LIMIT 1`)
+	var t domain.TariffVersion; var from, to, retrieved, approved string
+	err := row.Scan(&t.ID,&t.Distributor,&from,&to,&t.ConsumptionTEMicrosPerKWh,&t.ConsumptionTUSDMicrosPerKWh,&t.CompensationTEMicrosPerKWh,&t.CompensationTUSDMicrosPerKWh,&t.FlagMicrosPerKWh,&t.AvailabilityKWh,&t.CIPMinor,&t.SourceURL,&retrieved,&approved)
+	if errors.Is(err, sql.ErrNoRows) { return t, false, nil }; if err != nil { return t,false,err }
+	var parseErr error; t.EffectiveFrom,parseErr=parseTime(from); if parseErr==nil { t.EffectiveTo,parseErr=parseTime(to) }; if parseErr==nil { t.RetrievedAt,parseErr=parseTime(retrieved) }; if parseErr==nil { t.ApprovedAt,parseErr=parseTime(approved) }; return t,true,parseErr
+}
+
 // ListCycles returns newest billing cycles first.
 func (r *FinanceRepository) ListCycles(ctx context.Context, limit int) ([]domain.BillingCycle, error) {
 	if limit <= 0 || limit > 1000 {
 		return nil, fmt.Errorf("cycle limit must be between 1 and 1000")
 	}
-	rows, err := r.db.sql.QueryContext(ctx, `SELECT id, reading_start, reading_end, active_consumption_kwh, injected_kwh, credits_used_kwh, credit_balance_kwh, total_paid_minor, tariff_version_id FROM billing_cycles ORDER BY reading_end DESC, id DESC LIMIT ?`, limit)
+	rows, err := r.db.sql.QueryContext(ctx, `SELECT id, reading_start, reading_end, active_consumption_kwh, injected_kwh, credits_used_kwh, credit_balance_kwh, total_paid_minor, flag_charge_minor, tariff_version_id FROM billing_cycles ORDER BY reading_end DESC, id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list billing cycles: %w", err)
 	}
@@ -423,7 +438,7 @@ func scanProjection(row rowScanner) (domain.FinancialProjection, error) {
 func scanCycle(row rowScanner) (domain.BillingCycle, error) {
 	var cycle domain.BillingCycle
 	var start, end string
-	err := row.Scan(&cycle.ID, &start, &end, &cycle.ActiveConsumptionKWh, &cycle.InjectedKWh, &cycle.CreditsUsedKWh, &cycle.CreditBalanceKWh, &cycle.TotalPaidMinor, &cycle.TariffVersionID)
+	err := row.Scan(&cycle.ID, &start, &end, &cycle.ActiveConsumptionKWh, &cycle.InjectedKWh, &cycle.CreditsUsedKWh, &cycle.CreditBalanceKWh, &cycle.TotalPaidMinor, &cycle.FlagChargeMinor, &cycle.TariffVersionID)
 	if err != nil {
 		return domain.BillingCycle{}, fmt.Errorf("scan billing cycle: %w", err)
 	}

@@ -240,22 +240,22 @@ func (s *fixtureServer) bootstrapStatus(w http.ResponseWriter, _ *http.Request) 
 func fakeProposal(approved bool) map[string]any {
 	var approvedAt any
 	if approved { approvedAt = "2026-07-14T15:42:00Z" }
-	return map[string]any{"id": 1, "distributor": "COPEL B1 residencial", "effectiveFrom": "2026-06-24T00:00:00Z", "effectiveTo": "2027-06-23T00:00:00Z", "consumptionTEMicrosPerKWh": 610000, "consumptionTUSDMicrosPerKWh": 310000, "compensationTEMicrosPerKWh": 610000, "compensationTUSDMicrosPerKWh": 190000, "flagMicrosPerKWh": 120000, "availabilityKWh": 30, "cipMinor": 5600, "sourceUrl": "https://www.copel.com/", "parserVersion": "fixture-v1", "retrievedAt": "2026-07-14T12:00:00Z", "approvedAt": approvedAt}
+	return map[string]any{"id": 1, "distributor": "COPEL B1 residencial", "effectiveFrom": "2026-06-24T00:00:00Z", "effectiveTo": "2027-06-23T00:00:00Z", "consumptionTEMicrosPerKWh": 610000, "consumptionTUSDMicrosPerKWh": 310000, "compensationTEMicrosPerKWh": 610000, "compensationTUSDMicrosPerKWh": 190000, "flagMicrosPerKWh": 120000, "availabilityKWh": 30, "cipMinor": 5600, "sourceUrl": "https://www.copel.com/", "parserVersion": "fixture-v1", "retrievedAt": "2026-07-14T12:00:00Z", "approvedAt": approvedAt, "displayRates": []any{map[string]any{"label":"TE consumo","approved":"0 µR$/kWh","proposal":"610000 µR$/kWh","delta":"+610000 µR$/kWh"}}}
 }
 
-func fakeProjection() map[string]any { return map[string]any{"id": 1, "billingCycleId": 1, "tariffVersionId": 1, "consumptionMinor": 24510, "compensationMinor": 19094, "flagMinor": 1240, "taxesMinor": 1820, "cipMinor": 5600, "totalMinor": 14176, "withoutSolarCompensationMinor": 33270, "isEstimate": true, "calculatedAt": fixedTimestamp} }
+func fakeProjection() map[string]any { return map[string]any{"id": 1, "billingCycleId": 1, "tariffVersionId": 1, "consumptionMinor": 24510, "compensationMinor": 19094, "flagMinor": 1240, "taxesMinor": 1820, "cipMinor": 5600, "totalMinor": 14176, "withoutSolarCompensationMinor": 33270, "isEstimate": true, "calculatedAt": fixedTimestamp, "displayTotal":"R$ 141,76", "displayWithoutSolar":"R$ 332,70", "displayRows": []any{map[string]any{"label":"Consumo","value":"R$ 245,10"}}} }
 
 func (s *fixtureServer) financeSummary(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock(); finance := s.finance; s.mu.Unlock()
-	response := map[string]any{"latestProjection": nil, "cycles": []any{}}
-	if finance.CycleCount > 0 { response["latestProjection"] = fakeProjection(); response["cycles"] = []any{map[string]any{"id": 1, "readingStart": "2026-06-01T00:00:00Z", "readingEnd": "2026-07-01T00:00:00Z", "activeConsumptionKWh": 322, "injectedKWh": 100, "creditsUsedKWh": 25, "creditBalanceKWh": 800, "totalPaidMinor": 14176, "tariffVersionId": 1}} }
+	response := map[string]any{"latestProjection": nil, "cycles": []any{}, "creditBalanceKWh": 0, "nextCreditExpiry": nil}
+	if finance.CycleCount > 0 { response["latestProjection"] = fakeProjection(); response["creditBalanceKWh"] = 800; response["nextCreditExpiry"] = "2031-07-01T00:00:00Z"; response["cycles"] = []any{map[string]any{"id": 1, "readingStart": "2026-06-01T00:00:00Z", "readingEnd": "2026-07-01T00:00:00Z", "activeConsumptionKWh": 322, "injectedKWh": 100, "creditsUsedKWh": 25, "creditBalanceKWh": 800, "totalPaidMinor": 14176, "flagChargeMinor": 1200, "tariffVersionId": 1}} }
 	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *fixtureServer) tariffProposals(w http.ResponseWriter, _ *http.Request) { s.mu.Lock(); approved := s.finance.Approved; s.mu.Unlock(); writeJSON(w, http.StatusOK, map[string]any{"proposals": []any{fakeProposal(approved)}}) }
 func (s *fixtureServer) approveTariff(w http.ResponseWriter, _ *http.Request) { s.mu.Lock(); s.finance.Approved = true; s.mu.Unlock(); writeJSON(w, http.StatusCreated, fakeProposal(true)) }
 func (s *fixtureServer) createFinanceCycle(w http.ResponseWriter, r *http.Request) {
-	var body struct { ReadingStart string `json:"readingStart"`; ReadingEnd string `json:"readingEnd"`; ActiveConsumptionKWh int `json:"activeConsumptionKWh"`; InjectedKWh int `json:"injectedKWh"`; CreditsUsedKWh int `json:"creditsUsedKWh"`; CreditBalanceKWh int `json:"creditBalanceKWh"`; TotalPaidMinor int `json:"totalPaidMinor"` }
+	var body struct { ReadingStart string `json:"readingStart"`; ReadingEnd string `json:"readingEnd"`; ActiveConsumptionKWh int `json:"activeConsumptionKWh"`; InjectedKWh int `json:"injectedKWh"`; CreditsUsedKWh int `json:"creditsUsedKWh"`; CreditBalanceKWh int `json:"creditBalanceKWh"`; FlagChargeMinor int `json:"flagChargeMinor"`; TotalPaidMinor int `json:"totalPaidMinor"` }
 	if !decodeStrict(w, r, &body) { return }
 	s.mu.Lock(); approved := s.finance.Approved; if approved { s.finance.CycleCount++ }; s.mu.Unlock()
 	if !approved { writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle could not be saved"); return }

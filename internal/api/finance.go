@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,6 +15,8 @@ import (
 type financeSummaryResponse struct {
 	LatestProjection *financialProjectionResponse `json:"latestProjection"`
 	Cycles           []billingCycleResponse       `json:"cycles"`
+	CreditBalanceKWh int64 `json:"creditBalanceKWh"`
+	NextCreditExpiry *string `json:"nextCreditExpiry"`
 }
 
 type billingCycleResponse struct {
@@ -25,6 +28,7 @@ type billingCycleResponse struct {
 	CreditsUsedKWh       int64  `json:"creditsUsedKWh"`
 	CreditBalanceKWh     int64  `json:"creditBalanceKWh"`
 	TotalPaidMinor       int64  `json:"totalPaidMinor"`
+	FlagChargeMinor      int64  `json:"flagChargeMinor"`
 	TariffVersionID      int64  `json:"tariffVersionId"`
 }
 
@@ -41,7 +45,11 @@ type financialProjectionResponse struct {
 	WithoutSolarCompensationMinor int64  `json:"withoutSolarCompensationMinor"`
 	IsEstimate                    bool   `json:"isEstimate"`
 	CalculatedAt                  string `json:"calculatedAt"`
+	DisplayTotal                  string `json:"displayTotal"`
+	DisplayWithoutSolar           string `json:"displayWithoutSolar"`
+	DisplayRows                   []displayRow `json:"displayRows"`
 }
+type displayRow struct { Label string `json:"label"`; Value string `json:"value"` }
 
 type tariffProposalResponse struct {
 	ID                           int64   `json:"id"`
@@ -59,7 +67,9 @@ type tariffProposalResponse struct {
 	ParserVersion                string  `json:"parserVersion"`
 	RetrievedAt                  string  `json:"retrievedAt"`
 	ApprovedAt                   *string `json:"approvedAt"`
+	DisplayRates                  []tariffRateRow `json:"displayRates"`
 }
+type tariffRateRow struct { Label string `json:"label"`; Approved string `json:"approved"`; Proposal string `json:"proposal"`; Delta string `json:"delta"` }
 
 type tariffVersionResponse struct {
 	ID                           int64  `json:"id"`
@@ -93,7 +103,9 @@ func (a *API) financeSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "finance cycles could not be loaded")
 		return
 	}
-	response := financeSummaryResponse{Cycles: cycleResponses(cycles)}
+	balance, expiry, err := store.CreditSummary(r.Context()); if err != nil { writeError(w,http.StatusInternalServerError,"internal_error","credit summary could not be loaded"); return }
+	response := financeSummaryResponse{Cycles: cycleResponses(cycles), CreditBalanceKWh: balance}
+	if expiry != nil { value:=rfc3339(*expiry); response.NextCreditExpiry=&value }
 	if exists {
 		item := projectionResponse(projection)
 		response.LatestProjection = &item
@@ -160,9 +172,9 @@ func (a *API) tariffProposals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "tariff proposals could not be loaded")
 		return
 	}
-	items := make([]tariffProposalResponse, 0, len(proposals))
+	approved, _, err := store.LatestTariff(r.Context()); if err != nil { writeError(w,http.StatusInternalServerError,"internal_error","approved tariff could not be loaded"); return }; items := make([]tariffProposalResponse, 0, len(proposals))
 	for _, proposal := range proposals {
-		items = append(items, proposalResponse(proposal))
+		item := proposalResponse(proposal); item.DisplayRates = tariffRateRows(proposal, approved); items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"proposals": items})
 }
@@ -207,11 +219,13 @@ func cycleResponses(cycles []domain.BillingCycle) []billingCycleResponse {
 }
 
 func cycleResponse(c domain.BillingCycle) billingCycleResponse {
-	return billingCycleResponse{ID: c.ID, ReadingStart: rfc3339(c.ReadingStart), ReadingEnd: rfc3339(c.ReadingEnd), ActiveConsumptionKWh: c.ActiveConsumptionKWh, InjectedKWh: c.InjectedKWh, CreditsUsedKWh: c.CreditsUsedKWh, CreditBalanceKWh: c.CreditBalanceKWh, TotalPaidMinor: c.TotalPaidMinor, TariffVersionID: c.TariffVersionID}
+	return billingCycleResponse{ID: c.ID, ReadingStart: rfc3339(c.ReadingStart), ReadingEnd: rfc3339(c.ReadingEnd), ActiveConsumptionKWh: c.ActiveConsumptionKWh, InjectedKWh: c.InjectedKWh, CreditsUsedKWh: c.CreditsUsedKWh, CreditBalanceKWh: c.CreditBalanceKWh, TotalPaidMinor: c.TotalPaidMinor, FlagChargeMinor: c.FlagChargeMinor, TariffVersionID: c.TariffVersionID}
 }
 func projectionResponse(p domain.FinancialProjection) financialProjectionResponse {
-	return financialProjectionResponse{ID: p.ID, BillingCycleID: p.BillingCycleID, TariffVersionID: p.TariffVersionID, ConsumptionMinor: p.ConsumptionMinor, CompensationMinor: p.CompensationMinor, FlagMinor: p.FlagMinor, TaxesMinor: p.TaxesMinor, CIPMinor: p.CIPMinor, TotalMinor: p.TotalMinor, WithoutSolarCompensationMinor: p.WithoutSolarCompensationMinor, IsEstimate: p.IsEstimate, CalculatedAt: rfc3339(p.CalculatedAt)}
+	return financialProjectionResponse{ID: p.ID, BillingCycleID: p.BillingCycleID, TariffVersionID: p.TariffVersionID, ConsumptionMinor: p.ConsumptionMinor, CompensationMinor: p.CompensationMinor, FlagMinor: p.FlagMinor, TaxesMinor: p.TaxesMinor, CIPMinor: p.CIPMinor, TotalMinor: p.TotalMinor, WithoutSolarCompensationMinor: p.WithoutSolarCompensationMinor, IsEstimate: p.IsEstimate, CalculatedAt: rfc3339(p.CalculatedAt), DisplayTotal: moneyBRL(p.TotalMinor), DisplayWithoutSolar: moneyBRL(p.WithoutSolarCompensationMinor), DisplayRows: []displayRow{{"Consumo",moneyBRL(p.ConsumptionMinor)},{"Compensação",moneyBRL(p.CompensationMinor)},{"Bandeira",moneyBRL(p.FlagMinor)},{"Tributos",moneyBRL(p.TaxesMinor)},{"CIP",moneyBRL(p.CIPMinor)}}}
 }
+func moneyBRL(value int64) string { return fmt.Sprintf("R$ %d,%02d", value/100, value%100) }
+func tariffRateRows(p domain.TariffProposal, a domain.TariffVersion) []tariffRateRow { rows:=[]struct{ label string; proposal, approved int64 }{{"TE consumo",p.ConsumptionTEMicrosPerKWh,a.ConsumptionTEMicrosPerKWh},{"TUSD consumo",p.ConsumptionTUSDMicrosPerKWh,a.ConsumptionTUSDMicrosPerKWh},{"TE compensação",p.CompensationTEMicrosPerKWh,a.CompensationTEMicrosPerKWh},{"TUSD compensação",p.CompensationTUSDMicrosPerKWh,a.CompensationTUSDMicrosPerKWh},{"Bandeira",p.FlagMicrosPerKWh,a.FlagMicrosPerKWh},{"CIP",p.CIPMinor,a.CIPMinor}}; out:=make([]tariffRateRow,0,len(rows)); for _,r:=range rows { unit:="µR$/kWh"; if r.label=="CIP" { unit="centavos" }; out=append(out,tariffRateRow{r.label,fmt.Sprintf("%d %s",r.approved,unit),fmt.Sprintf("%d %s",r.proposal,unit),fmt.Sprintf("%+d %s",r.proposal-r.approved,unit)}) }; return out }
 func proposalResponse(p domain.TariffProposal) tariffProposalResponse {
 	response := tariffProposalResponse{ID: p.ID, Distributor: p.Distributor, EffectiveFrom: rfc3339(p.EffectiveFrom), EffectiveTo: rfc3339(p.EffectiveTo), ConsumptionTEMicrosPerKWh: p.ConsumptionTEMicrosPerKWh, ConsumptionTUSDMicrosPerKWh: p.ConsumptionTUSDMicrosPerKWh, CompensationTEMicrosPerKWh: p.CompensationTEMicrosPerKWh, CompensationTUSDMicrosPerKWh: p.CompensationTUSDMicrosPerKWh, FlagMicrosPerKWh: p.FlagMicrosPerKWh, AvailabilityKWh: p.AvailabilityKWh, CIPMinor: p.CIPMinor, SourceURL: p.SourceURL, ParserVersion: p.ParserVersion, RetrievedAt: rfc3339(p.RetrievedAt)}
 	if !p.ApprovedAt.IsZero() {

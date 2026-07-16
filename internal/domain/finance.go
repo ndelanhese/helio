@@ -40,7 +40,7 @@ type BillingCycle struct {
 	ID                                                                  int64
 	ReadingStart, ReadingEnd                                            time.Time
 	ActiveConsumptionKWh, InjectedKWh, CreditsUsedKWh, CreditBalanceKWh int64
-	TotalPaidMinor, TariffVersionID                                     int64
+	TotalPaidMinor, FlagChargeMinor, TariffVersionID                    int64
 }
 
 // CreditLot tracks credits by origin and expiry without inventing a complete
@@ -91,7 +91,7 @@ func ValidateBillingCycle(c BillingCycle) error {
 		return fmt.Errorf("reading end must follow reading start")
 	}
 	if c.ActiveConsumptionKWh < 0 || c.InjectedKWh < 0 || c.CreditsUsedKWh < 0 ||
-		c.CreditBalanceKWh < 0 || c.TotalPaidMinor < 0 || c.TariffVersionID < 0 {
+	c.CreditBalanceKWh < 0 || c.TotalPaidMinor < 0 || c.FlagChargeMinor < 0 || c.TariffVersionID < 0 {
 		return fmt.Errorf("billing cycle amounts must be nonnegative")
 	}
 	if c.CreditsUsedKWh > c.ActiveConsumptionKWh {

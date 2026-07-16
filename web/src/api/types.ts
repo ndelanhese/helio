@@ -59,6 +59,7 @@ export interface BillingCycle {
   readingStart: string
   tariffVersionId: number
   totalPaidMinor: number
+	flagChargeMinor: number
 }
 
 export interface FinancialProjection {
@@ -74,9 +75,13 @@ export interface FinancialProjection {
   taxesMinor: number
   totalMinor: number
   withoutSolarCompensationMinor: number
+  displayTotal: string
+  displayWithoutSolar: string
+  displayRows: DisplayRow[]
 }
 
-export interface FinanceSummary { cycles: BillingCycle[]; latestProjection: FinancialProjection | null }
+export interface DisplayRow { label: string; value: string }
+export interface FinanceSummary { cycles: BillingCycle[]; latestProjection: FinancialProjection | null; creditBalanceKWh: number; nextCreditExpiry: string | null }
 
 export interface TariffProposal {
   approvedAt: string | null
@@ -94,6 +99,7 @@ export interface TariffProposal {
   parserVersion: string
   retrievedAt: string
   sourceUrl: string
+	displayRates: Array<{ label: string; approved: string; proposal: string; delta: string }>
 }
 
 export interface BillingCycleInput {
@@ -104,6 +110,7 @@ export interface BillingCycleInput {
   readingEnd: string
   readingStart: string
   totalPaidMinor: number
+  flagChargeMinor: number
 }
 
 export interface MPPTTelemetry {
