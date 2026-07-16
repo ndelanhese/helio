@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -119,7 +120,12 @@ func (a *API) createFinanceCycle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body billingCycleDTO
-	if err := decodeBillingCycle(r, &body); err != nil {
+	if err := decodeBillingCycle(w, r, &body); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds 64 KiB")
+			return
+		}
 		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle must contain only valid fields")
 		return
 	}

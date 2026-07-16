@@ -40,15 +40,23 @@ type billingCycleDTO struct {
 	TotalPaidMinor       *json.Number `json:"totalPaidMinor"`
 }
 
-func decodeBillingCycle(r *http.Request, body *billingCycleDTO) error {
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxRequestBody+1))
+func decodeBillingCycle(w http.ResponseWriter, r *http.Request, body *billingCycleDTO) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(body); err != nil {
 		return err
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return err
+		}
 		return errors.New("request body must contain one JSON value")
+	}
+	if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		return err
 	}
 	return nil
 }

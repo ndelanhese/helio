@@ -31,6 +31,42 @@ func TestCreateCycleRequiresCSRFAndReturnsProjection(t *testing.T) {
 	}
 }
 
+func TestCreateCycleRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"absent field", `{"readingStart":"2026-07-01T00:00:00Z","readingEnd":"2026-07-15T00:00:00Z","activeConsumptionKWh":150,"injectedKWh":20,"creditsUsedKWh":10,"creditBalanceKWh":10}`},
+		{"unknown field", validCycleJSON[:len(validCycleJSON)-1] + `,"unexpected":true}`},
+		{"negative kwh", strings.Replace(validCycleJSON, `"injectedKWh":20`, `"injectedKWh":-1`, 1)},
+		{"negative money", strings.Replace(validCycleJSON, `"totalPaidMinor":12345`, `"totalPaidMinor":-1`, 1)},
+		{"fractional kwh", strings.Replace(validCycleJSON, `"activeConsumptionKWh":150`, `"activeConsumptionKWh":1.5`, 1)},
+		{"fractional money", strings.Replace(validCycleJSON, `"totalPaidMinor":12345`, `"totalPaidMinor":12.5`, 1)},
+		{"reversed dates", strings.Replace(validCycleJSON, `"readingEnd":"2026-07-15T00:00:00Z"`, `"readingEnd":"2026-06-15T00:00:00Z"`, 1)},
+		{"non RFC3339 date", strings.Replace(validCycleJSON, `"readingStart":"2026-07-01T00:00:00Z"`, `"readingStart":"2026-07-01"`, 1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			cookie, csrf := bootstrap(t, f)
+			response := request(t, f.handler, http.MethodPost, "/api/v1/finance/cycles", test.body, cookie, csrf)
+			if response.Code != http.StatusUnprocessableEntity || !containsJSON(response.Body.String(), `"code":"invalid_finance_cycle"`) {
+				t.Fatalf("invalid cycle: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateCycleRejectsBodyOverLimitIncludingTrailingWhitespace(t *testing.T) {
+	f := newFixture(t)
+	cookie, csrf := bootstrap(t, f)
+	body := validCycleJSON + strings.Repeat(" ", 64<<10)
+	response := request(t, f.handler, http.MethodPost, "/api/v1/finance/cycles", body, cookie, csrf)
+	if response.Code != http.StatusRequestEntityTooLarge || !containsJSON(response.Body.String(), `"code":"request_too_large"`) {
+		t.Fatalf("oversized cycle: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestProposalApprovalIsAudited(t *testing.T) {
 	f := newFixture(t)
 	cookie, csrf := bootstrap(t, f)
