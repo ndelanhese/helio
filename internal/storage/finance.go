@@ -12,9 +12,20 @@ import (
 )
 
 // FinanceRepository persists approved tariffs and reconciled billing cycles.
-type FinanceRepository struct{ db *DB }
+type FinanceRepository struct {
+	db       *DB
+	location *time.Location
+}
 
-func NewFinanceRepository(db *DB) *FinanceRepository { return &FinanceRepository{db: db} }
+// NewFinanceRepository uses the configured billing location when supplied.
+// UTC remains the default for callers that have not configured a site yet.
+func NewFinanceRepository(db *DB, locations ...*time.Location) *FinanceRepository {
+	location := time.UTC
+	if len(locations) > 0 && locations[0] != nil {
+		location = locations[0]
+	}
+	return &FinanceRepository{db: db, location: location}
+}
 
 // CreateProposal stores a tariff candidate that can later be approved.
 func (r *FinanceRepository) CreateProposal(ctx context.Context, proposal domain.TariffProposal) (domain.TariffProposal, error) {
@@ -107,7 +118,7 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 	}
 	defer tx.Rollback()
 
-	tariff, err := loadTariffAt(ctx, tx, cycle.ReadingEnd)
+	tariff, err := loadTariffAt(ctx, tx, cycle.ReadingEnd, r.location)
 	if err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, err
 	}
@@ -152,7 +163,15 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 	if err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("read bill reconciliation id: %w", err)
 	}
-	remaining, err := consumeCreditLots(ctx, tx, cycle.CreditsUsedKWh)
+	if err := consumeCreditLots(ctx, tx, cycle.CreditsUsedKWh); err != nil {
+		return domain.BillingCycle{}, domain.FinancialProjection{}, err
+	}
+	if cycle.InjectedKWh > 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO credit_lots(origin_cycle_id, available_kwh, expires_at, is_partial, created_at) VALUES(?, ?, ?, 0, ?)`, cycle.ID, cycle.InjectedKWh, formatTime(cycle.ReadingEnd.AddDate(5, 0, 0)), formatTime(now)); err != nil {
+			return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("insert injected credit lot: %w", err)
+		}
+	}
+	remaining, err := remainingCreditLots(ctx, tx)
 	if err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, err
 	}
@@ -255,10 +274,11 @@ func tariffFromProposal(proposal domain.TariffProposal, id int64, approvedAt tim
 	return domain.TariffVersion{ID: id, Distributor: proposal.Distributor, EffectiveFrom: proposal.EffectiveFrom, EffectiveTo: proposal.EffectiveTo, ConsumptionTEMicrosPerKWh: proposal.ConsumptionTEMicrosPerKWh, ConsumptionTUSDMicrosPerKWh: proposal.ConsumptionTUSDMicrosPerKWh, CompensationTEMicrosPerKWh: proposal.CompensationTEMicrosPerKWh, CompensationTUSDMicrosPerKWh: proposal.CompensationTUSDMicrosPerKWh, FlagMicrosPerKWh: proposal.FlagMicrosPerKWh, AvailabilityKWh: proposal.AvailabilityKWh, CIPMinor: proposal.CIPMinor, SourceURL: proposal.SourceURL, RetrievedAt: proposal.RetrievedAt, ApprovedAt: approvedAt}
 }
 
-func loadTariffAt(ctx context.Context, tx *sql.Tx, at time.Time) (domain.TariffVersion, error) {
+func loadTariffAt(ctx context.Context, tx *sql.Tx, at time.Time, location *time.Location) (domain.TariffVersion, error) {
+	calendarDate := billingCalendarDate(at, location)
 	var tariff domain.TariffVersion
 	var effectiveFrom, effectiveTo, retrievedAt, approvedAt string
-	err := tx.QueryRowContext(ctx, `SELECT id, distributor, effective_from, effective_to, consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh, compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh, flag_micros_per_kwh, availability_kwh, cip_minor, source_url, retrieved_at, approved_at FROM tariff_versions WHERE effective_from <= ? AND effective_to >= ? ORDER BY effective_from DESC, id DESC LIMIT 1`, formatTime(at), formatTime(at)).Scan(&tariff.ID, &tariff.Distributor, &effectiveFrom, &effectiveTo, &tariff.ConsumptionTEMicrosPerKWh, &tariff.ConsumptionTUSDMicrosPerKWh, &tariff.CompensationTEMicrosPerKWh, &tariff.CompensationTUSDMicrosPerKWh, &tariff.FlagMicrosPerKWh, &tariff.AvailabilityKWh, &tariff.CIPMinor, &tariff.SourceURL, &retrievedAt, &approvedAt)
+	err := tx.QueryRowContext(ctx, `SELECT id, distributor, effective_from, effective_to, consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh, compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh, flag_micros_per_kwh, availability_kwh, cip_minor, source_url, retrieved_at, approved_at FROM tariff_versions WHERE effective_from <= ? AND effective_to >= ? ORDER BY effective_from DESC, id DESC LIMIT 1`, formatTime(calendarDate), formatTime(calendarDate)).Scan(&tariff.ID, &tariff.Distributor, &effectiveFrom, &effectiveTo, &tariff.ConsumptionTEMicrosPerKWh, &tariff.ConsumptionTUSDMicrosPerKWh, &tariff.CompensationTEMicrosPerKWh, &tariff.CompensationTUSDMicrosPerKWh, &tariff.FlagMicrosPerKWh, &tariff.AvailabilityKWh, &tariff.CIPMinor, &tariff.SourceURL, &retrievedAt, &approvedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.TariffVersion{}, ErrNotFound
 	}
@@ -282,26 +302,41 @@ func loadTariffAt(ctx context.Context, tx *sql.Tx, at time.Time) (domain.TariffV
 	return tariff, nil
 }
 
-func consumeCreditLots(ctx context.Context, tx *sql.Tx, needed int64) (int64, error) {
+func billingCalendarDate(at time.Time, location *time.Location) time.Time {
+	if location == nil {
+		location = time.UTC
+	}
+	local := at.In(location)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func consumeCreditLots(ctx context.Context, tx *sql.Tx, needed int64) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id, available_kwh FROM credit_lots WHERE available_kwh > 0 ORDER BY expires_at ASC, id ASC`)
 	if err != nil {
-		return 0, fmt.Errorf("load credit lots: %w", err)
+		return fmt.Errorf("load credit lots: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() && needed > 0 {
 		var id, available int64
 		if err := rows.Scan(&id, &available); err != nil {
-			return 0, fmt.Errorf("scan credit lot: %w", err)
+			return fmt.Errorf("scan credit lot: %w", err)
 		}
 		used := min(needed, available)
 		if _, err := tx.ExecContext(ctx, `UPDATE credit_lots SET available_kwh=available_kwh-? WHERE id=?`, used, id); err != nil {
-			return 0, fmt.Errorf("consume credit lot: %w", err)
+			return fmt.Errorf("consume credit lot: %w", err)
 		}
 		needed -= used
 	}
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate credit lots: %w", err)
+		return fmt.Errorf("iterate credit lots: %w", err)
 	}
+	if needed > 0 {
+		return errors.New("credits used exceed available credit lots")
+	}
+	return nil
+}
+
+func remainingCreditLots(ctx context.Context, tx *sql.Tx) (int64, error) {
 	var remaining int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(available_kwh), 0) FROM credit_lots`).Scan(&remaining); err != nil {
 		return 0, fmt.Errorf("sum remaining credit lots: %w", err)

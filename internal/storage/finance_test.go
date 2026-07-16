@@ -73,6 +73,83 @@ func TestSaveCycleAddsUnknownLotForPositiveReportedBalance(t *testing.T) {
 	}
 }
 
+func TestSaveCycleStoresInjectedCreditWithCycleProvenance(t *testing.T) {
+	ctx, db, repo := financeTestRepository(t)
+	approved := approveCandidate(t, ctx, repo)
+	cycle := cycleWithCredits(0)
+	cycle.TariffVersionID = approved.ID
+	cycle.InjectedKWh = 75
+	cycle.CreditBalanceKWh = 75
+
+	saved, _, err := repo.SaveCycle(ctx, cycle, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var origin, available, partial int64
+	var expiresAt string
+	if err := db.sql.QueryRowContext(ctx, `SELECT origin_cycle_id, available_kwh, is_partial, expires_at FROM credit_lots`).Scan(&origin, &available, &partial, &expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if origin != saved.ID || available != 75 || partial != 0 {
+		t.Fatalf("known lot = (origin=%d available=%d partial=%d), want (%d, 75, 0)", origin, available, partial, saved.ID)
+	}
+	if got, err := parseTime(expiresAt); err != nil || !got.Equal(saved.ReadingEnd.AddDate(5, 0, 0)) {
+		t.Fatalf("known lot expiry = (%s, %v), want %s", expiresAt, err, saved.ReadingEnd.AddDate(5, 0, 0))
+	}
+}
+
+func TestSaveCycleRejectsCreditsBeyondTrackedLotsAndRollsBack(t *testing.T) {
+	ctx, db, repo := financeTestRepository(t)
+	approved := approveCandidate(t, ctx, repo)
+	seedLots(t, ctx, db, lot("2028-01-01", 100))
+	cycle := cycleWithCredits(101)
+	cycle.TariffVersionID = approved.ID
+
+	if _, _, err := repo.SaveCycle(ctx, cycle, "user-1"); err == nil {
+		t.Fatal("SaveCycle() succeeded after consuming more than the tracked lots")
+	}
+	if got := remainingLots(t, ctx, db); len(got) != 1 || got[0] != 100 {
+		t.Fatalf("remaining lots after rollback=%v, want [100]", got)
+	}
+	var cycles int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM billing_cycles`).Scan(&cycles); err != nil {
+		t.Fatal(err)
+	}
+	if cycles != 0 {
+		t.Fatalf("cycles after rollback=%d, want 0", cycles)
+	}
+}
+
+func TestSaveCycleSelectsTariffByConfiguredBillingCalendarDate(t *testing.T) {
+	ctx := context.Background()
+	location, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO users(id, username, password_hash, created_at) VALUES ('user-1', 'finance', 'hash', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewFinanceRepository(db, location)
+	old := approveProposal(t, ctx, repo, candidate("2026-06-01", "2026-06-23"))
+	_ = approveProposal(t, ctx, repo, candidate("2026-06-24", "2026-07-31"))
+	cycle := cycleWithCredits(0)
+	cycle.ReadingStart = time.Date(2026, time.June, 22, 0, 0, 0, 0, location)
+	cycle.ReadingEnd = time.Date(2026, time.June, 23, 23, 30, 0, 0, location) // 2026-06-24T02:30Z
+
+	saved, _, err := repo.SaveCycle(ctx, cycle, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.TariffVersionID != old.ID {
+		t.Fatalf("tariff selected=%d, want tariff effective on São Paulo date 2026-06-23 (%d)", saved.TariffVersionID, old.ID)
+	}
+}
+
 func TestSaveCycleRejectsNegativeReportedBalanceDifference(t *testing.T) {
 	ctx, db, repo := financeTestRepository(t)
 	approved := approveCandidate(t, ctx, repo)
@@ -141,7 +218,12 @@ func storeProposal(t *testing.T, ctx context.Context, repo *FinanceRepository, p
 
 func approveCandidate(t *testing.T, ctx context.Context, repo *FinanceRepository) domain.TariffVersion {
 	t.Helper()
-	proposal := storeProposal(t, ctx, repo, candidate("2026-06-24", "2027-06-23"))
+	return approveProposal(t, ctx, repo, candidate("2026-06-24", "2027-06-23"))
+}
+
+func approveProposal(t *testing.T, ctx context.Context, repo *FinanceRepository, proposal domain.TariffProposal) domain.TariffVersion {
+	t.Helper()
+	proposal = storeProposal(t, ctx, repo, proposal)
 	approved, err := repo.ApproveProposal(ctx, proposal.ID, "user-1")
 	if err != nil {
 		t.Fatal(err)
