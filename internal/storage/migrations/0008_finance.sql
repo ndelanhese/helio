@@ -51,6 +51,12 @@ BEGIN
     SELECT RAISE(ABORT, 'approved tariff version is immutable');
 END;
 
+CREATE TRIGGER tariff_versions_no_delete
+BEFORE DELETE ON tariff_versions
+BEGIN
+    SELECT RAISE(ABORT, 'approved tariff version is immutable');
+END;
+
 CREATE TABLE billing_cycles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     reading_start TEXT NOT NULL,
