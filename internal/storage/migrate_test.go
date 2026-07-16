@@ -9,6 +9,26 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestFinanceMigrationCreatesTables(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	for _, table := range []string{
+		"tariff_proposals", "tariff_versions", "billing_cycles", "credit_lots", "bill_reconciliations",
+	} {
+		var got string
+		err := db.sql.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table,
+		).Scan(&got)
+		if err != nil || got != table {
+			t.Fatalf("table %s: %v", table, err)
+		}
+	}
+}
+
 func TestMigrationIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "helio.db")
 	first, err := Open(context.Background(), path)
