@@ -241,6 +241,27 @@ func (r *FinanceRepository) ListCycles(ctx context.Context, limit int) ([]domain
 	return cycles, nil
 }
 
+// ListTariffProposals returns newest proposed tariffs first.
+func (r *FinanceRepository) ListTariffProposals(ctx context.Context) ([]domain.TariffProposal, error) {
+	rows, err := r.db.sql.QueryContext(ctx, `SELECT id, distributor, effective_from, effective_to, consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh, compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh, flag_micros_per_kwh, availability_kwh, cip_minor, source_url, parser_version, retrieved_at, approved_at FROM tariff_proposals ORDER BY retrieved_at DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list tariff proposals: %w", err)
+	}
+	defer rows.Close()
+	proposals := make([]domain.TariffProposal, 0)
+	for rows.Next() {
+		proposal, err := scanProposal(rows)
+		if err != nil {
+			return nil, err
+		}
+		proposals = append(proposals, proposal)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tariff proposals: %w", err)
+	}
+	return proposals, nil
+}
+
 func validateProposal(proposal domain.TariffProposal) error {
 	if proposal.ParserVersion == "" || proposal.RetrievedAt.IsZero() {
 		return errors.New("tariff parser version and retrieval time are required")
@@ -277,6 +298,30 @@ func loadProposal(ctx context.Context, tx *sql.Tx, id int64) (domain.TariffPropo
 	}
 	if parseErr != nil {
 		return domain.TariffProposal{}, fmt.Errorf("parse tariff proposal time: %w", parseErr)
+	}
+	return proposal, nil
+}
+
+func scanProposal(row rowScanner) (domain.TariffProposal, error) {
+	var proposal domain.TariffProposal
+	var effectiveFrom, effectiveTo, retrievedAt string
+	var approvedAt sql.NullString
+	err := row.Scan(&proposal.ID, &proposal.Distributor, &effectiveFrom, &effectiveTo, &proposal.ConsumptionTEMicrosPerKWh, &proposal.ConsumptionTUSDMicrosPerKWh, &proposal.CompensationTEMicrosPerKWh, &proposal.CompensationTUSDMicrosPerKWh, &proposal.FlagMicrosPerKWh, &proposal.AvailabilityKWh, &proposal.CIPMinor, &proposal.SourceURL, &proposal.ParserVersion, &retrievedAt, &approvedAt)
+	if err != nil {
+		return domain.TariffProposal{}, fmt.Errorf("scan tariff proposal: %w", err)
+	}
+	proposal.EffectiveFrom, err = parseTime(effectiveFrom)
+	if err == nil {
+		proposal.EffectiveTo, err = parseTime(effectiveTo)
+	}
+	if err == nil {
+		proposal.RetrievedAt, err = parseTime(retrievedAt)
+	}
+	if err == nil && approvedAt.Valid {
+		proposal.ApprovedAt, err = parseTime(approvedAt.String)
+	}
+	if err != nil {
+		return domain.TariffProposal{}, fmt.Errorf("parse tariff proposal time: %w", err)
 	}
 	return proposal, nil
 }

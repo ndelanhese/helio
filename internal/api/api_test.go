@@ -25,6 +25,7 @@ type fixture struct {
 	db       *storage.DB
 	dbDir    string
 	repo     *storage.TelemetryRepository
+	finance  *storage.FinanceRepository
 	hub      *collector.Hub
 	shutdown context.CancelFunc
 }
@@ -39,17 +40,18 @@ func newFixture(t *testing.T) fixture {
 	t.Cleanup(func() { _ = db.Close() })
 	hub := collector.NewHub()
 	repo := storage.NewTelemetryRepository(db, time.UTC)
+	finance := storage.NewFinanceRepository(db)
 	manager := auth.NewManager(db)
 	shutdownContext, shutdown := context.WithCancel(context.Background())
 	return fixture{handler: api.New(api.Dependencies{
-		Auth: manager, Store: db, History: repo, Hub: hub,
+		Auth: manager, Store: db, History: repo, Finance: finance, Hub: hub,
 		Latest:          func() collector.State { return collector.State{} },
 		Now:             func() time.Time { return time.Date(2026, 7, 14, 15, 4, 5, 0, time.UTC) },
 		ShutdownContext: shutdownContext,
 		ApplySettings: func(ctx context.Context, settings domain.Settings, actor string) error {
 			return db.ApplySettings(ctx, settings, actor, false)
 		},
-	}), db: db, dbDir: dbDir, repo: repo, hub: hub, shutdown: shutdown}
+	}), db: db, dbDir: dbDir, repo: repo, finance: finance, hub: hub, shutdown: shutdown}
 }
 
 func request(t *testing.T, h http.Handler, method, target, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {

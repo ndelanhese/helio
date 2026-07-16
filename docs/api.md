@@ -8,7 +8,7 @@ Examples use `http://192.0.2.1:8080`, an IANA-reserved documentation address. Re
 
 `POST /api/v1/bootstrap` and `POST /api/v1/auth/login` require a same-origin `Origin` matching `Host`. Success sets `helio_session`, an `HttpOnly; SameSite=Strict; Path=/` cookie. `Secure` is enabled when `HELIO_SECURE_COOKIES=1`. Sessions have a 30-day absolute lifetime and a 24-hour idle limit.
 
-`GET /api/v1/auth/session` rotates and returns `csrfToken`. Send that value as `X-CSRF-Token` on authenticated mutations (`PUT /api/v1/settings`, `POST /api/v1/auth/logout`) and include the same-origin `Origin`. API responses use `Cache-Control: no-store`.
+`GET /api/v1/auth/session` rotates and returns `csrfToken`. Send that value as `X-CSRF-Token` on authenticated mutations (`PUT /api/v1/settings`, `POST /api/v1/auth/logout`, and finance POST routes) and include the same-origin `Origin`. API responses use `Cache-Control: no-store`.
 
 Five failed or concurrent login attempts for the same normalized client IP and username in 15 minutes produce `429` with `Retry-After`. A successful login clears that bucket. Other endpoints have no general request-rate limiter in v0.1; keep integrations modest, and reconnect SSE using the advertised retry delay.
 
@@ -44,6 +44,9 @@ Authenticated:
 - `GET /api/v1/alerts?state=open|resolved`; newest-first, maximum 100.
 - `GET /api/v1/settings`; `PUT /api/v1/settings` with CSRF and same-origin checks. Logger host, serial, port, or Modbus-slave changes additionally require a successful `POST /api/v1/auth/confirm-password` for the same session immediately beforehand; confirmation is short-lived and one-shot.
 - `GET /api/v1/data/backup` — consistent SQLite snapshot, audited.
+- `GET /api/v1/finance/summary` — latest projection (or `null`) and the 12 latest billing cycles.
+- `GET /api/v1/finance/cycles`; `POST /api/v1/finance/cycles` with CSRF. The POST body requires RFC3339 `readingStart` and `readingEnd`, plus nonnegative integer `activeConsumptionKWh`, `injectedKWh`, `creditsUsedKWh`, `creditBalanceKWh`, and `totalPaidMinor` (centavos). It returns the saved cycle and an explicitly estimated component projection.
+- `GET /api/v1/finance/tariff-proposals`; `POST /api/v1/finance/tariff-proposals/{id}/approve` with CSRF. Approval creates an immutable tariff version and is audited.
 
 ## SSE, CSV, and errors
 

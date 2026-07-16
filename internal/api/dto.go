@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
 )
@@ -26,6 +28,75 @@ type settingsDTO struct {
 	Currency          *string  `json:"currency"`
 	TariffMinorPerKWh *int64   `json:"tariffMinorPerKWh"`
 	RetentionDays     *int     `json:"retentionDays"`
+}
+
+type billingCycleDTO struct {
+	ReadingStart         *string      `json:"readingStart"`
+	ReadingEnd           *string      `json:"readingEnd"`
+	ActiveConsumptionKWh *json.Number `json:"activeConsumptionKWh"`
+	InjectedKWh          *json.Number `json:"injectedKWh"`
+	CreditsUsedKWh       *json.Number `json:"creditsUsedKWh"`
+	CreditBalanceKWh     *json.Number `json:"creditBalanceKWh"`
+	TotalPaidMinor       *json.Number `json:"totalPaidMinor"`
+}
+
+func decodeBillingCycle(r *http.Request, body *billingCycleDTO) error {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxRequestBody+1))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(body); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("request body must contain one JSON value")
+	}
+	return nil
+}
+
+func (d billingCycleDTO) domain() (domain.BillingCycle, error) {
+	if d.ReadingStart == nil || d.ReadingEnd == nil || d.ActiveConsumptionKWh == nil || d.InjectedKWh == nil || d.CreditsUsedKWh == nil || d.CreditBalanceKWh == nil || d.TotalPaidMinor == nil {
+		return domain.BillingCycle{}, errors.New("all billing cycle fields are required")
+	}
+	start, err := time.Parse(time.RFC3339, *d.ReadingStart)
+	if err != nil {
+		return domain.BillingCycle{}, errors.New("readingStart must be RFC3339")
+	}
+	end, err := time.Parse(time.RFC3339, *d.ReadingEnd)
+	if err != nil {
+		return domain.BillingCycle{}, errors.New("readingEnd must be RFC3339")
+	}
+	parse := func(name string, value *json.Number) (int64, error) {
+		parsed, err := strconv.ParseInt(value.String(), 10, 64)
+		if err != nil || parsed < 0 {
+			return 0, fmt.Errorf("%s must be a nonnegative integer", name)
+		}
+		return parsed, nil
+	}
+	active, err := parse("activeConsumptionKWh", d.ActiveConsumptionKWh)
+	if err != nil {
+		return domain.BillingCycle{}, err
+	}
+	injected, err := parse("injectedKWh", d.InjectedKWh)
+	if err != nil {
+		return domain.BillingCycle{}, err
+	}
+	used, err := parse("creditsUsedKWh", d.CreditsUsedKWh)
+	if err != nil {
+		return domain.BillingCycle{}, err
+	}
+	balance, err := parse("creditBalanceKWh", d.CreditBalanceKWh)
+	if err != nil {
+		return domain.BillingCycle{}, err
+	}
+	paid, err := parse("totalPaidMinor", d.TotalPaidMinor)
+	if err != nil {
+		return domain.BillingCycle{}, err
+	}
+	cycle := domain.BillingCycle{ReadingStart: start, ReadingEnd: end, ActiveConsumptionKWh: active, InjectedKWh: injected, CreditsUsedKWh: used, CreditBalanceKWh: balance, TotalPaidMinor: paid}
+	if err := domain.ValidateBillingCycle(cycle); err != nil {
+		return domain.BillingCycle{}, err
+	}
+	return cycle, nil
 }
 
 func (d settingsDTO) domain() (domain.Settings, error) {

@@ -100,7 +100,7 @@ func New(cfg config.Config) *App {
 	}))
 	apiHandler := api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repository, Hub: hub,
-		Insights: analysisRepository, Alerts: alertRepository, Summaries: repository,
+		Insights: analysisRepository, Alerts: alertRepository, Summaries: repository, Finance: tariffRepository,
 		Latest: runtime.latest, Reconfigure: runtime.reconfigure,
 		ApplySettings: a.applySettings, ShutdownContext: shutdownContext,
 		AllowPublicLogger: cfg.AllowPublicLogger,

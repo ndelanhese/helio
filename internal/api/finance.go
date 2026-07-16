@@ -1,0 +1,220 @@
+package api
+
+import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/ndelanhese/helio/internal/auth"
+	"github.com/ndelanhese/helio/internal/domain"
+)
+
+type financeSummaryResponse struct {
+	LatestProjection *financialProjectionResponse `json:"latestProjection"`
+	Cycles           []billingCycleResponse       `json:"cycles"`
+}
+
+type billingCycleResponse struct {
+	ID                   int64  `json:"id"`
+	ReadingStart         string `json:"readingStart"`
+	ReadingEnd           string `json:"readingEnd"`
+	ActiveConsumptionKWh int64  `json:"activeConsumptionKWh"`
+	InjectedKWh          int64  `json:"injectedKWh"`
+	CreditsUsedKWh       int64  `json:"creditsUsedKWh"`
+	CreditBalanceKWh     int64  `json:"creditBalanceKWh"`
+	TotalPaidMinor       int64  `json:"totalPaidMinor"`
+	TariffVersionID      int64  `json:"tariffVersionId"`
+}
+
+type financialProjectionResponse struct {
+	ID                            int64  `json:"id"`
+	BillingCycleID                int64  `json:"billingCycleId"`
+	TariffVersionID               int64  `json:"tariffVersionId"`
+	ConsumptionMinor              int64  `json:"consumptionMinor"`
+	CompensationMinor             int64  `json:"compensationMinor"`
+	FlagMinor                     int64  `json:"flagMinor"`
+	TaxesMinor                    int64  `json:"taxesMinor"`
+	CIPMinor                      int64  `json:"cipMinor"`
+	TotalMinor                    int64  `json:"totalMinor"`
+	WithoutSolarCompensationMinor int64  `json:"withoutSolarCompensationMinor"`
+	IsEstimate                    bool   `json:"isEstimate"`
+	CalculatedAt                  string `json:"calculatedAt"`
+}
+
+type tariffProposalResponse struct {
+	ID                           int64   `json:"id"`
+	Distributor                  string  `json:"distributor"`
+	EffectiveFrom                string  `json:"effectiveFrom"`
+	EffectiveTo                  string  `json:"effectiveTo"`
+	ConsumptionTEMicrosPerKWh    int64   `json:"consumptionTEMicrosPerKWh"`
+	ConsumptionTUSDMicrosPerKWh  int64   `json:"consumptionTUSDMicrosPerKWh"`
+	CompensationTEMicrosPerKWh   int64   `json:"compensationTEMicrosPerKWh"`
+	CompensationTUSDMicrosPerKWh int64   `json:"compensationTUSDMicrosPerKWh"`
+	FlagMicrosPerKWh             int64   `json:"flagMicrosPerKWh"`
+	AvailabilityKWh              int     `json:"availabilityKWh"`
+	CIPMinor                     int64   `json:"cipMinor"`
+	SourceURL                    string  `json:"sourceUrl"`
+	ParserVersion                string  `json:"parserVersion"`
+	RetrievedAt                  string  `json:"retrievedAt"`
+	ApprovedAt                   *string `json:"approvedAt"`
+}
+
+type tariffVersionResponse struct {
+	ID                           int64  `json:"id"`
+	Distributor                  string `json:"distributor"`
+	EffectiveFrom                string `json:"effectiveFrom"`
+	EffectiveTo                  string `json:"effectiveTo"`
+	ConsumptionTEMicrosPerKWh    int64  `json:"consumptionTEMicrosPerKWh"`
+	ConsumptionTUSDMicrosPerKWh  int64  `json:"consumptionTUSDMicrosPerKWh"`
+	CompensationTEMicrosPerKWh   int64  `json:"compensationTEMicrosPerKWh"`
+	CompensationTUSDMicrosPerKWh int64  `json:"compensationTUSDMicrosPerKWh"`
+	FlagMicrosPerKWh             int64  `json:"flagMicrosPerKWh"`
+	AvailabilityKWh              int    `json:"availabilityKWh"`
+	CIPMinor                     int64  `json:"cipMinor"`
+	SourceURL                    string `json:"sourceUrl"`
+	RetrievedAt                  string `json:"retrievedAt"`
+	ApprovedAt                   string `json:"approvedAt"`
+}
+
+func (a *API) financeSummary(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	projection, exists, err := store.LatestProjection(r.Context(), a.dependencies.Now())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "finance summary could not be loaded")
+		return
+	}
+	cycles, err := store.ListCycles(r.Context(), 12)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "finance cycles could not be loaded")
+		return
+	}
+	response := financeSummaryResponse{Cycles: cycleResponses(cycles)}
+	if exists {
+		item := projectionResponse(projection)
+		response.LatestProjection = &item
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *API) financeCycles(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	cycles, err := store.ListCycles(r.Context(), 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "finance cycles could not be loaded")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cycles": cycleResponses(cycles)})
+}
+
+func (a *API) createFinanceCycle(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	var body billingCycleDTO
+	if err := decodeBillingCycle(r, &body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle must contain only valid fields")
+		return
+	}
+	cycle, err := body.domain()
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", err.Error())
+		return
+	}
+	principal, ok := auth.PrincipalFromRequest(r)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "finance actor is unavailable")
+		return
+	}
+	saved, projection, err := store.SaveCycle(r.Context(), cycle, principal.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle could not be saved")
+		return
+	}
+	// The component breakdown remains an estimate even when the entered bill
+	// total is authoritative: Helio has no meter-level import/export data.
+	projection.IsEstimate = true
+	writeJSON(w, http.StatusCreated, map[string]any{"cycle": cycleResponse(saved), "projection": projectionResponse(projection)})
+}
+
+func (a *API) tariffProposals(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	proposals, err := store.ListTariffProposals(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "tariff proposals could not be loaded")
+		return
+	}
+	items := make([]tariffProposalResponse, 0, len(proposals))
+	for _, proposal := range proposals {
+		items = append(items, proposalResponse(proposal))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposals": items})
+}
+
+func (a *API) approveTariffProposal(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", "tariff proposal id must be a positive integer")
+		return
+	}
+	principal, ok := auth.PrincipalFromRequest(r)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "finance actor is unavailable")
+		return
+	}
+	tariff, err := store.ApproveProposal(r.Context(), id, principal.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", "tariff proposal could not be approved")
+		return
+	}
+	writeJSON(w, http.StatusCreated, tariffResponse(tariff))
+}
+
+func (a *API) financeStore(w http.ResponseWriter) (FinanceStore, bool) {
+	if a.dependencies.Finance == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "finance is unavailable")
+		return nil, false
+	}
+	return a.dependencies.Finance, true
+}
+
+func cycleResponses(cycles []domain.BillingCycle) []billingCycleResponse {
+	items := make([]billingCycleResponse, 0, len(cycles))
+	for _, cycle := range cycles {
+		items = append(items, cycleResponse(cycle))
+	}
+	return items
+}
+
+func cycleResponse(c domain.BillingCycle) billingCycleResponse {
+	return billingCycleResponse{ID: c.ID, ReadingStart: rfc3339(c.ReadingStart), ReadingEnd: rfc3339(c.ReadingEnd), ActiveConsumptionKWh: c.ActiveConsumptionKWh, InjectedKWh: c.InjectedKWh, CreditsUsedKWh: c.CreditsUsedKWh, CreditBalanceKWh: c.CreditBalanceKWh, TotalPaidMinor: c.TotalPaidMinor, TariffVersionID: c.TariffVersionID}
+}
+func projectionResponse(p domain.FinancialProjection) financialProjectionResponse {
+	return financialProjectionResponse{ID: p.ID, BillingCycleID: p.BillingCycleID, TariffVersionID: p.TariffVersionID, ConsumptionMinor: p.ConsumptionMinor, CompensationMinor: p.CompensationMinor, FlagMinor: p.FlagMinor, TaxesMinor: p.TaxesMinor, CIPMinor: p.CIPMinor, TotalMinor: p.TotalMinor, WithoutSolarCompensationMinor: p.WithoutSolarCompensationMinor, IsEstimate: p.IsEstimate, CalculatedAt: rfc3339(p.CalculatedAt)}
+}
+func proposalResponse(p domain.TariffProposal) tariffProposalResponse {
+	response := tariffProposalResponse{ID: p.ID, Distributor: p.Distributor, EffectiveFrom: rfc3339(p.EffectiveFrom), EffectiveTo: rfc3339(p.EffectiveTo), ConsumptionTEMicrosPerKWh: p.ConsumptionTEMicrosPerKWh, ConsumptionTUSDMicrosPerKWh: p.ConsumptionTUSDMicrosPerKWh, CompensationTEMicrosPerKWh: p.CompensationTEMicrosPerKWh, CompensationTUSDMicrosPerKWh: p.CompensationTUSDMicrosPerKWh, FlagMicrosPerKWh: p.FlagMicrosPerKWh, AvailabilityKWh: p.AvailabilityKWh, CIPMinor: p.CIPMinor, SourceURL: p.SourceURL, ParserVersion: p.ParserVersion, RetrievedAt: rfc3339(p.RetrievedAt)}
+	if !p.ApprovedAt.IsZero() {
+		value := rfc3339(p.ApprovedAt)
+		response.ApprovedAt = &value
+	}
+	return response
+}
+func tariffResponse(t domain.TariffVersion) tariffVersionResponse {
+	return tariffVersionResponse{ID: t.ID, Distributor: t.Distributor, EffectiveFrom: rfc3339(t.EffectiveFrom), EffectiveTo: rfc3339(t.EffectiveTo), ConsumptionTEMicrosPerKWh: t.ConsumptionTEMicrosPerKWh, ConsumptionTUSDMicrosPerKWh: t.ConsumptionTUSDMicrosPerKWh, CompensationTEMicrosPerKWh: t.CompensationTEMicrosPerKWh, CompensationTUSDMicrosPerKWh: t.CompensationTUSDMicrosPerKWh, FlagMicrosPerKWh: t.FlagMicrosPerKWh, AvailabilityKWh: t.AvailabilityKWh, CIPMinor: t.CIPMinor, SourceURL: t.SourceURL, RetrievedAt: rfc3339(t.RetrievedAt), ApprovedAt: rfc3339(t.ApprovedAt)}
+}
+func rfc3339(value time.Time) string { return value.UTC().Format(time.RFC3339) }
