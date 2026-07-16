@@ -49,6 +49,63 @@ export interface Settings {
   installedPowerW?: number
 }
 
+export interface BillingCycle {
+  activeConsumptionKWh: number
+  creditBalanceKWh: number
+  creditsUsedKWh: number
+  id: number
+  injectedKWh: number
+  readingEnd: string
+  readingStart: string
+  tariffVersionId: number
+  totalPaidMinor: number
+}
+
+export interface FinancialProjection {
+  billingCycleId: number
+  calculatedAt: string
+  cipMinor: number
+  compensationMinor: number
+  consumptionMinor: number
+  flagMinor: number
+  id: number
+  isEstimate: boolean
+  tariffVersionId: number
+  taxesMinor: number
+  totalMinor: number
+  withoutSolarCompensationMinor: number
+}
+
+export interface FinanceSummary { cycles: BillingCycle[]; latestProjection: FinancialProjection | null }
+
+export interface TariffProposal {
+  approvedAt: string | null
+  availabilityKWh: number
+  cipMinor: number
+  compensationTEMicrosPerKWh: number
+  compensationTUSDMicrosPerKWh: number
+  consumptionTEMicrosPerKWh: number
+  consumptionTUSDMicrosPerKWh: number
+  distributor: string
+  effectiveFrom: string
+  effectiveTo: string
+  flagMicrosPerKWh: number
+  id: number
+  parserVersion: string
+  retrievedAt: string
+  sourceUrl: string
+}
+
+export interface BillingCycleInput {
+  activeConsumptionKWh: number
+  creditBalanceKWh: number
+  creditsUsedKWh: number
+  injectedKWh: number
+  readingEnd: string
+  readingStart: string
+  totalPaidMinor: number
+}
+
 export interface MPPTTelemetry {
   active: boolean
   currentA: number

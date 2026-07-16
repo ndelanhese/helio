@@ -18,6 +18,7 @@ Vendor solar apps often hide useful telemetry behind slow cloud interfaces and w
 - Weather-adjusted production expectations
 - Clear alerts for stale data, faults, and persistent underproduction
 - Estimated production value using a configurable tariff
+- Finance dashboard with explicit official-tariff approval, bill reconciliation, and credit-expiry visibility
 - Responsive light/dark interface for desktop and phone
 - Local authentication
 - CSV export and documented local API

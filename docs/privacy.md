@@ -2,6 +2,10 @@
 
 Helio is local-first: the Solarman logger is read directly over the LAN, raw telemetry and aggregates are stored in the local SQLite volume, authentication is local, and the browser talks to the same Helio origin. Helio has no vendor-cloud account integration and no analytics or crash-reporting SDK.
 
+## Finance data and tariff sources
+
+Billing-cycle values, approved tariff versions, projected component rows, and credit balances remain in the local SQLite volume. The browser only renders the server-returned financial values; it does not calculate tariffs or savings. A tariff proposal records its official source URL and retrieval time, and requires an explicit local approval before it can be used for reconciliation. Operators should treat bill totals and source links as sensitive household energy information when exporting or sharing backups.
+
 ## Outbound weather request
 
 Weather-aware analysis is the one intentional external data path in v0.1. About once per hour, the Go process sends an HTTPS request to `api.open-meteo.com`. The query contains:
