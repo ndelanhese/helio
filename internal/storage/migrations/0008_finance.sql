@@ -25,6 +25,13 @@ BEGIN
     SELECT RAISE(ABORT, 'approved tariff proposal is immutable');
 END;
 
+CREATE TRIGGER tariff_proposals_no_delete_after_approval
+BEFORE DELETE ON tariff_proposals
+WHEN OLD.approved_at IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'approved tariff proposal is immutable');
+END;
+
 CREATE TABLE tariff_versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     proposal_id INTEGER UNIQUE REFERENCES tariff_proposals(id),

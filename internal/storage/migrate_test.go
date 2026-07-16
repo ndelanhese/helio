@@ -42,6 +42,26 @@ func TestFinanceMigrationEnforcesTariffImmutabilityAndConstraints(t *testing.T) 
 	); err != nil {
 		t.Fatal(err)
 	}
+	proposal, err := db.sql.ExecContext(ctx, `
+		INSERT INTO tariff_proposals (
+			distributor, effective_from, effective_to,
+			consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh,
+			compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh,
+			flag_micros_per_kwh, availability_kwh, cip_minor, source_url,
+			parser_version, retrieved_at, approved_at, approved_by
+		) VALUES ('COPEL', '2026-06-24', '2027-06-23', 389503, 538944, 0, 0, 0, 100, 0,
+			'https://example.test/tariff', 'v1', '2026-06-24T00:00:00Z', '2026-06-24T00:00:00Z', 'user-1')`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalID, err := proposal.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `DELETE FROM tariff_proposals WHERE id = ?`, proposalID); err == nil {
+		t.Fatal("approved tariff proposal delete was not rejected")
+	}
 	result, err := db.sql.ExecContext(ctx, `
 		INSERT INTO tariff_versions (
 			distributor, effective_from, effective_to,
