@@ -12,6 +12,7 @@ import (
 
 var (
 	ErrBootstrapClosed = errors.New("bootstrap is closed")
+	ErrImmutable       = errors.New("immutable record")
 	ErrNotFound        = errors.New("not found")
 )
 
