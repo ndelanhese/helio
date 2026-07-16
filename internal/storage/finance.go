@@ -54,6 +54,17 @@ func (r *FinanceRepository) CreateProposal(ctx context.Context, proposal domain.
 	return proposal, nil
 }
 
+// HasApprovedTariff reports whether a user-approved schedule exists. Pending
+// source candidates deliberately do not count as an approved fallback.
+func (r *FinanceRepository) HasApprovedTariff(ctx context.Context) (bool, error) {
+	var exists int
+	err := r.db.sql.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tariff_versions)`).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check approved tariffs: %w", err)
+	}
+	return exists != 0, nil
+}
+
 // UpdateTariff is intentionally rejected: approved tariff versions are immutable.
 func (r *FinanceRepository) UpdateTariff(context.Context, int64, domain.TariffVersion) error {
 	return ErrImmutable

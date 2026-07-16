@@ -34,6 +34,35 @@ func TestApproveProposalMakesImmutableVersion(t *testing.T) {
 	}
 }
 
+func TestHasApprovedTariffReportsOnlyApprovedSchedules(t *testing.T) {
+	ctx, _, repo := financeTestRepository(t)
+	approved, err := repo.HasApprovedTariff(ctx)
+	if err != nil {
+		t.Fatalf("HasApprovedTariff() error = %v", err)
+	}
+	if approved {
+		t.Fatal("HasApprovedTariff() = true before approval, want false")
+	}
+	proposal := storeProposal(t, ctx, repo, candidate("2026-06-24", "2027-06-23"))
+	approved, err = repo.HasApprovedTariff(ctx)
+	if err != nil {
+		t.Fatalf("HasApprovedTariff() after proposal error = %v", err)
+	}
+	if approved {
+		t.Fatal("HasApprovedTariff() = true for pending proposal, want false")
+	}
+	if _, err := repo.ApproveProposal(ctx, proposal.ID, "user-1"); err != nil {
+		t.Fatalf("ApproveProposal() error = %v", err)
+	}
+	approved, err = repo.HasApprovedTariff(ctx)
+	if err != nil {
+		t.Fatalf("HasApprovedTariff() after approval error = %v", err)
+	}
+	if !approved {
+		t.Fatal("HasApprovedTariff() = false after approval, want true")
+	}
+}
+
 func TestSaveCycleConsumesLotsByExpiry(t *testing.T) {
 	ctx, db, repo := financeTestRepository(t)
 	approved := approveCandidate(t, ctx, repo)
