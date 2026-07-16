@@ -98,6 +98,46 @@ func TestSaveCycleStoresInjectedCreditWithCycleProvenance(t *testing.T) {
 	}
 }
 
+func TestSaveCycleConsumesOlderLotsBeforeSameCycleInjection(t *testing.T) {
+	ctx, db, repo := financeTestRepository(t)
+	approved := approveCandidate(t, ctx, repo)
+	seedLots(t, ctx, db, lot("2028-01-01", 100))
+	cycle := cycleWithCredits(120)
+	cycle.TariffVersionID = approved.ID
+	cycle.InjectedKWh = 75
+	cycle.CreditBalanceKWh = 55
+
+	saved, _, err := repo.SaveCycle(ctx, cycle, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := remainingLots(t, ctx, db); len(got) != 2 || got[0] != 0 || got[1] != 55 {
+		t.Fatalf("remaining lots=%v, want [0 55]", got)
+	}
+	var origin int64
+	if err := db.sql.QueryRowContext(ctx, `SELECT origin_cycle_id FROM credit_lots WHERE available_kwh=55`).Scan(&origin); err != nil {
+		t.Fatal(err)
+	}
+	if origin != saved.ID {
+		t.Fatalf("same-cycle lot origin=%d, want %d", origin, saved.ID)
+	}
+}
+
+func TestSaveCycleAllowsSameCycleInjectionToCoverCreditsUsed(t *testing.T) {
+	ctx, db, repo := financeTestRepository(t)
+	approved := approveCandidate(t, ctx, repo)
+	cycle := cycleWithCredits(75)
+	cycle.TariffVersionID = approved.ID
+	cycle.InjectedKWh = 75
+
+	if _, _, err := repo.SaveCycle(ctx, cycle, "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := remainingLots(t, ctx, db); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("remaining lots=%v, want [0]", got)
+	}
+}
+
 func TestSaveCycleRejectsCreditsBeyondTrackedLotsAndRollsBack(t *testing.T) {
 	ctx, db, repo := financeTestRepository(t)
 	approved := approveCandidate(t, ctx, repo)

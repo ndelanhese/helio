@@ -163,13 +163,13 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 	if err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("read bill reconciliation id: %w", err)
 	}
-	if err := consumeCreditLots(ctx, tx, cycle.CreditsUsedKWh); err != nil {
-		return domain.BillingCycle{}, domain.FinancialProjection{}, err
-	}
 	if cycle.InjectedKWh > 0 {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO credit_lots(origin_cycle_id, available_kwh, expires_at, is_partial, created_at) VALUES(?, ?, ?, 0, ?)`, cycle.ID, cycle.InjectedKWh, formatTime(cycle.ReadingEnd.AddDate(5, 0, 0)), formatTime(now)); err != nil {
 			return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("insert injected credit lot: %w", err)
 		}
+	}
+	if err := consumeCreditLots(ctx, tx, cycle.CreditsUsedKWh); err != nil {
+		return domain.BillingCycle{}, domain.FinancialProjection{}, err
 	}
 	remaining, err := remainingCreditLots(ctx, tx)
 	if err != nil {
