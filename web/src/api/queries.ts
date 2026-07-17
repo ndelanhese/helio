@@ -68,6 +68,7 @@ export const financeSummaryQuery = queryOptions({ queryKey: queryKeys.finance, q
 export const tariffProposalsQuery = queryOptions({ queryKey: queryKeys.tariffProposals, queryFn: ({ signal }) => api.request<{ proposals: TariffProposal[] }>('/finance/tariff-proposals', { signal }) })
 
 export function approveTariffProposal(id: number) { return api.request(`/finance/tariff-proposals/${id}/approve`, { method: 'POST', body: {} }) }
+export function createSettingsTariffProposal() { return api.request('/finance/tariff-proposals/from-settings', { method: 'POST', body: {} }) }
 export function createBillingCycle(payload: BillingCycleInput) { return api.request('/finance/cycles', { method: 'POST', body: payload }) }
 
 export function login(payload: LoginPayload) {

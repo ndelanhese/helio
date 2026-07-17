@@ -113,6 +113,42 @@ func TestProposalApprovalIsAudited(t *testing.T) {
 	}
 }
 
+func TestCreateSettingsTariffProposalRequiresReviewBeforeUse(t *testing.T) {
+	f := newFixture(t)
+	cookie, csrf := bootstrap(t, f)
+
+	missingCSRF := request(t, f.handler, http.MethodPost, "/api/v1/finance/tariff-proposals/from-settings", `{}`, cookie, "")
+	if missingCSRF.Code != http.StatusForbidden {
+		t.Fatalf("missing csrf: %d %s", missingCSRF.Code, missingCSRF.Body.String())
+	}
+	created := request(t, f.handler, http.MethodPost, "/api/v1/finance/tariff-proposals/from-settings", `{}`, cookie, csrf)
+	if created.Code != http.StatusCreated || !containsJSON(created.Body.String(), `"distributor":"Tarifa configurada localmente"`) || !containsJSON(created.Body.String(), `"approvedAt":null`) {
+		t.Fatalf("create settings proposal: %d %s", created.Code, created.Body.String())
+	}
+	repeated := request(t, f.handler, http.MethodPost, "/api/v1/finance/tariff-proposals/from-settings", `{}`, cookie, csrf)
+	if repeated.Code != http.StatusOK || !containsJSON(repeated.Body.String(), `"id":1`) {
+		t.Fatalf("repeat settings proposal: %d %s", repeated.Code, repeated.Body.String())
+	}
+}
+
+func TestCreateSettingsTariffProposalUsesChangedSetting(t *testing.T) {
+	f := newFixture(t)
+	cookie, csrf := bootstrap(t, f)
+	first := request(t, f.handler, http.MethodPost, "/api/v1/finance/tariff-proposals/from-settings", `{}`, cookie, csrf)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first proposal: %d %s", first.Code, first.Body.String())
+	}
+	changed := strings.Replace(strings.TrimPrefix(settingsJSON, `"settings":`), `"tariffMinorPerKWh":95`, `"tariffMinorPerKWh":100`, 1)
+	updated := request(t, f.handler, http.MethodPut, "/api/v1/settings", changed, cookie, csrf)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update settings: %d %s", updated.Code, updated.Body.String())
+	}
+	second := request(t, f.handler, http.MethodPost, "/api/v1/finance/tariff-proposals/from-settings", `{}`, cookie, csrf)
+	if second.Code != http.StatusCreated || !containsJSON(second.Body.String(), `"consumptionTEMicrosPerKWh":1000000`) {
+		t.Fatalf("changed proposal: %d %s", second.Code, second.Body.String())
+	}
+}
+
 func approveFinanceTariff(t *testing.T, f fixture, cookie *http.Cookie, csrf string) {
 	t.Helper()
 	proposal, err := f.finance.CreateProposal(context.Background(), domain.TariffProposal{

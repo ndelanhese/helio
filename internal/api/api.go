@@ -38,6 +38,7 @@ type SummaryStore interface {
 }
 
 type FinanceStore interface {
+	CreateProposal(context.Context, domain.TariffProposal) (domain.TariffProposal, error)
 	SaveCycle(context.Context, domain.BillingCycle, string) (domain.BillingCycle, domain.FinancialProjection, error)
 	ListCycles(context.Context, int) ([]domain.BillingCycle, error)
 	LatestProjection(context.Context, time.Time) (domain.FinancialProjection, bool, error)
@@ -112,6 +113,7 @@ func New(d Dependencies) http.Handler {
 		private.Get("/finance/cycles", a.financeCycles)
 		private.With(auth.RequireCSRF).Post("/finance/cycles", a.createFinanceCycle)
 		private.Get("/finance/tariff-proposals", a.tariffProposals)
+		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/from-settings", a.createSettingsTariffProposal)
 		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/{id}/approve", a.approveTariffProposal)
 		r.Mount("/api/v1", private)
 	}
