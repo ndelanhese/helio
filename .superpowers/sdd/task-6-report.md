@@ -33,3 +33,4 @@ The API requires two readings plus five numeric account inputs (seven fields tot
 - Added the legitimate, persisted `flagChargeMinor` billing input, making six bill fields plus readings.
 - Finance summary now provides credit balance and next expiry from credit lots.
 - Display-ready projection rows and tariff delta rows are generated server-side; React renders them without money/rate arithmetic.
+- Updated `docs/api.md` with `flagChargeMinor`, `creditBalanceKWh`, and `nextCreditExpiry` contract fields.

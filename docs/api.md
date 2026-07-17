@@ -44,8 +44,8 @@ Authenticated:
 - `GET /api/v1/alerts?state=open|resolved`; newest-first, maximum 100.
 - `GET /api/v1/settings`; `PUT /api/v1/settings` with CSRF and same-origin checks. Logger host, serial, port, or Modbus-slave changes additionally require a successful `POST /api/v1/auth/confirm-password` for the same session immediately beforehand; confirmation is short-lived and one-shot.
 - `GET /api/v1/data/backup` — consistent SQLite snapshot, audited.
-- `GET /api/v1/finance/summary` — latest projection (or `null`) and the 12 latest billing cycles.
-- `GET /api/v1/finance/cycles`; `POST /api/v1/finance/cycles` with CSRF. The POST body requires RFC3339 `readingStart` and `readingEnd`, plus nonnegative integer `activeConsumptionKWh`, `injectedKWh`, `creditsUsedKWh`, `creditBalanceKWh`, and `totalPaidMinor` (centavos). It returns the saved cycle and an explicitly estimated component projection.
+- `GET /api/v1/finance/summary` — latest projection (or `null`), the 12 latest billing cycles, `creditBalanceKWh`, and `nextCreditExpiry` (RFC3339 or `null`) from the local credit lots.
+- `GET /api/v1/finance/cycles`; `POST /api/v1/finance/cycles` with CSRF. The POST body requires RFC3339 `readingStart` and `readingEnd`, plus nonnegative integer `activeConsumptionKWh`, `injectedKWh`, `creditsUsedKWh`, `creditBalanceKWh`, `flagChargeMinor`, and `totalPaidMinor` (centavos). It returns the saved cycle and an explicitly estimated component projection.
 - `GET /api/v1/finance/tariff-proposals`; `POST /api/v1/finance/tariff-proposals/{id}/approve` with CSRF. Approval creates an immutable tariff version and is audited.
 
 ## SSE, CSV, and errors
