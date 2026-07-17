@@ -21,15 +21,16 @@ func Calculate(t domain.TariffVersion, c domain.BillingCycle) (domain.FinancialP
 	billed := max(c.ActiveConsumptionKWh, int64(t.AvailabilityKWh))
 	consumption := microsToMinor(billed, t.ConsumptionTEMicrosPerKWh+t.ConsumptionTUSDMicrosPerKWh)
 	compensation := microsToMinor(c.CreditsUsedKWh, t.CompensationTEMicrosPerKWh+t.CompensationTUSDMicrosPerKWh)
-	flag := c.FlagChargeMinor
+	flag := microsToMinor(billed, t.FlagMicrosPerKWh)
 
 	return domain.FinancialProjection{
 		ConsumptionMinor:              consumption,
 		CompensationMinor:             compensation,
 		FlagMinor:                     flag,
+		FlagChargeMinor:               c.FlagChargeMinor,
 		CIPMinor:                      t.CIPMinor,
-		TotalMinor:                    consumption - compensation + flag + t.CIPMinor,
-		WithoutSolarCompensationMinor: consumption + flag + t.CIPMinor,
+		TotalMinor:                    consumption - compensation + flag + c.FlagChargeMinor + t.CIPMinor,
+		WithoutSolarCompensationMinor: consumption + flag + c.FlagChargeMinor + t.CIPMinor,
 		IsEstimate:                    true,
 	}, nil
 }

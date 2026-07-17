@@ -34,22 +34,27 @@ func TestCounterfactualRemovesOnlyCompensation(t *testing.T) {
 	}
 }
 
-func TestCalculateIncludesPersistedFlagChargeInBreakdownAndTotals(t *testing.T) {
+func TestCalculateSeparatesApprovedTariffFlagFromManualFlagAdjustment(t *testing.T) {
 	bill := cycle(79, 0, 0, 0)
 	bill.FlagChargeMinor = 50
+	tariff := tariff(100, 389503, 538944)
+	tariff.FlagMicrosPerKWh = 1234
 
-	got, err := finance.Calculate(tariff(100, 389503, 538944), bill)
+	got, err := finance.Calculate(tariff, bill)
 	if err != nil {
 		t.Fatalf("Calculate() error = %v", err)
 	}
-	if got.FlagMinor != 50 {
-		t.Errorf("FlagMinor = %d, want 50", got.FlagMinor)
+	if got.FlagMinor != 12 {
+		t.Errorf("FlagMinor = %d, want 12", got.FlagMinor)
 	}
-	if got.TotalMinor != 11890 {
-		t.Errorf("TotalMinor = %d, want 11890", got.TotalMinor)
+	if got.FlagChargeMinor != 50 {
+		t.Errorf("FlagChargeMinor = %d, want 50", got.FlagChargeMinor)
 	}
-	if got.WithoutSolarCompensationMinor != 11890 {
-		t.Errorf("WithoutSolarCompensationMinor = %d, want 11890", got.WithoutSolarCompensationMinor)
+	if got.TotalMinor != 11902 {
+		t.Errorf("TotalMinor = %d, want 11902", got.TotalMinor)
+	}
+	if got.WithoutSolarCompensationMinor != 11902 {
+		t.Errorf("WithoutSolarCompensationMinor = %d, want 11902", got.WithoutSolarCompensationMinor)
 	}
 }
 

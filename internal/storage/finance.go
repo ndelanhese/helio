@@ -463,7 +463,7 @@ func remainingCreditLots(ctx context.Context, tx *sql.Tx) (int64, error) {
 	return remaining, nil
 }
 
-const projectionSelect = `SELECT r.id, r.billing_cycle_id, c.tariff_version_id, r.projection_consumption_minor, r.projection_compensation_minor, r.projection_flag_minor, r.projection_taxes_minor, r.projection_cip_minor, r.projection_total_minor, r.without_solar_compensation_minor, r.is_estimate, r.calculated_at FROM bill_reconciliations r JOIN billing_cycles c ON c.id=r.billing_cycle_id`
+const projectionSelect = `SELECT r.id, r.billing_cycle_id, c.tariff_version_id, r.projection_consumption_minor, r.projection_compensation_minor, r.projection_flag_minor, c.flag_charge_minor, r.projection_taxes_minor, r.projection_cip_minor, r.projection_total_minor, r.without_solar_compensation_minor, r.is_estimate, r.calculated_at FROM bill_reconciliations r JOIN billing_cycles c ON c.id=r.billing_cycle_id`
 
 type rowScanner interface{ Scan(...any) error }
 
@@ -471,7 +471,7 @@ func scanProjection(row rowScanner) (domain.FinancialProjection, error) {
 	var projection domain.FinancialProjection
 	var estimate int
 	var calculatedAt string
-	err := row.Scan(&projection.ID, &projection.BillingCycleID, &projection.TariffVersionID, &projection.ConsumptionMinor, &projection.CompensationMinor, &projection.FlagMinor, &projection.TaxesMinor, &projection.CIPMinor, &projection.TotalMinor, &projection.WithoutSolarCompensationMinor, &estimate, &calculatedAt)
+	err := row.Scan(&projection.ID, &projection.BillingCycleID, &projection.TariffVersionID, &projection.ConsumptionMinor, &projection.CompensationMinor, &projection.FlagMinor, &projection.FlagChargeMinor, &projection.TaxesMinor, &projection.CIPMinor, &projection.TotalMinor, &projection.WithoutSolarCompensationMinor, &estimate, &calculatedAt)
 	if err != nil {
 		return domain.FinancialProjection{}, err
 	}

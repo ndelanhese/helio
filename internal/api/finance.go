@@ -39,6 +39,7 @@ type financialProjectionResponse struct {
 	ConsumptionMinor              int64        `json:"consumptionMinor"`
 	CompensationMinor             int64        `json:"compensationMinor"`
 	FlagMinor                     int64        `json:"flagMinor"`
+	FlagChargeMinor               int64        `json:"flagChargeMinor"`
 	TaxesMinor                    int64        `json:"taxesMinor"`
 	CIPMinor                      int64        `json:"cipMinor"`
 	TotalMinor                    int64        `json:"totalMinor"`
@@ -253,7 +254,7 @@ func cycleResponse(c domain.BillingCycle) billingCycleResponse {
 	return billingCycleResponse{ID: c.ID, ReadingStart: rfc3339(c.ReadingStart), ReadingEnd: rfc3339(c.ReadingEnd), ActiveConsumptionKWh: c.ActiveConsumptionKWh, InjectedKWh: c.InjectedKWh, CreditsUsedKWh: c.CreditsUsedKWh, CreditBalanceKWh: c.CreditBalanceKWh, TotalPaidMinor: c.TotalPaidMinor, FlagChargeMinor: c.FlagChargeMinor, TariffVersionID: c.TariffVersionID}
 }
 func projectionResponse(p domain.FinancialProjection) financialProjectionResponse {
-	return financialProjectionResponse{ID: p.ID, BillingCycleID: p.BillingCycleID, TariffVersionID: p.TariffVersionID, ConsumptionMinor: p.ConsumptionMinor, CompensationMinor: p.CompensationMinor, FlagMinor: p.FlagMinor, TaxesMinor: p.TaxesMinor, CIPMinor: p.CIPMinor, TotalMinor: p.TotalMinor, WithoutSolarCompensationMinor: p.WithoutSolarCompensationMinor, IsEstimate: p.IsEstimate, CalculatedAt: rfc3339(p.CalculatedAt), DisplayTotal: moneyBRL(p.TotalMinor), DisplayWithoutSolar: moneyBRL(p.WithoutSolarCompensationMinor), DisplayRows: []displayRow{{"Consumo", moneyBRL(p.ConsumptionMinor)}, {"Compensação", moneyBRL(p.CompensationMinor)}, {"Bandeira", moneyBRL(p.FlagMinor)}, {"Tributos", moneyBRL(p.TaxesMinor)}, {"CIP", moneyBRL(p.CIPMinor)}}}
+	return financialProjectionResponse{ID: p.ID, BillingCycleID: p.BillingCycleID, TariffVersionID: p.TariffVersionID, ConsumptionMinor: p.ConsumptionMinor, CompensationMinor: p.CompensationMinor, FlagMinor: p.FlagMinor, FlagChargeMinor: p.FlagChargeMinor, TaxesMinor: p.TaxesMinor, CIPMinor: p.CIPMinor, TotalMinor: p.TotalMinor, WithoutSolarCompensationMinor: p.WithoutSolarCompensationMinor, IsEstimate: p.IsEstimate, CalculatedAt: rfc3339(p.CalculatedAt), DisplayTotal: moneyBRL(p.TotalMinor), DisplayWithoutSolar: moneyBRL(p.WithoutSolarCompensationMinor), DisplayRows: []displayRow{{"Consumo", moneyBRL(p.ConsumptionMinor)}, {"Compensação", moneyBRL(p.CompensationMinor)}, {"Bandeira tarifária", moneyBRL(p.FlagMinor)}, {"Ajuste manual de bandeira", moneyBRL(p.FlagChargeMinor)}, {"Tributos", moneyBRL(p.TaxesMinor)}, {"CIP", moneyBRL(p.CIPMinor)}}}
 }
 func moneyBRL(value int64) string { return fmt.Sprintf("R$ %d,%02d", value/100, value%100) }
 func tariffRateRows(p domain.TariffProposal, a domain.TariffVersion) []tariffRateRow {

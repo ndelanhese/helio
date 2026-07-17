@@ -69,6 +69,7 @@ export interface FinancialProjection {
   compensationMinor: number
   consumptionMinor: number
   flagMinor: number
+  flagChargeMinor: number
   id: number
   isEstimate: boolean
   tariffVersionId: number

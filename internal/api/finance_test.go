@@ -26,7 +26,7 @@ func TestCreateCycleRequiresCSRFAndReturnsProjection(t *testing.T) {
 		t.Fatalf("missing csrf: %d %s", missingCSRF.Code, missingCSRF.Body.String())
 	}
 	response := request(t, f.handler, http.MethodPost, "/api/v1/finance/cycles", validCycleJSON, cookie, csrf)
-	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" || !containsJSON(response.Body.String(), `"isEstimate":true`) || !containsJSON(response.Body.String(), `"label":"Bandeira","value":"R$ 0,50"`) {
+	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" || !containsJSON(response.Body.String(), `"isEstimate":true`) || !containsJSON(response.Body.String(), `"label":"Bandeira tarifária","value":"R$ 0,00"`) || !containsJSON(response.Body.String(), `"label":"Ajuste manual de bandeira","value":"R$ 0,50"`) {
 		t.Fatalf("create cycle: %d %s", response.Code, response.Body.String())
 	}
 }

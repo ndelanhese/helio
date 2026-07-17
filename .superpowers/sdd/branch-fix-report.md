@@ -6,6 +6,7 @@
 - Billing form submits `YYYY-MM-DD` civil dates. The API accepts those dates in the configured billing timezone while continuing to accept RFC3339 for compatibility.
 - Persisted `flagChargeMinor` is now included as `FlagMinor`, the projected total, the no-solar total, and the server display rows.
 - Tariff refresh now occurs before optional analysis, so analysis failures do not suppress the daily source refresh or its health status.
+- Follow-up P1: approved `FlagMicrosPerKWh` is calculated from billed kWh into `FlagMinor`; entered `FlagChargeMinor` remains a separate manual adjustment in persisted projections, JSON, and display rows.
 
 ## Verification
 

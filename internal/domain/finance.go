@@ -55,11 +55,11 @@ type CreditLot struct {
 // FinancialProjection contains the integer-centavo breakdown of a bill
 // estimate or reconciliation.
 type FinancialProjection struct {
-	ID, BillingCycleID, TariffVersionID                        int64
-	ConsumptionMinor, CompensationMinor, FlagMinor, TaxesMinor int64
-	CIPMinor, TotalMinor, WithoutSolarCompensationMinor        int64
-	IsEstimate                                                 bool
-	CalculatedAt                                               time.Time
+	ID, BillingCycleID, TariffVersionID                                         int64
+	ConsumptionMinor, CompensationMinor, FlagMinor, FlagChargeMinor, TaxesMinor int64
+	CIPMinor, TotalMinor, WithoutSolarCompensationMinor                         int64
+	IsEstimate                                                                  bool
+	CalculatedAt                                                                time.Time
 }
 
 func ValidateTariffVersion(t TariffVersion) error {
@@ -91,7 +91,7 @@ func ValidateBillingCycle(c BillingCycle) error {
 		return fmt.Errorf("reading end must follow reading start")
 	}
 	if c.ActiveConsumptionKWh < 0 || c.InjectedKWh < 0 || c.CreditsUsedKWh < 0 ||
-	c.CreditBalanceKWh < 0 || c.TotalPaidMinor < 0 || c.FlagChargeMinor < 0 || c.TariffVersionID < 0 {
+		c.CreditBalanceKWh < 0 || c.TotalPaidMinor < 0 || c.FlagChargeMinor < 0 || c.TariffVersionID < 0 {
 		return fmt.Errorf("billing cycle amounts must be nonnegative")
 	}
 	if c.CreditsUsedKWh > c.ActiveConsumptionKWh {
