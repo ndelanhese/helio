@@ -187,6 +187,29 @@ func (a *API) createFinanceCycle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"cycle": cycleResponse(saved), "projection": projectionResponse(projection)})
 }
 
+func (a *API) recalculateFinanceCycle(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle id must be a positive integer")
+		return
+	}
+	principal, ok := auth.PrincipalFromRequest(r)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "finance actor is unavailable")
+		return
+	}
+	projection, err := store.RecalculateCycle(r.Context(), id, principal.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle could not be recalculated")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projection": projectionResponse(projection)})
+}
+
 func (a *API) tariffProposals(w http.ResponseWriter, r *http.Request) {
 	store, ok := a.financeStore(w)
 	if !ok {

@@ -46,6 +46,7 @@ type FinanceStore interface {
 	LatestTariff(context.Context) (domain.TariffVersion, bool, error)
 	ListTariffProposals(context.Context) ([]domain.TariffProposal, error)
 	ApproveProposal(context.Context, int64, string) (domain.TariffVersion, error)
+	RecalculateCycle(context.Context, int64, string) (domain.FinancialProjection, error)
 }
 
 type Dependencies struct {
@@ -112,6 +113,7 @@ func New(d Dependencies) http.Handler {
 		private.Get("/finance/summary", a.financeSummary)
 		private.Get("/finance/cycles", a.financeCycles)
 		private.With(auth.RequireCSRF).Post("/finance/cycles", a.createFinanceCycle)
+		private.With(auth.RequireCSRF).Post("/finance/cycles/{id}/recalculate", a.recalculateFinanceCycle)
 		private.Get("/finance/tariff-proposals", a.tariffProposals)
 		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/from-settings", a.createSettingsTariffProposal)
 		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/manual", a.createManualTariffProposal)

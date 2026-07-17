@@ -220,6 +220,35 @@ func TestSaveCycleSelectsTariffByConfiguredBillingCalendarDate(t *testing.T) {
 	}
 }
 
+func TestRecalculateCycleUsesLatestApprovedTariffAndAudits(t *testing.T) {
+	ctx, db, repo := financeTestRepository(t)
+	first := approveCandidate(t, ctx, repo)
+	cycle := cycleWithCredits(0)
+	cycle.TariffVersionID = first.ID
+	saved, _, err := repo.SaveCycle(ctx, cycle, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedCandidate := candidate("2026-06-24", "2027-06-23")
+	updatedCandidate.SourceURL = "/finance"
+	updatedCandidate.CIPMinor = 2556
+	updated := approveProposal(t, ctx, repo, updatedCandidate)
+	projection, err := repo.RecalculateCycle(ctx, saved.ID, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.TariffVersionID != updated.ID {
+		t.Fatalf("recalculated tariff=%d, want %d", projection.TariffVersionID, updated.ID)
+	}
+	var count int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM action_audit WHERE action='billing_cycle.recalculate_tariff'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("recalculation audits=%d, want 1", count)
+	}
+}
+
 func TestSaveCycleRejectsNegativeReportedBalanceDifference(t *testing.T) {
 	ctx, db, repo := financeTestRepository(t)
 	approved := approveCandidate(t, ctx, repo)

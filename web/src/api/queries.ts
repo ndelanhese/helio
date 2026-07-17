@@ -71,6 +71,7 @@ export function approveTariffProposal(id: number) { return api.request(`/finance
 export function createSettingsTariffProposal() { return api.request('/finance/tariff-proposals/from-settings', { method: 'POST', body: {} }) }
 export function createManualTariffProposal(payload: ManualTariffInput) { return api.request('/finance/tariff-proposals/manual', { method: 'POST', body: payload }) }
 export function createBillingCycle(payload: BillingCycleInput) { return api.request('/finance/cycles', { method: 'POST', body: payload }) }
+export function recalculateBillingCycle(id: number) { return api.request(`/finance/cycles/${id}/recalculate`, { method: 'POST', body: {} }) }
 
 export function login(payload: LoginPayload) {
   return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload })
