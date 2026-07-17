@@ -200,6 +200,18 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 			return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("insert injected credit lot: %w", err)
 		}
 	}
+	availableBeforeUse, err := remainingCreditLots(ctx, tx)
+	if err != nil {
+		return domain.BillingCycle{}, domain.FinancialProjection{}, err
+	}
+	if missing := cycle.CreditsUsedKWh - availableBeforeUse; missing > 0 {
+		// A first manually entered bill may report a real credit consumption
+		// before Helio knows its individual origins. Track only that missing
+		// portion as an estimated lot; the reported closing balance reconciles it.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO credit_lots(origin_cycle_id, available_kwh, expires_at, is_partial, created_at) VALUES(NULL, ?, ?, 1, ?)`, missing, formatTime(cycle.ReadingEnd.AddDate(5, 0, 0)), formatTime(now)); err != nil {
+			return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("insert historical credit lot: %w", err)
+		}
+	}
 	if err := consumeCreditLots(ctx, tx, cycle.CreditsUsedKWh); err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, err
 	}

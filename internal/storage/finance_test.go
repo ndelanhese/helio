@@ -167,25 +167,26 @@ func TestSaveCycleAllowsSameCycleInjectionToCoverCreditsUsed(t *testing.T) {
 	}
 }
 
-func TestSaveCycleRejectsCreditsBeyondTrackedLotsAndRollsBack(t *testing.T) {
+func TestSaveCycleInfersHistoricalCreditsForFirstManualBill(t *testing.T) {
 	ctx, db, repo := financeTestRepository(t)
 	approved := approveCandidate(t, ctx, repo)
-	seedLots(t, ctx, db, lot("2028-01-01", 100))
-	cycle := cycleWithCredits(101)
+	cycle := cycleWithCredits(259)
 	cycle.TariffVersionID = approved.ID
+	cycle.InjectedKWh = 243
+	cycle.CreditBalanceKWh = 4_866
 
-	if _, _, err := repo.SaveCycle(ctx, cycle, "user-1"); err == nil {
-		t.Fatal("SaveCycle() succeeded after consuming more than the tracked lots")
+	if _, _, err := repo.SaveCycle(ctx, cycle, "user-1"); err != nil {
+		t.Fatalf("SaveCycle() error = %v", err)
 	}
-	if got := remainingLots(t, ctx, db); len(got) != 1 || got[0] != 100 {
-		t.Fatalf("remaining lots after rollback=%v, want [100]", got)
+	if got := remainingLots(t, ctx, db); len(got) != 3 || got[0] != 0 || got[1] != 0 || got[2] != 4_866 {
+		t.Fatalf("remaining lots=%v, want [0 0 4866]", got)
 	}
-	var cycles int
-	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM billing_cycles`).Scan(&cycles); err != nil {
+	var partials int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_lots WHERE is_partial=1`).Scan(&partials); err != nil {
 		t.Fatal(err)
 	}
-	if cycles != 0 {
-		t.Fatalf("cycles after rollback=%d, want 0", cycles)
+	if partials != 2 {
+		t.Fatalf("partial lots=%d, want 2", partials)
 	}
 }
 
