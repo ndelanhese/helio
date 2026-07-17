@@ -25,6 +25,7 @@ type fixture struct {
 	db       *storage.DB
 	dbDir    string
 	repo     *storage.TelemetryRepository
+	finance  *storage.FinanceRepository
 	hub      *collector.Hub
 	shutdown context.CancelFunc
 }
@@ -39,17 +40,25 @@ func newFixture(t *testing.T) fixture {
 	t.Cleanup(func() { _ = db.Close() })
 	hub := collector.NewHub()
 	repo := storage.NewTelemetryRepository(db, time.UTC)
+	finance := storage.NewFinanceRepository(db)
 	manager := auth.NewManager(db)
 	shutdownContext, shutdown := context.WithCancel(context.Background())
 	return fixture{handler: api.New(api.Dependencies{
-		Auth: manager, Store: db, History: repo, Hub: hub,
+		Auth: manager, Store: db, History: repo, Finance: finance, Hub: hub,
 		Latest:          func() collector.State { return collector.State{} },
 		Now:             func() time.Time { return time.Date(2026, 7, 14, 15, 4, 5, 0, time.UTC) },
 		ShutdownContext: shutdownContext,
 		ApplySettings: func(ctx context.Context, settings domain.Settings, actor string) error {
 			return db.ApplySettings(ctx, settings, actor, false)
 		},
-	}), db: db, dbDir: dbDir, repo: repo, hub: hub, shutdown: shutdown}
+		BillingLocation: func(ctx context.Context) (*time.Location, error) {
+			settings, err := db.GetSettings(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return time.LoadLocation(settings.Timezone)
+		},
+	}), db: db, dbDir: dbDir, repo: repo, finance: finance, hub: hub, shutdown: shutdown}
 }
 
 func request(t *testing.T, h http.Handler, method, target, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
@@ -358,6 +367,28 @@ func TestComponentHealthIncludesExplicitWeatherState(t *testing.T) {
 	rec := request(t, f.handler, http.MethodGet, "/health/components", "", nil, "")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"weather":"unavailable"`) {
 		t.Fatalf("components: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComponentHealthReportsTariffStateAndTimesOnly(t *testing.T) {
+	updated := "2026-07-16T12:00:00Z"
+	fetched := "2026-07-16T11:59:00Z"
+	handler := api.New(api.Dependencies{Components: func(context.Context) api.ComponentStatus {
+		return api.ComponentStatus{Database: "ok", Logger: "online", Collector: "running", Weather: "available", Tariff: "stale", TariffUpdatedAt: updated, TariffFetchedAt: fetched}
+	}})
+	rec := request(t, handler, http.MethodGet, "/health/components", "", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["tariff"] != "stale" || body["tariffUpdatedAt"] != updated || body["tariffFetchedAt"] != fetched {
+		t.Fatalf("tariff health = %#v", body)
+	}
+	if _, found := body["tariffErrorClass"]; found {
+		t.Fatalf("tariff health exposed an error class: %#v", body)
 	}
 }
 

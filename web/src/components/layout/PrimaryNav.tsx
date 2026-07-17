@@ -1,9 +1,10 @@
-import { ChartNoAxesCombined, Clock3, Gauge, Settings } from 'lucide-react'
+import { ChartNoAxesCombined, Clock3, Gauge, Settings, WalletCards } from 'lucide-react'
 
 const destinations = [
   { href: '/', icon: Gauge, label: 'Agora' },
   { href: '/history', icon: Clock3, label: 'Histórico' },
   { href: '/insights', icon: ChartNoAxesCombined, label: 'Insights' },
+  { href: '/finance', icon: WalletCards, label: 'Financeiro' },
   { href: '/settings', icon: Settings, label: 'Configurações' },
 ]
 

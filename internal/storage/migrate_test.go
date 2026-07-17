@@ -9,6 +9,105 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestFinanceMigrationCreatesTables(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	for _, table := range []string{
+		"tariff_proposals", "tariff_versions", "billing_cycles", "credit_lots", "bill_reconciliations",
+	} {
+		var got string
+		err := db.sql.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table,
+		).Scan(&got)
+		if err != nil || got != table {
+			t.Fatalf("table %s: %v", table, err)
+		}
+	}
+}
+
+func TestFinanceMigrationEnforcesTariffImmutabilityAndConstraints(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "helio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.sql.ExecContext(ctx,
+		`INSERT INTO users(id, username, password_hash, created_at) VALUES ('user-1', 'finance', 'hash', '2026-01-01')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := db.sql.ExecContext(ctx, `
+		INSERT INTO tariff_proposals (
+			distributor, effective_from, effective_to,
+			consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh,
+			compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh,
+			flag_micros_per_kwh, availability_kwh, cip_minor, source_url,
+			parser_version, retrieved_at, approved_at, approved_by
+		) VALUES ('COPEL', '2026-06-24', '2027-06-23', 389503, 538944, 0, 0, 0, 100, 0,
+			'https://example.test/tariff', 'v1', '2026-06-24T00:00:00Z', '2026-06-24T00:00:00Z', 'user-1')`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalID, err := proposal.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `DELETE FROM tariff_proposals WHERE id = ?`, proposalID); err == nil {
+		t.Fatal("approved tariff proposal delete was not rejected")
+	}
+	result, err := db.sql.ExecContext(ctx, `
+		INSERT INTO tariff_versions (
+			distributor, effective_from, effective_to,
+			consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh,
+			compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh,
+			flag_micros_per_kwh, availability_kwh, cip_minor, source_url,
+			retrieved_at, approved_at, approved_by
+		) VALUES ('COPEL', '2026-06-24', '2027-06-23', 389503, 538944, 0, 0, 0, 100, 0,
+			'https://example.test/tariff', '2026-06-24T00:00:00Z', '2026-06-24T00:00:00Z', 'user-1')`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tariffID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.sql.ExecContext(ctx, `UPDATE tariff_versions SET cip_minor = 1 WHERE id = ?`, tariffID); err == nil {
+		t.Fatal("approved tariff version update was not rejected")
+	}
+	if _, err := db.sql.ExecContext(ctx, `DELETE FROM tariff_versions WHERE id = ?`, tariffID); err == nil {
+		t.Fatal("approved tariff version delete was not rejected")
+	}
+	if _, err := db.sql.ExecContext(ctx, `
+		INSERT INTO tariff_versions (
+			distributor, effective_from, effective_to,
+			consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh,
+			compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh,
+			flag_micros_per_kwh, availability_kwh, cip_minor, source_url,
+			retrieved_at, approved_at, approved_by
+		) VALUES ('COPEL', '2026-06-24', '2027-06-23', -1, 538944, 0, 0, 0, 100, 0,
+			'https://example.test/tariff', '2026-06-24T00:00:00Z', '2026-06-24T00:00:00Z', 'user-1')`,
+	); err == nil {
+		t.Fatal("negative tariff rate was not rejected")
+	}
+	if _, err := db.sql.ExecContext(ctx, `
+		INSERT INTO billing_cycles (
+			reading_start, reading_end, active_consumption_kwh, injected_kwh,
+			credits_used_kwh, credit_balance_kwh, total_paid_minor, tariff_version_id, created_at
+		) VALUES ('2026-06-24', '2026-07-23', 1, 0, 0, 0, 1, 9999, '2026-07-23T00:00:00Z')`,
+	); err == nil {
+		t.Fatal("billing cycle with missing tariff version was not rejected")
+	}
+}
+
 func TestMigrationIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "helio.db")
 	first, err := Open(context.Background(), path)

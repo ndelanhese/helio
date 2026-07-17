@@ -17,6 +17,7 @@ import (
 	"github.com/ndelanhese/helio/internal/collector"
 	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/storage"
+	"github.com/ndelanhese/helio/internal/tariffs"
 	"github.com/ndelanhese/helio/internal/weather"
 )
 
@@ -643,6 +644,63 @@ func TestDeterministic35DayAcceptance(t *testing.T) {
 	if err != nil || hasRule(transitions, alerts.RuleZeroSunnyGeneration) {
 		t.Fatalf("weather outage transition=%v err=%v", transitions, err)
 	}
+}
+
+func TestDailyRunRefreshesTariffProposalWithoutApproval(t *testing.T) {
+	refresher := &fakeTariffRefresher{status: tariffs.Status{State: "available", UpdatedAt: time.Date(2026, time.July, 16, 3, 5, 0, 0, time.UTC), FetchedAt: time.Date(2026, time.July, 16, 3, 5, 0, 0, time.UTC)}}
+	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) { return domain.Settings{RetentionDays: 730}, nil }, WithIntegration(Integration{Tariffs: refresher}))
+	now := time.Date(2026, time.July, 17, 3, 5, 0, 0, time.UTC)
+
+	if err := runner.runOnce(context.Background(), now, domain.Settings{RetentionDays: 730}, time.UTC); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+	if refresher.calls != 1 {
+		t.Fatalf("Refresh calls = %d, want 1", refresher.calls)
+	}
+	status := runner.IntegrationStatus().Tariffs
+	if status.State != "available" || !status.FetchedAt.Equal(refresher.status.FetchedAt) {
+		t.Fatalf("tariff status = %#v", status)
+	}
+}
+
+func TestDailyRunKeepsTelemetryProcessingWhenTariffRefreshFails(t *testing.T) {
+	refresher := &fakeTariffRefresher{status: tariffs.Status{State: "stale", UpdatedAt: time.Date(2026, time.July, 16, 3, 5, 0, 0, time.UTC)}, err: errors.New("source unavailable")}
+	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) { return domain.Settings{RetentionDays: 730}, nil }, WithIntegration(Integration{Tariffs: refresher}))
+
+	if err := runner.runOnce(context.Background(), time.Date(2026, time.July, 17, 3, 5, 0, 0, time.UTC), domain.Settings{RetentionDays: 730}, time.UTC); err != nil {
+		t.Fatalf("runOnce() error = %v, want tariff refresh to be non-fatal", err)
+	}
+	if status := runner.IntegrationStatus().Tariffs; status.State != "stale" {
+		t.Fatalf("tariff status = %#v, want stale", status)
+	}
+}
+
+func TestDailyRunRefreshesTariffEvenWhenAnalysisFails(t *testing.T) {
+	refresher := &fakeTariffRefresher{status: tariffs.Status{State: "stale", UpdatedAt: time.Date(2026, time.July, 16, 3, 5, 0, 0, time.UTC)}}
+	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) { return domain.Settings{RetentionDays: 730}, nil }, WithIntegration(Integration{
+		AnalysisData: fakeAnalysisData{dailyErr: errors.New("history unavailable")}, AnalysisWriter: &fakeAnalysisWriter{}, Tariffs: refresher,
+	}))
+
+	if err := runner.runOnce(context.Background(), time.Date(2026, time.July, 17, 3, 5, 0, 0, time.UTC), domain.Settings{RetentionDays: 730}, time.UTC); err == nil {
+		t.Fatal("runOnce() error = nil, want analysis failure")
+	}
+	if refresher.calls != 1 {
+		t.Fatalf("Refresh calls = %d, want 1", refresher.calls)
+	}
+	if status := runner.IntegrationStatus().Tariffs; status.State != "stale" {
+		t.Fatalf("tariff status = %#v, want stale", status)
+	}
+}
+
+type fakeTariffRefresher struct {
+	status tariffs.Status
+	err    error
+	calls  int
+}
+
+func (f *fakeTariffRefresher) Refresh(context.Context) (tariffs.Status, error) {
+	f.calls++
+	return f.status, f.err
 }
 
 func Test35DayCrossStackReplayPersistsAndServesHonestAnalysis(t *testing.T) {

@@ -69,7 +69,10 @@ type fixtureServer struct {
 	sessions      map[string]fakeSession
 	sessionSerial uint64
 	now           func() time.Time
+	finance       fakeFinance
 }
+
+type fakeFinance struct { Approved bool; CycleCount int }
 
 func main() {
 	server := newFixtureServer()
@@ -108,6 +111,10 @@ func (s *fixtureServer) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/history", s.protected(false, s.history))
 	mux.HandleFunc("GET /api/v1/history.csv", s.protected(false, s.historyCSV))
 	mux.HandleFunc("GET /api/v1/insights", s.protected(false, s.insights))
+	mux.HandleFunc("GET /api/v1/finance/summary", s.protected(false, s.financeSummary))
+	mux.HandleFunc("GET /api/v1/finance/tariff-proposals", s.protected(false, s.tariffProposals))
+	mux.HandleFunc("POST /api/v1/finance/tariff-proposals/1/approve", s.protected(true, s.approveTariff))
+	mux.HandleFunc("POST /api/v1/finance/cycles", s.protected(true, s.createFinanceCycle))
 	mux.HandleFunc("GET /api/v1/alerts", s.protected(false, s.alerts))
 	mux.HandleFunc("GET /api/v1/data/backup", s.protected(false, s.backup))
 	mux.HandleFunc("GET /health/components", s.components)
@@ -142,6 +149,7 @@ func (s *fixtureServer) reset(name string) {
 	s.bootstrapOpen = name == "bootstrap-open"
 	s.sessions = make(map[string]fakeSession)
 	s.sessionSerial = 0
+	s.finance = fakeFinance{}
 	if name == "default" || name == "bootstrap-open" || name == "history-gap" {
 		s.settings = defaultSettings()
 		s.live = liveState{Snapshot: baseSnapshot(2070, fixedTimestamp), LastSuccess: fixedTimestamp, Stale: false}
@@ -172,12 +180,12 @@ func (s *fixtureServer) scenario(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", "scenario must be JSON")
 		return
 	}
-	allowed := map[string]bool{"default": true, "bootstrap-open": true, "next-snapshot": true, "logger-outage": true, "recovery": true, "history-gap": true}
+	allowed := map[string]bool{"default": true, "bootstrap-open": true, "next-snapshot": true, "logger-outage": true, "recovery": true, "history-gap": true, "finance": true}
 	if !allowed[body.Name] {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_scenario", "unknown deterministic scenario")
 		return
 	}
-	if body.Name == "default" || body.Name == "bootstrap-open" || body.Name == "history-gap" {
+	if body.Name == "default" || body.Name == "bootstrap-open" || body.Name == "history-gap" || body.Name == "finance" {
 		s.reset(body.Name)
 	} else {
 		s.transition(body.Name)
@@ -227,6 +235,31 @@ func (s *fixtureServer) bootstrapStatus(w http.ResponseWriter, _ *http.Request) 
 	open := s.bootstrapOpen
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"open": open})
+}
+
+func fakeProposal(approved bool) map[string]any {
+	var approvedAt any
+	if approved { approvedAt = "2026-07-14T15:42:00Z" }
+	return map[string]any{"id": 1, "distributor": "COPEL B1 residencial", "effectiveFrom": "2026-06-24T00:00:00Z", "effectiveTo": "2027-06-23T00:00:00Z", "consumptionTEMicrosPerKWh": 610000, "consumptionTUSDMicrosPerKWh": 310000, "compensationTEMicrosPerKWh": 610000, "compensationTUSDMicrosPerKWh": 190000, "flagMicrosPerKWh": 120000, "availabilityKWh": 30, "cipMinor": 5600, "sourceUrl": "https://www.copel.com/", "parserVersion": "fixture-v1", "retrievedAt": "2026-07-14T12:00:00Z", "approvedAt": approvedAt, "displayRates": []any{map[string]any{"label":"TE consumo","approved":"0 µR$/kWh","proposal":"610000 µR$/kWh","delta":"+610000 µR$/kWh"}}}
+}
+
+func fakeProjection() map[string]any { return map[string]any{"id": 1, "billingCycleId": 1, "tariffVersionId": 1, "consumptionMinor": 24510, "compensationMinor": 19094, "flagMinor": 1240, "taxesMinor": 1820, "cipMinor": 5600, "totalMinor": 14176, "withoutSolarCompensationMinor": 33270, "isEstimate": true, "calculatedAt": fixedTimestamp, "displayTotal":"R$ 141,76", "displayWithoutSolar":"R$ 332,70", "displayRows": []any{map[string]any{"label":"Consumo","value":"R$ 245,10"}}} }
+
+func (s *fixtureServer) financeSummary(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock(); finance := s.finance; s.mu.Unlock()
+	response := map[string]any{"latestProjection": nil, "cycles": []any{}, "creditBalanceKWh": 0, "nextCreditExpiry": nil}
+	if finance.CycleCount > 0 { response["latestProjection"] = fakeProjection(); response["creditBalanceKWh"] = 800; response["nextCreditExpiry"] = "2031-07-01T00:00:00Z"; response["cycles"] = []any{map[string]any{"id": 1, "readingStart": "2026-06-01T00:00:00Z", "readingEnd": "2026-07-01T00:00:00Z", "activeConsumptionKWh": 322, "injectedKWh": 100, "creditsUsedKWh": 25, "creditBalanceKWh": 800, "totalPaidMinor": 14176, "flagChargeMinor": 1200, "tariffVersionId": 1}} }
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *fixtureServer) tariffProposals(w http.ResponseWriter, _ *http.Request) { s.mu.Lock(); approved := s.finance.Approved; s.mu.Unlock(); writeJSON(w, http.StatusOK, map[string]any{"proposals": []any{fakeProposal(approved)}}) }
+func (s *fixtureServer) approveTariff(w http.ResponseWriter, _ *http.Request) { s.mu.Lock(); s.finance.Approved = true; s.mu.Unlock(); writeJSON(w, http.StatusCreated, fakeProposal(true)) }
+func (s *fixtureServer) createFinanceCycle(w http.ResponseWriter, r *http.Request) {
+	var body struct { ReadingStart string `json:"readingStart"`; ReadingEnd string `json:"readingEnd"`; ActiveConsumptionKWh int `json:"activeConsumptionKWh"`; InjectedKWh int `json:"injectedKWh"`; CreditsUsedKWh int `json:"creditsUsedKWh"`; CreditBalanceKWh int `json:"creditBalanceKWh"`; FlagChargeMinor int `json:"flagChargeMinor"`; TotalPaidMinor int `json:"totalPaidMinor"` }
+	if !decodeStrict(w, r, &body) { return }
+	s.mu.Lock(); approved := s.finance.Approved; if approved { s.finance.CycleCount++ }; s.mu.Unlock()
+	if !approved { writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle could not be saved"); return }
+	writeJSON(w, http.StatusCreated, map[string]any{"cycle": map[string]any{"activeConsumptionKWh": body.ActiveConsumptionKWh}, "projection": fakeProjection()})
 }
 
 func (s *fixtureServer) bootstrap(w http.ResponseWriter, r *http.Request) {

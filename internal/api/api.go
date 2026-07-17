@@ -37,6 +37,16 @@ type SummaryStore interface {
 	DailyHistory(context.Context, time.Time, time.Time) ([]domain.AggregatePoint, error)
 }
 
+type FinanceStore interface {
+	SaveCycle(context.Context, domain.BillingCycle, string) (domain.BillingCycle, domain.FinancialProjection, error)
+	ListCycles(context.Context, int) ([]domain.BillingCycle, error)
+	LatestProjection(context.Context, time.Time) (domain.FinancialProjection, bool, error)
+	CreditSummary(context.Context) (int64, *time.Time, error)
+	LatestTariff(context.Context) (domain.TariffVersion, bool, error)
+	ListTariffProposals(context.Context) ([]domain.TariffProposal, error)
+	ApproveProposal(context.Context, int64, string) (domain.TariffVersion, error)
+}
+
 type Dependencies struct {
 	Auth              *auth.Manager
 	Store             Store
@@ -44,10 +54,12 @@ type Dependencies struct {
 	Insights          InsightsStore
 	Alerts            AlertStore
 	Summaries         SummaryStore
+	Finance           FinanceStore
 	Latest            func() collector.State
 	Hub               *collector.Hub
 	Reconfigure       func(context.Context, domain.Settings) error
 	ApplySettings     func(context.Context, domain.Settings, string) error
+	BillingLocation   func(context.Context) (*time.Location, error)
 	Components        func(context.Context) ComponentStatus
 	ShutdownContext   context.Context
 	AllowPublicLogger bool
@@ -96,6 +108,11 @@ func New(d Dependencies) http.Handler {
 		private.Get("/settings", a.getSettings)
 		private.With(auth.RequireCSRF).Put("/settings", a.putSettings)
 		private.Get("/data/backup", a.backup)
+		private.Get("/finance/summary", a.financeSummary)
+		private.Get("/finance/cycles", a.financeCycles)
+		private.With(auth.RequireCSRF).Post("/finance/cycles", a.createFinanceCycle)
+		private.Get("/finance/tariff-proposals", a.tariffProposals)
+		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/{id}/approve", a.approveTariffProposal)
 		r.Mount("/api/v1", private)
 	}
 	return r

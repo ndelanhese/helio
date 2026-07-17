@@ -31,6 +31,7 @@ func TestOpenMigratesAndEnablesWAL(t *testing.T) {
 		"users", "sessions", "settings", "telemetry_minute", "telemetry_events",
 		"weather_hourly", "hourly_summary", "daily_summary", "monthly_summary",
 		"daily_analysis", "alerts", "recommendations", "action_audit",
+		"tariff_proposals", "tariff_versions", "billing_cycles", "credit_lots", "bill_reconciliations",
 	} {
 		var got string
 		err := db.sql.QueryRowContext(ctx,

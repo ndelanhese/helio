@@ -20,6 +20,7 @@ import (
 	"github.com/ndelanhese/helio/internal/jobs"
 	"github.com/ndelanhese/helio/internal/sofar"
 	"github.com/ndelanhese/helio/internal/storage"
+	"github.com/ndelanhese/helio/internal/tariffs"
 	"github.com/ndelanhese/helio/internal/weather"
 )
 
@@ -36,6 +37,7 @@ type App struct {
 	stopOnce          sync.Once
 	allowPublicLogger bool
 	repository        *storage.TelemetryRepository
+	finance           *storage.FinanceRepository
 	jobRunner         jobRuntime
 	jobsMu            sync.Mutex
 	jobsCancel        context.CancelFunc
@@ -85,6 +87,9 @@ func New(cfg config.Config) *App {
 	weatherProvider := weather.NewOpenMeteo("https://api.open-meteo.com/v1/forecast", nil, time.Now)
 	weatherService := weather.NewService(weatherRepository, weatherProvider, time.Now)
 	analysisRepository := storage.NewAnalysisRepository(db)
+	tariffRepository := storage.NewFinanceRepository(db)
+	a.finance = tariffRepository
+	tariffService := tariffs.NewService(tariffs.NewHTTPFetcher(nil), tariffRepository, nil)
 	alertRepository := storage.NewAlertRepository(db)
 	alertEngine, alertErr := alerts.NewEngine(alertRepository, alerts.DefaultConfig())
 	if alertErr != nil {
@@ -93,13 +98,14 @@ func New(cfg config.Config) *App {
 	}
 	a.jobRunner = jobs.New(repository, a.settings, jobs.WithIntegration(jobs.Integration{
 		AnalysisData: repository, AnalysisWriter: analysisRepository, Weather: weatherService,
-		Alerts: alertEngine, Events: hub,
+		Alerts: alertEngine, Events: hub, Tariffs: tariffService,
 	}))
 	apiHandler := api.New(api.Dependencies{
 		Auth: manager, Store: db, History: repository, Hub: hub,
-		Insights: analysisRepository, Alerts: alertRepository, Summaries: repository,
-		Latest: runtime.latest, Reconfigure: runtime.reconfigure,
+		Insights: analysisRepository, Alerts: alertRepository, Summaries: repository, Finance: tariffRepository,
+		Latest: runtime.latest, Reconfigure: a.reconfigure,
 		ApplySettings: a.applySettings, ShutdownContext: shutdownContext,
+		BillingLocation:   a.billingLocation,
 		AllowPublicLogger: cfg.AllowPublicLogger,
 		Components: func(ctx context.Context) api.ComponentStatus {
 			status := runtime.components()
@@ -140,6 +146,13 @@ func New(cfg config.Config) *App {
 				if !integrationStatus.Analysis.UpdatedAt.IsZero() {
 					status.AnalysisUpdatedAt = integrationStatus.Analysis.UpdatedAt.UTC().Format(time.RFC3339)
 				}
+				status.Tariff = integrationStatus.Tariffs.State
+				if !integrationStatus.Tariffs.UpdatedAt.IsZero() {
+					status.TariffUpdatedAt = integrationStatus.Tariffs.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+				if !integrationStatus.Tariffs.FetchedAt.IsZero() {
+					status.TariffFetchedAt = integrationStatus.Tariffs.FetchedAt.UTC().Format(time.RFC3339)
+				}
 			}
 			if err := db.Ready(ctx); err != nil {
 				status.Database = "offline"
@@ -161,6 +174,36 @@ func New(cfg config.Config) *App {
 		WriteTimeout: 0,
 	}
 	return a
+}
+
+func (a *App) billingLocation(ctx context.Context) (*time.Location, error) {
+	settings, err := a.settings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return time.LoadLocation(settings.Timezone)
+}
+
+func (a *App) setFinanceLocation(timezone string) error {
+	if a.finance == nil {
+		return nil
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return err
+	}
+	a.finance.SetLocation(location)
+	return nil
+}
+
+func (a *App) reconfigure(ctx context.Context, settings domain.Settings) error {
+	if a.runtime == nil {
+		return errors.New("collector runtime is unavailable")
+	}
+	if err := a.runtime.reconfigure(ctx, settings); err != nil {
+		return err
+	}
+	return a.setFinanceLocation(settings.Timezone)
 }
 
 func (a *App) applySettings(ctx context.Context, settings domain.Settings, actorUserID string) error {
@@ -189,6 +232,9 @@ func (a *App) applySettings(ctx context.Context, settings domain.Settings, actor
 		}
 		releaseCollector()
 		return err
+	}
+	if err := a.setFinanceLocation(settings.Timezone); err != nil {
+		return fmt.Errorf("set billing timezone: %w", err)
 	}
 	if err := a.startJobsReady(runContext); err != nil {
 		a.pauseJobs()
@@ -260,6 +306,9 @@ func (a *App) initializeRuntime(ctx context.Context) error {
 		releaseCollector := a.runtime.holdCollectorStart()
 		if err := a.runtime.reconfigure(ctx, settings); err != nil {
 			return fmt.Errorf("start collector: %w", err)
+		}
+		if err := a.setFinanceLocation(settings.Timezone); err != nil {
+			return fmt.Errorf("load billing timezone: %w", err)
 		}
 		if err := a.startJobsReady(ctx); err != nil {
 			a.pauseJobs()

@@ -26,7 +26,7 @@ export const test = base.extend<HelioFixtures>({
     await login()
     await use(async (name) => {
       await control(context.request, name)
-      if (name === 'default' || name === 'history-gap') await login()
+      if (name === 'default' || name === 'history-gap' || name === 'finance') await login()
     })
   }, { auto: true }],
 })
