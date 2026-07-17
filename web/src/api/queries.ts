@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiClient, api, authMemory } from './client'
-import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, Session, Settings, TariffProposal } from './types'
+import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, ManualTariffInput, Session, Settings, TariffProposal } from './types'
 
 const rootApi = new ApiClient('')
 
@@ -69,6 +69,7 @@ export const tariffProposalsQuery = queryOptions({ queryKey: queryKeys.tariffPro
 
 export function approveTariffProposal(id: number) { return api.request(`/finance/tariff-proposals/${id}/approve`, { method: 'POST', body: {} }) }
 export function createSettingsTariffProposal() { return api.request('/finance/tariff-proposals/from-settings', { method: 'POST', body: {} }) }
+export function createManualTariffProposal(payload: ManualTariffInput) { return api.request('/finance/tariff-proposals/manual', { method: 'POST', body: payload }) }
 export function createBillingCycle(payload: BillingCycleInput) { return api.request('/finance/cycles', { method: 'POST', body: payload }) }
 
 export function login(payload: LoginPayload) {

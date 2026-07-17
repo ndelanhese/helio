@@ -103,6 +103,19 @@ export interface TariffProposal {
 	displayRates: Array<{ label: string; approved: string; proposal: string; delta: string }>
 }
 
+export interface ManualTariffInput {
+  distributor: string
+  effectiveFrom: string
+  effectiveTo: string
+  consumptionTEMicrosPerKWh: number
+  consumptionTUSDMicrosPerKWh: number
+  compensationTEMicrosPerKWh: number
+  compensationTUSDMicrosPerKWh: number
+  flagMicrosPerKWh: number
+  availabilityKWh: number
+  cipMinor: number
+}
+
 export interface BillingCycleInput {
   activeConsumptionKWh: number
   creditBalanceKWh: number

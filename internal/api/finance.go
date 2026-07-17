@@ -252,6 +252,28 @@ func (a *API) createSettingsTariffProposal(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, proposalResponse(proposal))
 }
 
+func (a *API) createManualTariffProposal(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	var body manualTariffDTO
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	proposal, err := body.domain(a.dependencies.Now())
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", err.Error())
+		return
+	}
+	saved, err := store.CreateProposal(r.Context(), proposal)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", "manual tariff could not be proposed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, proposalResponse(saved))
+}
+
 func (a *API) approveTariffProposal(w http.ResponseWriter, r *http.Request) {
 	store, ok := a.financeStore(w)
 	if !ok {

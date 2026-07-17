@@ -254,9 +254,9 @@
 .finance-hero h1 { margin: var(--space-2) 0; font-family: var(--font-editorial); font-size: clamp(2.7rem, 9vw, 5rem); }
 .finance-hero span { color: #C8D3CA; font-size: .85rem; }
 .finance-hero strong { display: block; margin-top: var(--space-2); font-size: 1rem; }
-.tariff-proposal, .billing-form { display: grid; gap: var(--space-4); padding: var(--space-6); border: 1px solid var(--border); background: var(--surface); }
+.tariff-proposal, .tariff-editor, .billing-form { display: grid; gap: var(--space-4); padding: var(--space-6); border: 1px solid var(--border); background: var(--surface); }
 .tariff-proposal { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
-.tariff-proposal p, .billing-form > p, .projection-breakdown > p, .finance-guidance p { max-width: 65ch; margin: 0; color: var(--muted); line-height: 1.55; }
+.tariff-proposal p, .tariff-editor > p, .billing-form > p, .projection-breakdown > p, .finance-guidance p { max-width: 65ch; margin: 0; color: var(--muted); line-height: 1.55; }
 .tariff-status { color: var(--accent) !important; font-size: .78rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
 .tariff-proposal small { color: var(--muted); font-size: .75rem; }
 .tariff-proposal a { color: var(--accent); font-weight: 750; }
@@ -265,6 +265,7 @@
 .tariff-rates dt, .projection-breakdown dt { color: var(--muted); font-size: .78rem; }
 .tariff-rates dd, .projection-breakdown dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 750; }
 .billing-form form { display: grid; gap: var(--space-5); }
+.tariff-editor form { display: grid; gap: var(--space-5); }
 .finance-fields { display: grid; gap: var(--space-4); }
 .finance-fields label { display: grid; gap: var(--space-2); color: var(--text); font-size: .82rem; font-weight: 750; }
 .finance-fields input { min-width: 0; min-height: 48px; padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--canvas); color: var(--text); font: inherit; }

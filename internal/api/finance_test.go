@@ -149,6 +149,16 @@ func TestCreateSettingsTariffProposalUsesChangedSetting(t *testing.T) {
 	}
 }
 
+func TestCreateManualTariffProposalKeepsDetailedRatesPending(t *testing.T) {
+	f := newFixture(t)
+	cookie, csrf := bootstrap(t, f)
+	body := `{"distributor":"COPEL","effectiveFrom":"2026-06-24","effectiveTo":"2027-06-23","consumptionTEMicrosPerKWh":389503,"consumptionTUSDMicrosPerKWh":538944,"compensationTEMicrosPerKWh":389506,"compensationTUSDMicrosPerKWh":319588,"flagMicrosPerKWh":25404,"availabilityKWh":100,"cipMinor":2556}`
+	response := request(t, f.handler, http.MethodPost, "/api/v1/finance/tariff-proposals/manual", body, cookie, csrf)
+	if response.Code != http.StatusCreated || !containsJSON(response.Body.String(), `"availabilityKWh":100`) || !containsJSON(response.Body.String(), `"approvedAt":null`) {
+		t.Fatalf("manual proposal: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func approveFinanceTariff(t *testing.T, f fixture, cookie *http.Cookie, csrf string) {
 	t.Helper()
 	proposal, err := f.finance.CreateProposal(context.Background(), domain.TariffProposal{

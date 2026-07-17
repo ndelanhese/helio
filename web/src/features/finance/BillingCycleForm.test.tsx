@@ -20,7 +20,7 @@ it('submits reading dates as civil dates', async () => {
   fill('Energia injetada (kWh)', '20')
   fill('Créditos usados (kWh)', '10')
   fill('Saldo de créditos (kWh)', '10')
-  fill('Bandeira aplicada (centavos)', '50')
+  fill('Ajuste avulso de bandeira (centavos)', '50')
   fill('Total pago (centavos)', '12345')
   fireEvent.click(screen.getByRole('button', { name: 'Salvar fatura' }))
   expect(saved).toMatchObject({ readingStart: '2026-07-01', readingEnd: '2026-07-31' })

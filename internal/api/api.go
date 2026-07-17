@@ -114,6 +114,7 @@ func New(d Dependencies) http.Handler {
 		private.With(auth.RequireCSRF).Post("/finance/cycles", a.createFinanceCycle)
 		private.Get("/finance/tariff-proposals", a.tariffProposals)
 		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/from-settings", a.createSettingsTariffProposal)
+		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/manual", a.createManualTariffProposal)
 		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/{id}/approve", a.approveTariffProposal)
 		r.Mount("/api/v1", private)
 	}

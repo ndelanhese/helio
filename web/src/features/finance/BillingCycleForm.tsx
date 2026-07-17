@@ -4,7 +4,7 @@ import type { BillingCycleInput } from '../../api/types'
 
 type Values = Record<'readingStart' | 'readingEnd' | 'activeConsumptionKWh' | 'injectedKWh' | 'creditsUsedKWh' | 'creditBalanceKWh' | 'totalPaidMinor' | 'flagChargeMinor', string>
 const initial: Values = { readingStart: '', readingEnd: '', activeConsumptionKWh: '', injectedKWh: '', creditsUsedKWh: '', creditBalanceKWh: '', totalPaidMinor: '', flagChargeMinor: '' }
-const fields: Array<[keyof Values, string, 'date' | 'number']> = [['readingStart', 'Leitura inicial', 'date'], ['readingEnd', 'Leitura final', 'date'], ['activeConsumptionKWh', 'Consumo ativo (kWh)', 'number'], ['injectedKWh', 'Energia injetada (kWh)', 'number'], ['creditsUsedKWh', 'Créditos usados (kWh)', 'number'], ['creditBalanceKWh', 'Saldo de créditos (kWh)', 'number'], ['flagChargeMinor', 'Bandeira aplicada (centavos)', 'number'], ['totalPaidMinor', 'Total pago (centavos)', 'number']]
+const fields: Array<[keyof Values, string, 'date' | 'number']> = [['readingStart', 'Leitura inicial', 'date'], ['readingEnd', 'Leitura final', 'date'], ['activeConsumptionKWh', 'Consumo ativo (kWh)', 'number'], ['injectedKWh', 'Energia injetada (kWh)', 'number'], ['creditsUsedKWh', 'Créditos usados (kWh)', 'number'], ['creditBalanceKWh', 'Saldo de créditos (kWh)', 'number'], ['flagChargeMinor', 'Ajuste avulso de bandeira (centavos)', 'number'], ['totalPaidMinor', 'Total pago (centavos)', 'number']]
 
 export function BillingCycleForm({ disabled, onSave }: { disabled: boolean; onSave: (payload: BillingCycleInput) => Promise<void> }) {
   const [values, setValues] = useState(initial); const [error, setError] = useState(''); const [saving, setSaving] = useState(false)

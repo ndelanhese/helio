@@ -41,6 +41,63 @@ type billingCycleDTO struct {
 	FlagChargeMinor      *json.Number `json:"flagChargeMinor"`
 }
 
+type manualTariffDTO struct {
+	Distributor                  *string      `json:"distributor"`
+	EffectiveFrom                *string      `json:"effectiveFrom"`
+	EffectiveTo                  *string      `json:"effectiveTo"`
+	ConsumptionTEMicrosPerKWh    *json.Number `json:"consumptionTEMicrosPerKWh"`
+	ConsumptionTUSDMicrosPerKWh  *json.Number `json:"consumptionTUSDMicrosPerKWh"`
+	CompensationTEMicrosPerKWh   *json.Number `json:"compensationTEMicrosPerKWh"`
+	CompensationTUSDMicrosPerKWh *json.Number `json:"compensationTUSDMicrosPerKWh"`
+	FlagMicrosPerKWh             *json.Number `json:"flagMicrosPerKWh"`
+	AvailabilityKWh              *json.Number `json:"availabilityKWh"`
+	CIPMinor                     *json.Number `json:"cipMinor"`
+}
+
+func (d manualTariffDTO) domain(now time.Time) (domain.TariffProposal, error) {
+	if d.Distributor == nil || d.EffectiveFrom == nil || d.EffectiveTo == nil || d.ConsumptionTEMicrosPerKWh == nil || d.ConsumptionTUSDMicrosPerKWh == nil || d.CompensationTEMicrosPerKWh == nil || d.CompensationTUSDMicrosPerKWh == nil || d.FlagMicrosPerKWh == nil || d.AvailabilityKWh == nil || d.CIPMinor == nil {
+		return domain.TariffProposal{}, errors.New("all manual tariff fields are required")
+	}
+	from, err := time.Parse("2006-01-02", *d.EffectiveFrom)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("effectiveFrom must be a civil date")
+	}
+	to, err := time.Parse("2006-01-02", *d.EffectiveTo)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("effectiveTo must be a civil date")
+	}
+	parse := func(value *json.Number) (int64, error) { return strconv.ParseInt(value.String(), 10, 64) }
+	te, err := parse(d.ConsumptionTEMicrosPerKWh)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("consumption TE must be an integer")
+	}
+	tusd, err := parse(d.ConsumptionTUSDMicrosPerKWh)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("consumption TUSD must be an integer")
+	}
+	compTE, err := parse(d.CompensationTEMicrosPerKWh)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("compensation TE must be an integer")
+	}
+	compTUSD, err := parse(d.CompensationTUSDMicrosPerKWh)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("compensation TUSD must be an integer")
+	}
+	flag, err := parse(d.FlagMicrosPerKWh)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("flag must be an integer")
+	}
+	availability, err := parse(d.AvailabilityKWh)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("availability must be an integer")
+	}
+	cip, err := parse(d.CIPMinor)
+	if err != nil {
+		return domain.TariffProposal{}, errors.New("CIP must be an integer")
+	}
+	return domain.TariffProposal{Distributor: *d.Distributor, EffectiveFrom: from.UTC(), EffectiveTo: to.UTC().Add(24*time.Hour - time.Nanosecond), ConsumptionTEMicrosPerKWh: te, ConsumptionTUSDMicrosPerKWh: tusd, CompensationTEMicrosPerKWh: compTE, CompensationTUSDMicrosPerKWh: compTUSD, FlagMicrosPerKWh: flag, AvailabilityKWh: int(availability), CIPMinor: cip, SourceURL: "/finance", ParserVersion: "manual-bill-v1", RetrievedAt: now.UTC()}, nil
+}
+
 func decodeBillingCycle(w http.ResponseWriter, r *http.Request, body *billingCycleDTO) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	decoder := json.NewDecoder(r.Body)

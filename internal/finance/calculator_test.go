@@ -34,6 +34,16 @@ func TestCounterfactualRemovesOnlyCompensation(t *testing.T) {
 	}
 }
 
+func TestCalculateKeepsTriphaseAvailabilityAfterCreditCompensation(t *testing.T) {
+	got, err := finance.Calculate(tariff(100, 389503, 538944), cycle(322, 243, 259, 4866))
+	if err != nil {
+		t.Fatalf("Calculate() error = %v", err)
+	}
+	if got.TotalMinor != 11840 {
+		t.Errorf("TotalMinor = %d, want 11840 availability floor plus CIP", got.TotalMinor)
+	}
+}
+
 func TestCalculateSeparatesApprovedTariffFlagFromManualFlagAdjustment(t *testing.T) {
 	bill := cycle(79, 0, 0, 0)
 	bill.FlagChargeMinor = 50
