@@ -34,6 +34,25 @@ func TestCounterfactualRemovesOnlyCompensation(t *testing.T) {
 	}
 }
 
+func TestCalculateIncludesPersistedFlagChargeInBreakdownAndTotals(t *testing.T) {
+	bill := cycle(79, 0, 0, 0)
+	bill.FlagChargeMinor = 50
+
+	got, err := finance.Calculate(tariff(100, 389503, 538944), bill)
+	if err != nil {
+		t.Fatalf("Calculate() error = %v", err)
+	}
+	if got.FlagMinor != 50 {
+		t.Errorf("FlagMinor = %d, want 50", got.FlagMinor)
+	}
+	if got.TotalMinor != 11890 {
+		t.Errorf("TotalMinor = %d, want 11890", got.TotalMinor)
+	}
+	if got.WithoutSolarCompensationMinor != 11890 {
+		t.Errorf("WithoutSolarCompensationMinor = %d, want 11890", got.WithoutSolarCompensationMinor)
+	}
+}
+
 func TestCalculateRejectsCreditsAboveConsumption(t *testing.T) {
 	_, err := finance.Calculate(tariff(100, 389503, 538944), cycle(10, 20, 11, 0))
 	if err == nil {

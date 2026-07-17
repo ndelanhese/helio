@@ -631,6 +631,9 @@ func TestRestartInitializesRepositoryFromPersistedSettingsBeforeRuntime(t *testi
 	if got := a.repository.Location().String(); got != settings.Timezone {
 		t.Fatalf("restart repository location=%q", got)
 	}
+	if got := a.finance.Location().String(); got != settings.Timezone {
+		t.Fatalf("restart finance location=%q", got)
+	}
 }
 
 func TestTimezoneChangeRebuildsCalendarThenUsesNewProducerLocation(t *testing.T) {

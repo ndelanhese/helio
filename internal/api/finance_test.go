@@ -26,8 +26,20 @@ func TestCreateCycleRequiresCSRFAndReturnsProjection(t *testing.T) {
 		t.Fatalf("missing csrf: %d %s", missingCSRF.Code, missingCSRF.Body.String())
 	}
 	response := request(t, f.handler, http.MethodPost, "/api/v1/finance/cycles", validCycleJSON, cookie, csrf)
-	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" || !containsJSON(response.Body.String(), `"isEstimate":true`) {
+	if response.Code != http.StatusCreated || response.Header().Get("Cache-Control") != "no-store" || !containsJSON(response.Body.String(), `"isEstimate":true`) || !containsJSON(response.Body.String(), `"label":"Bandeira","value":"R$ 0,50"`) {
 		t.Fatalf("create cycle: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCreateCycleInterpretsCivilDatesInConfiguredBillingTimezone(t *testing.T) {
+	f := newFixture(t)
+	cookie, csrf := bootstrap(t, f)
+	approveFinanceTariff(t, f, cookie, csrf)
+	body := strings.Replace(strings.Replace(validCycleJSON, `"2026-07-01T00:00:00Z"`, `"2026-07-01"`, 1), `"2026-07-15T00:00:00Z"`, `"2026-07-15"`, 1)
+
+	response := request(t, f.handler, http.MethodPost, "/api/v1/finance/cycles", body, cookie, csrf)
+	if response.Code != http.StatusCreated || !containsJSON(response.Body.String(), `"readingStart":"2026-07-01T03:00:00Z"`) || !containsJSON(response.Body.String(), `"readingEnd":"2026-07-15T03:00:00Z"`) {
+		t.Fatalf("create civil-date cycle: %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -43,7 +55,7 @@ func TestCreateCycleRejectsInvalidInput(t *testing.T) {
 		{"fractional kwh", strings.Replace(validCycleJSON, `"activeConsumptionKWh":150`, `"activeConsumptionKWh":1.5`, 1)},
 		{"fractional money", strings.Replace(validCycleJSON, `"totalPaidMinor":12345`, `"totalPaidMinor":12.5`, 1)},
 		{"reversed dates", strings.Replace(validCycleJSON, `"readingEnd":"2026-07-15T00:00:00Z"`, `"readingEnd":"2026-06-15T00:00:00Z"`, 1)},
-		{"non RFC3339 date", strings.Replace(validCycleJSON, `"readingStart":"2026-07-01T00:00:00Z"`, `"readingStart":"2026-07-01"`, 1)},
+		{"invalid reading date", strings.Replace(validCycleJSON, `"readingStart":"2026-07-01T00:00:00Z"`, `"readingStart":"2026-99-01"`, 1)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

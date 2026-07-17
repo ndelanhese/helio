@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ndelanhese/helio/internal/domain"
@@ -13,8 +14,9 @@ import (
 
 // FinanceRepository persists approved tariffs and reconciled billing cycles.
 type FinanceRepository struct {
-	db       *DB
-	location *time.Location
+	db         *DB
+	locationMu sync.RWMutex
+	location   *time.Location
 }
 
 // NewFinanceRepository uses the configured billing location when supplied.
@@ -25,6 +27,25 @@ func NewFinanceRepository(db *DB, locations ...*time.Location) *FinanceRepositor
 		location = locations[0]
 	}
 	return &FinanceRepository{db: db, location: location}
+}
+
+// SetLocation updates the configured billing calendar for subsequent saves.
+func (r *FinanceRepository) SetLocation(location *time.Location) {
+	if location == nil {
+		location = time.UTC
+	}
+	r.locationMu.Lock()
+	r.location = location
+	r.locationMu.Unlock()
+}
+
+func (r *FinanceRepository) Location() *time.Location {
+	r.locationMu.RLock()
+	defer r.locationMu.RUnlock()
+	if r.location == nil {
+		return time.UTC
+	}
+	return r.location
 }
 
 // CreateProposal stores a tariff candidate that can later be approved.
@@ -129,7 +150,7 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 	}
 	defer tx.Rollback()
 
-	tariff, err := loadTariffAt(ctx, tx, cycle.ReadingEnd, r.location)
+	tariff, err := loadTariffAt(ctx, tx, cycle.ReadingEnd, r.Location())
 	if err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, err
 	}
@@ -218,18 +239,45 @@ func (r *FinanceRepository) LatestProjection(ctx context.Context, at time.Time) 
 }
 
 func (r *FinanceRepository) CreditSummary(ctx context.Context) (int64, *time.Time, error) {
-	var balance int64; var expiry sql.NullString
+	var balance int64
+	var expiry sql.NullString
 	err := r.db.sql.QueryRowContext(ctx, `SELECT COALESCE(SUM(available_kwh), 0), MIN(CASE WHEN available_kwh > 0 THEN expires_at END) FROM credit_lots`).Scan(&balance, &expiry)
-	if err != nil { return 0, nil, fmt.Errorf("credit summary: %w", err) }
-	if !expiry.Valid { return balance, nil, nil }; value, err := parseTime(expiry.String); if err != nil { return 0, nil, err }; return balance, &value, nil
+	if err != nil {
+		return 0, nil, fmt.Errorf("credit summary: %w", err)
+	}
+	if !expiry.Valid {
+		return balance, nil, nil
+	}
+	value, err := parseTime(expiry.String)
+	if err != nil {
+		return 0, nil, err
+	}
+	return balance, &value, nil
 }
 
 func (r *FinanceRepository) LatestTariff(ctx context.Context) (domain.TariffVersion, bool, error) {
 	row := r.db.sql.QueryRowContext(ctx, `SELECT id, distributor, effective_from, effective_to, consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh, compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh, flag_micros_per_kwh, availability_kwh, cip_minor, source_url, retrieved_at, approved_at FROM tariff_versions ORDER BY approved_at DESC, id DESC LIMIT 1`)
-	var t domain.TariffVersion; var from, to, retrieved, approved string
-	err := row.Scan(&t.ID,&t.Distributor,&from,&to,&t.ConsumptionTEMicrosPerKWh,&t.ConsumptionTUSDMicrosPerKWh,&t.CompensationTEMicrosPerKWh,&t.CompensationTUSDMicrosPerKWh,&t.FlagMicrosPerKWh,&t.AvailabilityKWh,&t.CIPMinor,&t.SourceURL,&retrieved,&approved)
-	if errors.Is(err, sql.ErrNoRows) { return t, false, nil }; if err != nil { return t,false,err }
-	var parseErr error; t.EffectiveFrom,parseErr=parseTime(from); if parseErr==nil { t.EffectiveTo,parseErr=parseTime(to) }; if parseErr==nil { t.RetrievedAt,parseErr=parseTime(retrieved) }; if parseErr==nil { t.ApprovedAt,parseErr=parseTime(approved) }; return t,true,parseErr
+	var t domain.TariffVersion
+	var from, to, retrieved, approved string
+	err := row.Scan(&t.ID, &t.Distributor, &from, &to, &t.ConsumptionTEMicrosPerKWh, &t.ConsumptionTUSDMicrosPerKWh, &t.CompensationTEMicrosPerKWh, &t.CompensationTUSDMicrosPerKWh, &t.FlagMicrosPerKWh, &t.AvailabilityKWh, &t.CIPMinor, &t.SourceURL, &retrieved, &approved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return t, false, nil
+	}
+	if err != nil {
+		return t, false, err
+	}
+	var parseErr error
+	t.EffectiveFrom, parseErr = parseTime(from)
+	if parseErr == nil {
+		t.EffectiveTo, parseErr = parseTime(to)
+	}
+	if parseErr == nil {
+		t.RetrievedAt, parseErr = parseTime(retrieved)
+	}
+	if parseErr == nil {
+		t.ApprovedAt, parseErr = parseTime(approved)
+	}
+	return t, true, parseErr
 }
 
 // ListCycles returns newest billing cycles first.

@@ -62,17 +62,23 @@ func decodeBillingCycle(w http.ResponseWriter, r *http.Request, body *billingCyc
 	return nil
 }
 
-func (d billingCycleDTO) domain() (domain.BillingCycle, error) {
+func (d billingCycleDTO) domain(location *time.Location) (domain.BillingCycle, error) {
 	if d.ReadingStart == nil || d.ReadingEnd == nil || d.ActiveConsumptionKWh == nil || d.InjectedKWh == nil || d.CreditsUsedKWh == nil || d.CreditBalanceKWh == nil || d.TotalPaidMinor == nil || d.FlagChargeMinor == nil {
 		return domain.BillingCycle{}, errors.New("all billing cycle fields are required")
 	}
-	start, err := time.Parse(time.RFC3339, *d.ReadingStart)
-	if err != nil {
-		return domain.BillingCycle{}, errors.New("readingStart must be RFC3339")
+	parseDate := func(value string) (time.Time, error) {
+		if civil, err := time.ParseInLocation("2006-01-02", value, location); err == nil {
+			return civil, nil
+		}
+		return time.Parse(time.RFC3339, value)
 	}
-	end, err := time.Parse(time.RFC3339, *d.ReadingEnd)
+	start, err := parseDate(*d.ReadingStart)
 	if err != nil {
-		return domain.BillingCycle{}, errors.New("readingEnd must be RFC3339")
+		return domain.BillingCycle{}, errors.New("readingStart must be a civil date or RFC3339")
+	}
+	end, err := parseDate(*d.ReadingEnd)
+	if err != nil {
+		return domain.BillingCycle{}, errors.New("readingEnd must be a civil date or RFC3339")
 	}
 	parse := func(name string, value *json.Number) (int64, error) {
 		parsed, err := strconv.ParseInt(value.String(), 10, 64)
@@ -102,7 +108,9 @@ func (d billingCycleDTO) domain() (domain.BillingCycle, error) {
 		return domain.BillingCycle{}, err
 	}
 	flag, err := parse("flagChargeMinor", d.FlagChargeMinor)
-	if err != nil { return domain.BillingCycle{}, err }
+	if err != nil {
+		return domain.BillingCycle{}, err
+	}
 	cycle := domain.BillingCycle{ReadingStart: start, ReadingEnd: end, ActiveConsumptionKWh: active, InjectedKWh: injected, CreditsUsedKWh: used, CreditBalanceKWh: balance, TotalPaidMinor: paid, FlagChargeMinor: flag}
 	if err := domain.ValidateBillingCycle(cycle); err != nil {
 		return domain.BillingCycle{}, err

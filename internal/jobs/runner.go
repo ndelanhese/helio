@@ -384,15 +384,15 @@ func (r *Runner) runOnce(ctx context.Context, now time.Time, settings domain.Set
 	if err != nil {
 		return staged("aggregate_day", fmt.Errorf("aggregate day: %w", err))
 	}
-	if r.integration.AnalysisData != nil && r.integration.AnalysisWriter != nil {
-		if err := r.analyzeDay(ctx, now, settings, location, dayStart, dayEnd, daily); err != nil {
-			return err
-		}
-	}
 	if r.integration.Tariffs != nil {
 		status, err := r.integration.Tariffs.Refresh(ctx)
 		r.setTariffStatus(status)
 		_ = err // A source refresh is proposal-only and must not fail daily telemetry processing.
+	}
+	if r.integration.AnalysisData != nil && r.integration.AnalysisWriter != nil {
+		if err := r.analyzeDay(ctx, now, settings, location, dayStart, dayEnd, daily); err != nil {
+			return err
+		}
 	}
 	if _, err := r.repository.AggregateMonth(ctx, dayStart); err != nil {
 		return staged("aggregate_month", fmt.Errorf("aggregate month: %w", err))

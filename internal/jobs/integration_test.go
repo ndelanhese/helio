@@ -675,6 +675,23 @@ func TestDailyRunKeepsTelemetryProcessingWhenTariffRefreshFails(t *testing.T) {
 	}
 }
 
+func TestDailyRunRefreshesTariffEvenWhenAnalysisFails(t *testing.T) {
+	refresher := &fakeTariffRefresher{status: tariffs.Status{State: "stale", UpdatedAt: time.Date(2026, time.July, 16, 3, 5, 0, 0, time.UTC)}}
+	runner := New(&fakeRepository{}, func(context.Context) (domain.Settings, error) { return domain.Settings{RetentionDays: 730}, nil }, WithIntegration(Integration{
+		AnalysisData: fakeAnalysisData{dailyErr: errors.New("history unavailable")}, AnalysisWriter: &fakeAnalysisWriter{}, Tariffs: refresher,
+	}))
+
+	if err := runner.runOnce(context.Background(), time.Date(2026, time.July, 17, 3, 5, 0, 0, time.UTC), domain.Settings{RetentionDays: 730}, time.UTC); err == nil {
+		t.Fatal("runOnce() error = nil, want analysis failure")
+	}
+	if refresher.calls != 1 {
+		t.Fatalf("Refresh calls = %d, want 1", refresher.calls)
+	}
+	if status := runner.IntegrationStatus().Tariffs; status.State != "stale" {
+		t.Fatalf("tariff status = %#v, want stale", status)
+	}
+}
+
 type fakeTariffRefresher struct {
 	status tariffs.Status
 	err    error

@@ -51,6 +51,13 @@ func newFixture(t *testing.T) fixture {
 		ApplySettings: func(ctx context.Context, settings domain.Settings, actor string) error {
 			return db.ApplySettings(ctx, settings, actor, false)
 		},
+		BillingLocation: func(ctx context.Context) (*time.Location, error) {
+			settings, err := db.GetSettings(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return time.LoadLocation(settings.Timezone)
+		},
 	}), db: db, dbDir: dbDir, repo: repo, finance: finance, hub: hub, shutdown: shutdown}
 }
 

@@ -59,6 +59,7 @@ type Dependencies struct {
 	Hub               *collector.Hub
 	Reconfigure       func(context.Context, domain.Settings) error
 	ApplySettings     func(context.Context, domain.Settings, string) error
+	BillingLocation   func(context.Context) (*time.Location, error)
 	Components        func(context.Context) ComponentStatus
 	ShutdownContext   context.Context
 	AllowPublicLogger bool
