@@ -63,4 +63,4 @@ export function SolarmanPanel() {
   </section>
 }
 
-function messageFor(cause: unknown, fallback: string) { if (cause instanceof ApiError && cause.code === 'solarman_unavailable') return 'Defina HELIO_SECRETS_KEY e reinicie Docker antes de salvar.'; return fallback }
+function messageFor(cause: unknown, fallback: string) { if (cause instanceof ApiError && cause.code === 'solarman_unavailable') return 'Defina HELIO_SECRETS_KEY e reinicie Docker antes de salvar.'; if (cause instanceof ApiError && cause.code === 'solarman_sync_failed') return cause.message; return fallback }

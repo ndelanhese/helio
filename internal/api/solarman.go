@@ -135,7 +135,7 @@ func (a *API) syncSolarman(w http.ResponseWriter, r *http.Request) {
 	to := time.Now().In(location)
 	frames, err := a.dependencies.SolarmanClient.FetchFrames(r.Context(), cloudCredentials(stored), stored.StationID, from, to)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "solarman_sync_failed", "Solarman historical sync failed. Try again later.")
+		writeError(w, http.StatusBadGateway, "solarman_sync_failed", "Solarman histórico recusou consulta: "+safeSolarmanError(err))
 		return
 	}
 	for _, frame := range frames {
@@ -149,6 +149,19 @@ func (a *API) syncSolarman(w http.ResponseWriter, r *http.Request) {
 		_ = a.dependencies.SolarmanAudit.RecordAudit(r.Context(), principal.UserID, "solarman.sync", map[string]any{"stationId": stored.StationID, "days": body.Days, "frames": len(frames)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stationName": stored.StationName, "days": body.Days, "frames": len(frames)})
+}
+
+func safeSolarmanError(err error) string {
+	message := err.Error()
+	for _, marker := range []string{"appSecret", "password", "access_token", "refresh_token"} {
+		if strings.Contains(strings.ToLower(message), marker) {
+			return "falha de autenticação ou autorização"
+		}
+	}
+	if len(message) > 180 {
+		return message[:180]
+	}
+	return message
 }
 
 func normalizeSolarmanCredentials(body solarmanCredentialsDTO) solarmanSavedCredentials {
