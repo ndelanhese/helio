@@ -39,9 +39,16 @@ const solarmanSecretName = "solarman-cloud-v1"
 const (
 	automaticRecoveryDays     = 2
 	automaticRecoveryCooldown = 90 * time.Minute
+	maximumCloudHistoryLag    = 20 * time.Minute
 )
 
-var automaticRecoveryDelays = []time.Duration{2 * time.Minute, 10 * time.Minute, 30 * time.Minute, 2 * time.Hour, 12 * time.Hour}
+var automaticRecoveryDelays = []time.Duration{
+	2 * time.Minute,
+	15 * time.Minute, 15 * time.Minute, 15 * time.Minute, 15 * time.Minute,
+	15 * time.Minute, 15 * time.Minute, 15 * time.Minute, 15 * time.Minute,
+	30 * time.Minute,
+	12 * time.Hour,
+}
 
 func (a *API) solarmanStatus(w http.ResponseWriter, r *http.Request) {
 	if a.dependencies.SolarmanSecrets == nil {
@@ -236,9 +243,22 @@ func (a *API) scheduleSolarmanRecovery() {
 				return
 			case <-timer.C:
 			}
-			_, _, _ = a.recoverSolarman(a.dependencies.ShutdownContext, automaticRecoveryDays)
+			_, frames, err := a.recoverSolarman(a.dependencies.ShutdownContext, automaticRecoveryDays)
+			if err == nil && !cloudHistoryLagging(frames, a.dependencies.Now()) {
+				return
+			}
 		}
 	}()
+}
+
+func cloudHistoryLagging(frames []solarmancloud.Frame, now time.Time) bool {
+	var latest time.Time
+	for _, frame := range frames {
+		if frame.At.After(latest) {
+			latest = frame.At
+		}
+	}
+	return latest.IsZero() || now.UTC().Sub(latest.UTC()) > maximumCloudHistoryLag
 }
 
 func safeSolarmanError(err error) string {
