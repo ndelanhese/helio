@@ -331,6 +331,9 @@ func history(ctx context.Context, queryer telemetryQueryer, from, to time.Time) 
 			return nil, fmt.Errorf("parse telemetry history time: %w", err)
 		}
 		point.At = point.At.UTC()
+		if point.Status == "cloud_history" {
+			point.SampleIntervalMinutes = cloudHistorySampleMinutes
+		}
 		points = append(points, point)
 	}
 	if err := rows.Err(); err != nil {

@@ -185,6 +185,7 @@ export interface LiveState {
 export interface MinuteHistoryPointDTO {
   at: string
   powerW: number
+  sampleIntervalMinutes?: number
 }
 
 export interface AggregateHistoryPointDTO {

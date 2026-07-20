@@ -34,7 +34,7 @@ export function ProductionChart({ current, previous, range, timezone }: { curren
         </ResponsiveContainer>
       </div>
       <div className="chart-legend"><span><i className="current-line" />Período atual</span><span><i className="previous-line" />Período anterior</span></div>
-      <SingletonMarks current={current} previous={previous} timezone={timezone} />
+      {current.chartPoints.some((point) => point.sampleIntervalMinutes === 5) && <p className="chart-source-note">Histórico Solarman: amostras a cada 5 min. Linhas seguem esta cadência; tracejado indica lacuna maior.</p>}
       <GapList gaps={current.gaps} timezone={timezone} />
     </section>
   )
@@ -54,19 +54,6 @@ function GapList({ gaps, timezone }: { gaps: HistoryView['gaps']; timezone: stri
       </button>
       {activeGap === key && <div className="chart-tooltip gap-tooltip" id={tooltipId} role="tooltip"><strong>Sem dados neste intervalo</strong><span>{label}</span></div>}
     </li>
-  })}</ul>
-}
-
-function SingletonMarks({ current, previous, timezone }: { current: HistoryView; previous?: HistoryView; timezone: string }) {
-  const formatter = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', hour12: false, minute: '2-digit', timeZone: timezone })
-  const marks = [
-    ...current.segments.filter((segment) => segment.length === 1).map((segment) => ({ point: segment[0], series: 'atual' as const })),
-    ...(previous?.segments.filter((segment) => segment.length === 1).map((segment) => ({ point: segment[0], series: 'anterior' as const })) ?? []),
-  ]
-  if (marks.length === 0) return null
-  return <ul className="singleton-list">{marks.map(({ point, series }) => {
-    const label = `Leitura isolada do período ${series}, ${formatter.format(new Date(point.at))}, ${formatPower(point.powerW)}`
-    return <li aria-label={label} key={`${series}-${point.at}`}><i className={`singleton-mark is-${series}`} />{label}</li>
   })}</ul>
 }
 

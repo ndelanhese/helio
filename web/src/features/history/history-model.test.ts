@@ -94,6 +94,19 @@ describe('history model', () => {
     expect(view.gaps).toEqual([{ from: '2026-07-14T12:01:00Z', to: '2026-07-14T12:04:00Z' }])
   })
 
+  it('keeps five-minute Solarman samples continuous while preserving wider gaps', () => {
+    const view = buildHistoryView([
+      { at: '2026-07-14T12:00:00Z', powerW: 1000, sampleIntervalMinutes: 5 },
+      { at: '2026-07-14T12:05:00Z', powerW: 1000, sampleIntervalMinutes: 5 },
+      { at: '2026-07-14T12:10:00Z', powerW: 1000, sampleIntervalMinutes: 5 },
+      { at: '2026-07-14T12:20:00Z', powerW: 1000, sampleIntervalMinutes: 5 },
+    ], 'minute')
+    expect(view.segments.map((segment) => segment.length)).toEqual([3, 1])
+    expect(view.gaps).toEqual([{ from: '2026-07-14T12:10:00Z', to: '2026-07-14T12:20:00Z' }])
+    expect(view.summary.energyWh).toBeCloseTo(1000 / 6)
+    expect(view.summary.productiveMinutes).toBe(10)
+  })
+
   it('summarizes persisted aggregates and flags coverage below 95 percent', () => {
     const points: AggregateHistoryPoint[] = [
       { at: '2026-07-14T03:00:00Z', energyWh: 2500, peakPowerW: 3200, productiveMinutes: 240, coveragePct: 92 },
