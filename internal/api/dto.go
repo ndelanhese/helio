@@ -87,7 +87,9 @@ func (d manualTariffDTO) domain(now time.Time) (domain.TariffProposal, error) {
 	if err != nil {
 		return domain.TariffProposal{}, errors.New("flag must be an integer")
 	}
-	availability, err := parse(d.AvailabilityKWh)
+	// Parse at the native integer width before converting below. Availability is
+	// persisted as an int, so accepting a larger int64 here could overflow.
+	availability, err := strconv.ParseInt(d.AvailabilityKWh.String(), 10, strconv.IntSize)
 	if err != nil {
 		return domain.TariffProposal{}, errors.New("availability must be an integer")
 	}
