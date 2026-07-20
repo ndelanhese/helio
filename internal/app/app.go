@@ -19,6 +19,7 @@ import (
 	"github.com/ndelanhese/helio/internal/httpserver"
 	"github.com/ndelanhese/helio/internal/jobs"
 	"github.com/ndelanhese/helio/internal/sofar"
+	"github.com/ndelanhese/helio/internal/solarmancloud"
 	"github.com/ndelanhese/helio/internal/storage"
 	"github.com/ndelanhese/helio/internal/tariffs"
 	"github.com/ndelanhese/helio/internal/weather"
@@ -80,6 +81,19 @@ func New(cfg config.Config) *App {
 	repository := storage.NewTelemetryRepository(db, time.UTC)
 	runtime := &collectorRuntime{hub: hub, store: repository, calendar: repository}
 	manager := auth.NewManager(db, auth.WithSecureCookies(cfg.SecureCookies))
+	secretsKey := cfg.SecretsKey
+	if len(secretsKey) == 0 {
+		secretsKey, err = storage.LoadOrCreateSecretsKey(cfg.DatabasePath)
+		if err != nil {
+			_ = db.Close()
+			return &App{initErr: err}
+		}
+	}
+	solarmanSecrets, err := storage.NewSecretStore(db, secretsKey)
+	if err != nil {
+		_ = db.Close()
+		return &App{initErr: err}
+	}
 	shutdownContext, shutdownCancel := context.WithCancel(context.Background())
 	a := &App{db: db, runtime: runtime, settingsRuntime: runtime, shutdownContext: shutdownContext, shutdownCancel: shutdownCancel, allowPublicLogger: cfg.AllowPublicLogger, repository: repository,
 		settings: func(ctx context.Context) (domain.Settings, error) { return db.GetSettings(ctx, cfg.AllowPublicLogger) }}
@@ -101,8 +115,9 @@ func New(cfg config.Config) *App {
 		Alerts: alertEngine, Events: hub, Tariffs: tariffService,
 	}))
 	apiHandler := api.New(api.Dependencies{
-		Auth: manager, Store: db, History: repository, Hub: hub,
+		Auth: manager, Store: db, History: repository, Telemetry: repository, Hub: hub,
 		Insights: analysisRepository, Alerts: alertRepository, Summaries: repository, Finance: tariffRepository,
+		SolarmanSecrets: solarmanSecrets, SolarmanClient: solarmancloud.New("", nil), SolarmanAudit: db,
 		Latest: runtime.latest, Reconfigure: a.reconfigure,
 		ApplySettings: a.applySettings, ShutdownContext: shutdownContext,
 		BillingLocation:   a.billingLocation,

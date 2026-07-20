@@ -49,6 +49,30 @@ export interface Settings {
   installedPowerW?: number
 }
 
+export interface SolarmanStatus {
+  available: boolean
+  configured: boolean
+  account?: string
+  appIdSuffix?: string
+  reason?: string
+  stationId?: number
+  stationName?: string
+}
+export interface SolarmanSyncResult { stationName: string; days: number; frames: number }
+
+export interface SolarmanCredentials {
+  appId: string
+  appSecret: string
+  account: string
+  password: string
+}
+
+export interface SolarmanTestResult {
+  connected: boolean
+  testedAt: string
+  stations: Array<{ id: number; name: string }>
+}
+
 export interface BillingCycle {
   activeConsumptionKWh: number
   creditBalanceKWh: number
@@ -103,6 +127,19 @@ export interface TariffProposal {
 	displayRates: Array<{ label: string; approved: string; proposal: string; delta: string }>
 }
 
+export interface ManualTariffInput {
+  distributor: string
+  effectiveFrom: string
+  effectiveTo: string
+  consumptionTEMicrosPerKWh: number
+  consumptionTUSDMicrosPerKWh: number
+  compensationTEMicrosPerKWh: number
+  compensationTUSDMicrosPerKWh: number
+  flagMicrosPerKWh: number
+  availabilityKWh: number
+  cipMinor: number
+}
+
 export interface BillingCycleInput {
   activeConsumptionKWh: number
   creditBalanceKWh: number
@@ -148,6 +185,7 @@ export interface LiveState {
 export interface MinuteHistoryPointDTO {
   at: string
   powerW: number
+  sampleIntervalMinutes?: number
 }
 
 export interface AggregateHistoryPointDTO {

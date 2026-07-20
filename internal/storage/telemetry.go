@@ -15,9 +15,14 @@ import (
 
 const (
 	maximumIntegratedGap = 90 * time.Second
-	pruneBatchSize       = 10_000
-	sqliteTimeLayout     = "2006-01-02T15:04:05.000000000Z"
-	maximumSummaryRows   = 10_000
+	// Solarman's documented frame history is sampled at five-minute cadence.
+	// It may be integrated only when both adjacent readings come from that
+	// source; a wider local-collector gap remains an unknown interval.
+	maximumCloudIntegratedGap = 5*time.Minute + 15*time.Second
+	cloudHistorySampleMinutes = 5
+	pruneBatchSize            = 10_000
+	sqliteTimeLayout          = "2006-01-02T15:04:05.000000000Z"
+	maximumSummaryRows        = 10_000
 )
 
 // TelemetryRepository stores telemetry using local calendar buckets while all
@@ -306,7 +311,7 @@ func history(ctx context.Context, queryer telemetryQueryer, from, to time.Time) 
 		return nil, errors.New("telemetry history: from must be before to")
 	}
 	rows, err := queryer.QueryContext(ctx, `
-		SELECT observed_at, ac_power_w
+		SELECT observed_at, ac_power_w, status
 		FROM telemetry_minute
 		WHERE observed_at >= ? AND observed_at < ?
 		ORDER BY observed_at`, formatTime(from), formatTime(to))
@@ -318,7 +323,7 @@ func history(ctx context.Context, queryer telemetryQueryer, from, to time.Time) 
 	for rows.Next() {
 		var raw string
 		var point domain.HistoryPoint
-		if err := rows.Scan(&raw, &point.PowerW); err != nil {
+		if err := rows.Scan(&raw, &point.PowerW, &point.Status); err != nil {
 			return nil, fmt.Errorf("scan telemetry history: %w", err)
 		}
 		point.At, err = time.Parse(time.RFC3339Nano, raw)
@@ -326,6 +331,9 @@ func history(ctx context.Context, queryer telemetryQueryer, from, to time.Time) 
 			return nil, fmt.Errorf("parse telemetry history time: %w", err)
 		}
 		point.At = point.At.UTC()
+		if point.Status == "cloud_history" {
+			point.SampleIntervalMinutes = cloudHistorySampleMinutes
+		}
 		points = append(points, point)
 	}
 	if err := rows.Err(); err != nil {
@@ -352,22 +360,30 @@ func (r *TelemetryRepository) AggregateHour(ctx context.Context, from, to time.T
 		return domain.HourlySummary{}, err
 	}
 	summary := domain.HourlySummary{Hour: localHour(from, location).Format(time.RFC3339)}
+	coverageMinutes := 0
 	for i, point := range points {
 		summary.PeakPowerW = math.Max(summary.PeakPowerW, point.PowerW)
+		sampleMinutes := 1
+		if point.Status == "cloud_history" {
+			sampleMinutes = cloudHistorySampleMinutes
+		}
+		coverageMinutes += sampleMinutes
 		if point.PowerW > 0 {
-			summary.ProductiveMinutes++
+			summary.ProductiveMinutes += sampleMinutes
 		}
 		if i == 0 {
 			continue
 		}
 		gap := point.At.Sub(points[i-1].At)
-		if gap > 0 && gap <= maximumIntegratedGap {
+		isContinuousLocal := gap > 0 && gap <= maximumIntegratedGap
+		isContinuousCloud := point.Status == "cloud_history" && points[i-1].Status == "cloud_history" && gap > 0 && gap <= maximumCloudIntegratedGap
+		if isContinuousLocal || isContinuousCloud {
 			summary.EnergyWh += (points[i-1].PowerW + point.PowerW) * gap.Hours() / 2
 		}
 	}
 	expectedMinutes := int(math.Ceil(to.Sub(from).Minutes()))
 	if expectedMinutes > 0 {
-		summary.CoveragePct = math.Min(100, float64(len(points))*100/float64(expectedMinutes))
+		summary.CoveragePct = math.Min(100, float64(coverageMinutes)*100/float64(expectedMinutes))
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO hourly_summary(hour, energy_wh, peak_power_w, coverage_pct, productive_minutes)
@@ -383,6 +399,47 @@ func (r *TelemetryRepository) AggregateHour(ctx context.Context, from, to time.T
 		return domain.HourlySummary{}, fmt.Errorf("commit hourly aggregate: %w", err)
 	}
 	return summary, nil
+}
+
+// RebuildSummaries rebuilds every affected local-calendar bucket after an
+// external history import. Raw frames stay normalized to UTC; buckets retain
+// the configured Helio timezone.
+func (r *TelemetryRepository) RebuildSummaries(ctx context.Context, from, to time.Time) error {
+	if !from.Before(to) {
+		return errors.New("rebuild telemetry summaries: from must be before to")
+	}
+	// Each aggregate acquires its own calendar read lock. Do not hold one here:
+	// a queued timezone change could otherwise block a nested reader forever.
+	location := r.Location()
+	startLocal := from.In(location)
+	day := time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), 0, 0, 0, 0, location)
+	endLocal := to.In(location)
+	lastDay := time.Date(endLocal.Year(), endLocal.Month(), endLocal.Day(), 0, 0, 0, 0, location)
+	months := make(map[string]time.Time)
+	for !day.After(lastDay) {
+		dayEnd := day.AddDate(0, 0, 1)
+		for hour := day; hour.Before(dayEnd); hour = hour.Add(time.Hour) {
+			hourEnd := hour.Add(time.Hour)
+			if hourEnd.After(dayEnd) {
+				hourEnd = dayEnd
+			}
+			if _, err := r.AggregateHour(ctx, hour, hourEnd); err != nil {
+				return fmt.Errorf("rebuild hourly summary: %w", err)
+			}
+		}
+		if _, err := r.AggregateDay(ctx, day, dayEnd); err != nil {
+			return fmt.Errorf("rebuild daily summary: %w", err)
+		}
+		month := time.Date(day.Year(), day.Month(), 1, 0, 0, 0, 0, location)
+		months[month.Format("2006-01")] = month
+		day = dayEnd
+	}
+	for _, month := range months {
+		if _, err := r.AggregateMonth(ctx, month); err != nil {
+			return fmt.Errorf("rebuild monthly summary: %w", err)
+		}
+	}
+	return nil
 }
 
 func (r *TelemetryRepository) AggregateDay(ctx context.Context, from, to time.Time) (domain.DailySummary, error) {
@@ -439,11 +496,30 @@ func (r *TelemetryRepository) AggregateDay(ctx context.Context, from, to time.Ti
 		// For local-day bounds this naturally yields 23/25-hour DST denominators.
 		summary.CoveragePct = coverageWeight / requestedMinutes
 	}
-	if err := tx.QueryRowContext(ctx, `
-		SELECT count(*) FROM telemetry_minute
-		WHERE observed_at >= ? AND observed_at < ? AND ac_power_w > 0`,
-		formatTime(from), formatTime(to)).Scan(&summary.ProductiveMinutes); err != nil {
-		return domain.DailySummary{}, fmt.Errorf("count productive minutes: %w", err)
+	productiveRows, err := tx.QueryContext(ctx, `
+		SELECT status, count(*) FROM telemetry_minute
+		WHERE observed_at >= ? AND observed_at < ? AND ac_power_w > 0
+		GROUP BY status`, formatTime(from), formatTime(to))
+	if err != nil {
+		return domain.DailySummary{}, fmt.Errorf("query productive telemetry minutes: %w", err)
+	}
+	for productiveRows.Next() {
+		var status string
+		var count int
+		if err := productiveRows.Scan(&status, &count); err != nil {
+			productiveRows.Close()
+			return domain.DailySummary{}, fmt.Errorf("scan productive telemetry minutes: %w", err)
+		}
+		if status == "cloud_history" {
+			count *= cloudHistorySampleMinutes
+		}
+		summary.ProductiveMinutes += count
+	}
+	if err := productiveRows.Close(); err != nil {
+		return domain.DailySummary{}, fmt.Errorf("close productive telemetry minutes: %w", err)
+	}
+	if err := productiveRows.Err(); err != nil {
+		return domain.DailySummary{}, fmt.Errorf("iterate productive telemetry minutes: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO daily_summary(day, energy_wh, peak_power_w, productive_minutes, coverage_pct)

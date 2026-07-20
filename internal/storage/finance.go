@@ -200,6 +200,18 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 			return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("insert injected credit lot: %w", err)
 		}
 	}
+	availableBeforeUse, err := remainingCreditLots(ctx, tx)
+	if err != nil {
+		return domain.BillingCycle{}, domain.FinancialProjection{}, err
+	}
+	if missing := cycle.CreditsUsedKWh - availableBeforeUse; missing > 0 {
+		// A first manually entered bill may report a real credit consumption
+		// before Helio knows its individual origins. Track only that missing
+		// portion as an estimated lot; the reported closing balance reconciles it.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO credit_lots(origin_cycle_id, available_kwh, expires_at, is_partial, created_at) VALUES(NULL, ?, ?, 1, ?)`, missing, formatTime(cycle.ReadingEnd.AddDate(5, 0, 0)), formatTime(now)); err != nil {
+			return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("insert historical credit lot: %w", err)
+		}
+	}
 	if err := consumeCreditLots(ctx, tx, cycle.CreditsUsedKWh); err != nil {
 		return domain.BillingCycle{}, domain.FinancialProjection{}, err
 	}
@@ -223,6 +235,89 @@ func (r *FinanceRepository) SaveCycle(ctx context.Context, cycle domain.BillingC
 		return domain.BillingCycle{}, domain.FinancialProjection{}, fmt.Errorf("commit billing cycle: %w", err)
 	}
 	return cycle, projection, nil
+}
+
+// RecalculateCycle applies the latest approved tariff to a saved bill and
+// leaves an audit trail. A detailed tariff supersedes the former estimate.
+func (r *FinanceRepository) RecalculateCycle(ctx context.Context, cycleID int64, actorUserID string) (domain.FinancialProjection, error) {
+	tx, err := r.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.FinancialProjection{}, fmt.Errorf("begin recalculation: %w", err)
+	}
+	defer tx.Rollback()
+	var cycle domain.BillingCycle
+	var start, end string
+	err = tx.QueryRowContext(ctx, `SELECT id, reading_start, reading_end, active_consumption_kwh, injected_kwh, credits_used_kwh, credit_balance_kwh, total_paid_minor, flag_charge_minor, tariff_version_id FROM billing_cycles WHERE id=?`, cycleID).Scan(&cycle.ID, &start, &end, &cycle.ActiveConsumptionKWh, &cycle.InjectedKWh, &cycle.CreditsUsedKWh, &cycle.CreditBalanceKWh, &cycle.TotalPaidMinor, &cycle.FlagChargeMinor, &cycle.TariffVersionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.FinancialProjection{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.FinancialProjection{}, fmt.Errorf("load billing cycle: %w", err)
+	}
+	cycle.ReadingStart, err = parseTime(start)
+	if err != nil {
+		return domain.FinancialProjection{}, err
+	}
+	cycle.ReadingEnd, err = parseTime(end)
+	if err != nil {
+		return domain.FinancialProjection{}, err
+	}
+	tariff, err := loadLatestTariff(ctx, tx)
+	if err != nil {
+		return domain.FinancialProjection{}, err
+	}
+	if tariff.EffectiveFrom.After(cycle.ReadingEnd) || tariff.EffectiveTo.Before(cycle.ReadingEnd) {
+		return domain.FinancialProjection{}, errors.New("latest tariff does not cover billing cycle")
+	}
+	if tariff.SourceURL == "/finance" {
+		cycle.FlagChargeMinor = 0
+	}
+	cycle.TariffVersionID = tariff.ID
+	projection, err := finance.Calculate(tariff, cycle)
+	if err != nil {
+		return domain.FinancialProjection{}, fmt.Errorf("calculate revised projection: %w", err)
+	}
+	now := time.Now().UTC()
+	projection.BillingCycleID = cycle.ID
+	projection.TariffVersionID = tariff.ID
+	projection.IsEstimate = true
+	projection.CalculatedAt = now
+	if _, err := tx.ExecContext(ctx, `UPDATE billing_cycles SET tariff_version_id=?, flag_charge_minor=? WHERE id=?`, tariff.ID, cycle.FlagChargeMinor, cycle.ID); err != nil {
+		return domain.FinancialProjection{}, fmt.Errorf("update billing tariff: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bill_reconciliations SET projection_consumption_minor=?, projection_compensation_minor=?, projection_flag_minor=?, projection_taxes_minor=?, projection_cip_minor=?, projection_total_minor=?, without_solar_compensation_minor=?, is_estimate=?, calculated_at=?, reconciled_at=? WHERE billing_cycle_id=?`, projection.ConsumptionMinor, projection.CompensationMinor, projection.FlagMinor, projection.TaxesMinor, projection.CIPMinor, projection.TotalMinor, projection.WithoutSolarCompensationMinor, boolToInt(true), formatTime(now), formatTime(now), cycle.ID); err != nil {
+		return domain.FinancialProjection{}, fmt.Errorf("update bill reconciliation: %w", err)
+	}
+	if err := insertAudit(ctx, tx, actorUserID, "billing_cycle.recalculate_tariff", map[string]any{"billingCycleID": cycle.ID, "tariffVersionID": tariff.ID}); err != nil {
+		return domain.FinancialProjection{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.FinancialProjection{}, fmt.Errorf("commit recalculation: %w", err)
+	}
+	return projection, nil
+}
+
+func loadLatestTariff(ctx context.Context, tx *sql.Tx) (domain.TariffVersion, error) {
+	var tariff domain.TariffVersion
+	var from, to, retrieved, approved string
+	err := tx.QueryRowContext(ctx, `SELECT id, distributor, effective_from, effective_to, consumption_te_micros_per_kwh, consumption_tusd_micros_per_kwh, compensation_te_micros_per_kwh, compensation_tusd_micros_per_kwh, flag_micros_per_kwh, availability_kwh, cip_minor, source_url, retrieved_at, approved_at FROM tariff_versions ORDER BY approved_at DESC, id DESC LIMIT 1`).Scan(&tariff.ID, &tariff.Distributor, &from, &to, &tariff.ConsumptionTEMicrosPerKWh, &tariff.ConsumptionTUSDMicrosPerKWh, &tariff.CompensationTEMicrosPerKWh, &tariff.CompensationTUSDMicrosPerKWh, &tariff.FlagMicrosPerKWh, &tariff.AvailabilityKWh, &tariff.CIPMinor, &tariff.SourceURL, &retrieved, &approved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.TariffVersion{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.TariffVersion{}, fmt.Errorf("load latest tariff: %w", err)
+	}
+	tariff.EffectiveFrom, err = parseTime(from)
+	if err == nil {
+		tariff.EffectiveTo, err = parseTime(to)
+	}
+	if err == nil {
+		tariff.RetrievedAt, err = parseTime(retrieved)
+	}
+	if err == nil {
+		tariff.ApprovedAt, err = parseTime(approved)
+	}
+	return tariff, err
 }
 
 // LatestProjection returns the most recent reconciliation no later than at.

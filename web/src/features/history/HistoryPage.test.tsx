@@ -119,13 +119,12 @@ describe('HistoryPage', () => {
     expect(await screen.findByRole('heading', { name: 'Histórico solar' })).toBeVisible()
   })
 
-  it('renders visible accessible marks for isolated current and previous samples', () => {
+  it('keeps isolated readings out of the chart chrome', () => {
     const range = getPeriodRange('day', new Date('2026-07-14T15:00:00Z'), 'America/Sao_Paulo')
     const currentView = buildHistoryView([{ at: '2026-07-14T12:00:00Z', powerW: 1800 }], 'minute')
     const previousView = buildHistoryView([{ at: '2026-07-13T12:00:00Z', powerW: 1600 }], 'minute')
     renderApp(<ProductionChart current={currentView} previous={previousView} range={range} timezone="America/Sao_Paulo" />)
-    expect(screen.getByLabelText(/Leitura isolada do período atual.*09:00.*1,80 kW/i)).toBeVisible()
-    expect(screen.getByLabelText(/Leitura isolada do período anterior.*09:00.*1,60 kW/i)).toBeVisible()
+    expect(screen.queryByText(/Leitura isolada do período/i)).not.toBeInTheDocument()
   })
 
   it('qualifies even a sub-one-point coverage difference with neutral wording', () => {

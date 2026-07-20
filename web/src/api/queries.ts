@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiClient, api, authMemory } from './client'
-import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, Session, Settings, TariffProposal } from './types'
+import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, ManualTariffInput, Session, Settings, SolarmanCredentials, SolarmanStatus, SolarmanSyncResult, SolarmanTestResult, TariffProposal } from './types'
 
 const rootApi = new ApiClient('')
 
@@ -14,6 +14,7 @@ export const queryKeys = {
   live: ['live'] as const,
   session: ['auth', 'session'] as const,
   settings: ['settings'] as const,
+  solarman: ['solarman'] as const,
   finance: ['finance'] as const,
   tariffProposals: ['finance', 'tariff-proposals'] as const,
 }
@@ -42,6 +43,8 @@ export const settingsQuery = queryOptions({
   queryFn: ({ signal }) => api.request<Settings>('/settings', { signal }),
 })
 
+export const solarmanQuery = queryOptions({ queryKey: queryKeys.solarman, queryFn: ({ signal }) => api.request<SolarmanStatus>('/solarman', { signal }) })
+
 export function insightsQuery(day: string) {
   return queryOptions({
     enabled: day.length > 0,
@@ -68,7 +71,10 @@ export const financeSummaryQuery = queryOptions({ queryKey: queryKeys.finance, q
 export const tariffProposalsQuery = queryOptions({ queryKey: queryKeys.tariffProposals, queryFn: ({ signal }) => api.request<{ proposals: TariffProposal[] }>('/finance/tariff-proposals', { signal }) })
 
 export function approveTariffProposal(id: number) { return api.request(`/finance/tariff-proposals/${id}/approve`, { method: 'POST', body: {} }) }
+export function createSettingsTariffProposal() { return api.request('/finance/tariff-proposals/from-settings', { method: 'POST', body: {} }) }
+export function createManualTariffProposal(payload: ManualTariffInput) { return api.request('/finance/tariff-proposals/manual', { method: 'POST', body: payload }) }
 export function createBillingCycle(payload: BillingCycleInput) { return api.request('/finance/cycles', { method: 'POST', body: payload }) }
+export function recalculateBillingCycle(id: number) { return api.request(`/finance/cycles/${id}/recalculate`, { method: 'POST', body: {} }) }
 
 export function login(payload: LoginPayload) {
   return api.request<AuthCredentials>('/auth/login', { method: 'POST', body: payload })
@@ -90,6 +96,10 @@ export function updateSettings(payload: Settings) {
   const { installedPowerW: _derived, ...settings } = payload
   return api.request<Settings>('/settings', { method: 'PUT', body: settings })
 }
+
+export function updateSolarman(payload: SolarmanCredentials) { return api.request<SolarmanStatus>('/solarman', { method: 'PUT', body: payload }) }
+export function testSolarman() { return api.request<SolarmanTestResult>('/solarman/test', { method: 'POST', body: {} }) }
+export function syncSolarman(days: number) { return api.request<SolarmanSyncResult>('/solarman/sync', { method: 'POST', body: { days } }) }
 
 export function downloadBackup() {
   return api.download('/data/backup')

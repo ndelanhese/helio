@@ -187,6 +187,29 @@ func (a *API) createFinanceCycle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"cycle": cycleResponse(saved), "projection": projectionResponse(projection)})
 }
 
+func (a *API) recalculateFinanceCycle(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle id must be a positive integer")
+		return
+	}
+	principal, ok := auth.PrincipalFromRequest(r)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "finance actor is unavailable")
+		return
+	}
+	projection, err := store.RecalculateCycle(r.Context(), id, principal.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_finance_cycle", "billing cycle could not be recalculated")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projection": projectionResponse(projection)})
+}
+
 func (a *API) tariffProposals(w http.ResponseWriter, r *http.Request) {
 	store, ok := a.financeStore(w)
 	if !ok {
@@ -209,6 +232,69 @@ func (a *API) tariffProposals(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"proposals": items})
+}
+
+// createSettingsTariffProposal turns the legacy per-kWh setting into a
+// reviewable local proposal. It is intentionally not approved automatically.
+func (a *API) createSettingsTariffProposal(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	settings, err := a.dependencies.Store.GetSettings(r.Context(), a.dependencies.AllowPublicLogger)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "configured tariff is unavailable")
+		return
+	}
+	if settings.TariffMinorPerKWh <= 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", "configure a tariff greater than zero before using it")
+		return
+	}
+	rate := settings.TariffMinorPerKWh * 10_000
+	proposals, err := store.ListTariffProposals(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "tariff proposals could not be loaded")
+		return
+	}
+	for _, proposal := range proposals {
+		if proposal.SourceURL == "/settings" && proposal.ApprovedAt.IsZero() && proposal.ConsumptionTEMicrosPerKWh == rate && proposal.CompensationTEMicrosPerKWh == rate {
+			writeJSON(w, http.StatusOK, proposalResponse(proposal))
+			return
+		}
+	}
+	now := a.dependencies.Now().UTC()
+	proposal, err := store.CreateProposal(r.Context(), domain.TariffProposal{
+		Distributor: "Tarifa configurada localmente", EffectiveFrom: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), EffectiveTo: time.Date(2100, 12, 31, 23, 59, 59, 0, time.UTC),
+		ConsumptionTEMicrosPerKWh: rate, CompensationTEMicrosPerKWh: rate, AvailabilityKWh: 30,
+		SourceURL: "/settings", ParserVersion: "manual-settings-v1", RetrievedAt: now,
+	})
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", "configured tariff could not be proposed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, proposalResponse(proposal))
+}
+
+func (a *API) createManualTariffProposal(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.financeStore(w)
+	if !ok {
+		return
+	}
+	var body manualTariffDTO
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	proposal, err := body.domain(a.dependencies.Now())
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", err.Error())
+		return
+	}
+	saved, err := store.CreateProposal(r.Context(), proposal)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_tariff_proposal", "manual tariff could not be proposed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, proposalResponse(saved))
 }
 
 func (a *API) approveTariffProposal(w http.ResponseWriter, r *http.Request) {

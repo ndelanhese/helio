@@ -254,9 +254,9 @@
 .finance-hero h1 { margin: var(--space-2) 0; font-family: var(--font-editorial); font-size: clamp(2.7rem, 9vw, 5rem); }
 .finance-hero span { color: #C8D3CA; font-size: .85rem; }
 .finance-hero strong { display: block; margin-top: var(--space-2); font-size: 1rem; }
-.tariff-proposal, .billing-form { display: grid; gap: var(--space-4); padding: var(--space-6); border: 1px solid var(--border); background: var(--surface); }
+.tariff-proposal, .tariff-editor, .billing-form { display: grid; gap: var(--space-4); padding: var(--space-6); border: 1px solid var(--border); background: var(--surface); }
 .tariff-proposal { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
-.tariff-proposal p, .billing-form > p, .projection-breakdown > p, .finance-guidance p { max-width: 65ch; margin: 0; color: var(--muted); line-height: 1.55; }
+.tariff-proposal p, .tariff-editor > p, .billing-form > p, .projection-breakdown > p, .finance-guidance p { max-width: 65ch; margin: 0; color: var(--muted); line-height: 1.55; }
 .tariff-status { color: var(--accent) !important; font-size: .78rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
 .tariff-proposal small { color: var(--muted); font-size: .75rem; }
 .tariff-proposal a { color: var(--accent); font-weight: 750; }
@@ -265,6 +265,7 @@
 .tariff-rates dt, .projection-breakdown dt { color: var(--muted); font-size: .78rem; }
 .tariff-rates dd, .projection-breakdown dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 750; }
 .billing-form form { display: grid; gap: var(--space-5); }
+.tariff-editor form { display: grid; gap: var(--space-5); }
 .finance-fields { display: grid; gap: var(--space-4); }
 .finance-fields label { display: grid; gap: var(--space-2); color: var(--text); font-size: .82rem; font-weight: 750; }
 .finance-fields input { min-width: 0; min-height: 48px; padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--canvas); color: var(--text); font: inherit; }
@@ -349,15 +350,12 @@
 .chart-legend span { display: inline-flex; align-items: center; gap: var(--space-2); }
 .chart-legend i { display: inline-block; width: 28px; border-top: 3px solid var(--accent); }
 .chart-legend .previous-line { border-color: var(--muted); border-top-style: dashed; border-top-width: 2px; }
+.chart-source-note { max-width: 66ch; margin: var(--space-3) 0 0; color: var(--muted); font-size: .72rem; line-height: 1.5; }
 .gap-list { display: grid; margin: var(--space-4) 0 0; padding: 0; gap: var(--space-2); color: var(--muted); font-size: .72rem; list-style: none; }
 .gap-list li { position: relative; display: flex; align-items: center; gap: var(--space-2); }
 .gap-list button { display: inline-flex; min-height: 44px; align-items: center; gap: var(--space-2); padding: 0; border: 0; background: transparent; color: inherit; cursor: help; font-size: inherit; }
 .gap-list svg { flex: 0 0 auto; overflow: visible; }
 .gap-tooltip { position: absolute; z-index: 2; top: 100%; left: 0; min-width: 220px; }
-.singleton-list { display: grid; margin: var(--space-4) 0 0; padding: 0; gap: var(--space-2); color: var(--muted); font-size: .72rem; list-style: none; }
-.singleton-list li { display: flex; align-items: center; gap: var(--space-2); }
-.singleton-mark { display: inline-block; width: 10px; height: 10px; flex: 0 0 auto; border: 2px solid var(--canvas); border-radius: 50%; background: var(--accent); outline: 1px solid var(--accent); }
-.singleton-mark.is-anterior { background: var(--canvas); outline-color: var(--muted); }
 .history-table-disclosure { border-block: 1px solid var(--text); }
 .history-table-disclosure summary { display: flex; min-height: 52px; align-items: center; cursor: pointer; font-size: .82rem; font-weight: 750; }
 .history-table-scroll { overflow-x: auto; }
@@ -510,12 +508,26 @@
 .about-section .settings-section-body { display: grid; grid-template-columns: 28px 1fr; gap: var(--space-4); }
 .about-section .settings-section-body svg { width: 26px; color: var(--sun); }
 .about-section .settings-section-body p { max-width: 58ch; margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.65; }
+.solarman-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5) var(--space-4); }
+.solarman-actions { grid-column: 1 / -1; display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.solarman-actions .primary-action, .solarman-connected .secondary-action { width: fit-content; }
+.solarman-actions p, .solarman-locked p, .solarman-connected p { max-width: 52ch; margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.55; }
+.solarman-locked, .solarman-connected { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3); align-items: start; padding: var(--space-4); border: 1px solid var(--border); margin-bottom: var(--space-5); }
+.solarman-connected { grid-template-columns: auto 1fr auto; border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.solarman-locked svg { color: var(--sun); } .solarman-connected svg { color: var(--accent); }
+.solarman-locked strong, .solarman-connected strong { font-size: .84rem; }
+.solarman-sync { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-4); margin: var(--space-5) 0; padding: var(--space-4) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.solarman-sync strong { font-size: .9rem; }.solarman-sync p { margin: var(--space-2) 0 0; color: var(--muted); font-size: .78rem; }.solarman-sync > div:last-child { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.solarman-section .form-alert, .solarman-section .save-success { margin: var(--space-4) 0 0; }
 .settings-state { display: grid; min-height: 55vh; align-content: center; justify-items: start; gap: var(--space-5); }
 .settings-state > p { max-width: 54ch; margin: 0; color: var(--muted); line-height: 1.6; }
 
 @media (max-width: 559px) {
   .settings-save-rail { align-items: stretch; flex-direction: column; }
   .settings-save-rail .primary-action { width: 100%; }
+  .solarman-form { grid-template-columns: 1fr; }
+  .solarman-connected { grid-template-columns: auto 1fr; }
+  .solarman-connected .secondary-action { grid-column: 1 / -1; width: 100%; }
 }
 
 @media (min-width: 880px) {

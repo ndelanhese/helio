@@ -4,6 +4,7 @@ export type HistoryResolution = 'minute' | 'hour' | 'day' | 'month'
 export interface MinuteHistoryPoint {
   at: string
   powerW: number
+  sampleIntervalMinutes?: number
 }
 
 export interface AggregateHistoryPoint {
@@ -28,6 +29,7 @@ export interface HistoryRange {
 export interface ChartPoint {
   at: string
   powerW: number
+  sampleIntervalMinutes?: number
 }
 
 export interface HistorySummary {
@@ -162,7 +164,9 @@ export function isMinutePoint(point: HistoryPoint): point is MinuteHistoryPoint 
 }
 
 export function toChartPoint(point: HistoryPoint): ChartPoint {
-  return { at: point.at, powerW: isMinutePoint(point) ? point.powerW : point.peakPowerW }
+  return isMinutePoint(point)
+    ? { at: point.at, powerW: point.powerW, sampleIntervalMinutes: point.sampleIntervalMinutes }
+    : { at: point.at, powerW: point.peakPowerW }
 }
 
 export function toChartSegments<T extends { at: string }>(points: T[], maxGapMs: number): T[][] {
@@ -177,6 +181,20 @@ export function toChartSegments<T extends { at: string }>(points: T[], maxGapMs:
   return segments
 }
 
+function toAdaptiveChartSegments(points: ChartPoint[], resolution: HistoryResolution): ChartPoint[][] {
+  if (points.length === 0) return []
+  const segments: ChartPoint[][] = [[points[0]]]
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1]
+    const point = points[index]
+    const cloudSequence = previous.sampleIntervalMinutes === 5 && point.sampleIntervalMinutes === 5
+    const maximumGap = cloudSequence && resolution === 'minute' ? 6 * 60_000 : RESOLUTION_GAP_MS[resolution]
+    if (Date.parse(point.at) - Date.parse(previous.at) > maximumGap) segments.push([])
+    segments.at(-1)?.push(point)
+  }
+  return segments
+}
+
 function summarizeMinute(points: MinuteHistoryPoint[]): HistorySummary {
   let energyWh = 0
   let productiveMinutes = 0
@@ -184,7 +202,9 @@ function summarizeMinute(points: MinuteHistoryPoint[]): HistorySummary {
     const previous = points[index - 1]
     const point = points[index]
     const elapsedMs = Date.parse(point.at) - Date.parse(previous.at)
-    if (elapsedMs <= 0 || elapsedMs > RESOLUTION_GAP_MS.minute) continue
+    const cloudSequence = previous.sampleIntervalMinutes === 5 && point.sampleIntervalMinutes === 5
+    const maximumGap = cloudSequence ? 6 * 60_000 : RESOLUTION_GAP_MS.minute
+    if (elapsedMs <= 0 || elapsedMs > maximumGap) continue
     energyWh += ((previous.powerW + point.powerW) / 2) * elapsedMs / 3_600_000
     if (previous.powerW > 0 || point.powerW > 0) productiveMinutes += elapsedMs / 60_000
   }
@@ -226,7 +246,7 @@ function summarizeAggregate(points: AggregateHistoryPoint[], resolution: Exclude
 export function buildHistoryView(points: HistoryPoint[], resolution: HistoryResolution, window?: SummaryWindow): HistoryView {
   const ordered = [...points].sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
   const chartPoints = ordered.map(toChartPoint)
-  const segments = toChartSegments(chartPoints, RESOLUTION_GAP_MS[resolution])
+  const segments = toAdaptiveChartSegments(chartPoints, resolution)
   const gaps = segments.slice(0, -1).map((segment, index) => ({ from: segment.at(-1)?.at ?? '', to: segments[index + 1][0]?.at ?? '' }))
   const summary = ordered.every(isMinutePoint)
     ? summarizeMinute(ordered)

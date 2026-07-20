@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ndelanhese/helio/internal/auth"
 	"github.com/ndelanhese/helio/internal/collector"
 	"github.com/ndelanhese/helio/internal/domain"
+	"github.com/ndelanhese/helio/internal/solarmancloud"
 	"github.com/ndelanhese/helio/internal/storage"
 )
 
@@ -23,6 +25,10 @@ type Store interface {
 
 type HistoryStore interface {
 	History(context.Context, time.Time, time.Time) ([]domain.HistoryPoint, error)
+}
+type TelemetryStore interface {
+	SaveMinute(context.Context, domain.TelemetrySnapshot) error
+	RebuildSummaries(context.Context, time.Time, time.Time) error
 }
 
 type InsightsStore interface {
@@ -38,6 +44,7 @@ type SummaryStore interface {
 }
 
 type FinanceStore interface {
+	CreateProposal(context.Context, domain.TariffProposal) (domain.TariffProposal, error)
 	SaveCycle(context.Context, domain.BillingCycle, string) (domain.BillingCycle, domain.FinancialProjection, error)
 	ListCycles(context.Context, int) ([]domain.BillingCycle, error)
 	LatestProjection(context.Context, time.Time) (domain.FinancialProjection, bool, error)
@@ -45,16 +52,21 @@ type FinanceStore interface {
 	LatestTariff(context.Context) (domain.TariffVersion, bool, error)
 	ListTariffProposals(context.Context) ([]domain.TariffProposal, error)
 	ApproveProposal(context.Context, int64, string) (domain.TariffVersion, error)
+	RecalculateCycle(context.Context, int64, string) (domain.FinancialProjection, error)
 }
 
 type Dependencies struct {
 	Auth              *auth.Manager
 	Store             Store
 	History           HistoryStore
+	Telemetry         TelemetryStore
 	Insights          InsightsStore
 	Alerts            AlertStore
 	Summaries         SummaryStore
 	Finance           FinanceStore
+	SolarmanSecrets   SolarmanStore
+	SolarmanClient    *solarmancloud.Client
+	SolarmanAudit     auditor
 	Latest            func() collector.State
 	Hub               *collector.Hub
 	Reconfigure       func(context.Context, domain.Settings) error
@@ -67,7 +79,12 @@ type Dependencies struct {
 	SSEHeartbeat      time.Duration
 }
 
-type API struct{ dependencies Dependencies }
+type API struct {
+	dependencies Dependencies
+	recoveryMu   sync.Mutex
+	recovering   bool
+	lastRecovery time.Time
+}
 
 func New(d Dependencies) http.Handler {
 	if d.Now == nil {
@@ -86,6 +103,7 @@ func New(d Dependencies) http.Handler {
 		d.ShutdownContext = context.Background()
 	}
 	a := &API{dependencies: d}
+	a.startSolarmanRecovery()
 	r := chi.NewRouter()
 	r.Use(requestMetadata)
 	r.Get("/api/v1/bootstrap/status", a.bootstrapStatus)
@@ -107,11 +125,18 @@ func New(d Dependencies) http.Handler {
 		private.Get("/alerts", a.alerts)
 		private.Get("/settings", a.getSettings)
 		private.With(auth.RequireCSRF).Put("/settings", a.putSettings)
+		private.Get("/solarman", a.solarmanStatus)
+		private.With(auth.RequireCSRF).Put("/solarman", a.putSolarmanCredentials)
+		private.With(auth.RequireCSRF).Post("/solarman/test", a.testSolarman)
+		private.With(auth.RequireCSRF).Post("/solarman/sync", a.syncSolarman)
 		private.Get("/data/backup", a.backup)
 		private.Get("/finance/summary", a.financeSummary)
 		private.Get("/finance/cycles", a.financeCycles)
 		private.With(auth.RequireCSRF).Post("/finance/cycles", a.createFinanceCycle)
+		private.With(auth.RequireCSRF).Post("/finance/cycles/{id}/recalculate", a.recalculateFinanceCycle)
 		private.Get("/finance/tariff-proposals", a.tariffProposals)
+		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/from-settings", a.createSettingsTariffProposal)
+		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/manual", a.createManualTariffProposal)
 		private.With(auth.RequireCSRF).Post("/finance/tariff-proposals/{id}/approve", a.approveTariffProposal)
 		r.Mount("/api/v1", private)
 	}
