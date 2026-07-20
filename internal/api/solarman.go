@@ -41,6 +41,8 @@ const (
 	automaticRecoveryCooldown = 90 * time.Minute
 )
 
+var automaticRecoveryDelays = []time.Duration{2 * time.Minute, 10 * time.Minute, 30 * time.Minute, 2 * time.Hour, 12 * time.Hour}
+
 func (a *API) solarmanStatus(w http.ResponseWriter, r *http.Request) {
 	if a.dependencies.SolarmanSecrets == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false, "configured": false, "reason": "Encrypted storage is unavailable."})
@@ -226,7 +228,7 @@ func (a *API) scheduleSolarmanRecovery() {
 			a.recovering = false
 			a.recoveryMu.Unlock()
 		}()
-		for _, delay := range []time.Duration{2 * time.Minute, 20 * time.Minute, time.Hour} {
+		for _, delay := range automaticRecoveryDelays {
 			timer := time.NewTimer(delay)
 			select {
 			case <-a.dependencies.ShutdownContext.Done():
