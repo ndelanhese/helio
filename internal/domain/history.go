@@ -5,6 +5,9 @@ import "time"
 type HistoryPoint struct {
 	At     time.Time `json:"at"`
 	PowerW float64   `json:"powerW"`
+	// Status is kept internal to aggregation. Cloud history is sampled every
+	// five minutes, while the local collector records once a minute.
+	Status string `json:"-"`
 }
 
 // AggregatePoint is a persisted local-calendar summary with its bucket start

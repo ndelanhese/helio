@@ -41,7 +41,7 @@ export function SolarmanPanel() {
   const sync = async (days: number) => {
     if (syncing) return
     setSyncing(true); setError(''); setMessage('')
-    try { const result = await syncSolarman(days); setMessage(`Sincronização concluída: ${result.frames} leituras importadas de ${result.stationName}.`) } catch (cause) { setError(messageFor(cause, 'Não foi possível sincronizar histórico Solarman.')) } finally { setSyncing(false) }
+    try { const result = await syncSolarman(days); await queryClient.invalidateQueries({ queryKey: ['history'] }); setMessage(`Sincronização concluída: ${result.frames} leituras importadas de ${result.stationName}. Histórico reconstruído.`) } catch (cause) { setError(messageFor(cause, 'Não foi possível sincronizar histórico Solarman.')) } finally { setSyncing(false) }
   }
 
   if (state.isPending) return null

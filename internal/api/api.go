@@ -27,6 +27,7 @@ type HistoryStore interface {
 }
 type TelemetryStore interface {
 	SaveMinute(context.Context, domain.TelemetrySnapshot) error
+	RebuildSummaries(context.Context, time.Time, time.Time) error
 }
 
 type InsightsStore interface {

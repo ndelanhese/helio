@@ -162,6 +162,45 @@ func TestAggregateGapCoverageAndEnergyUnits(t *testing.T) {
 	}
 }
 
+func TestCloudHistoryRebuildsSummariesAtFiveMinuteCadence(t *testing.T) {
+	ctx := context.Background()
+	_, repo := telemetryRepository(t, time.UTC)
+	base := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	for minute := 0; minute < 60; minute += 5 {
+		if err := repo.SaveMinute(ctx, domain.TelemetrySnapshot{
+			ObservedAt: base.Add(time.Duration(minute) * time.Minute),
+			ACPowerW:   1000,
+			Status:     "cloud_history",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.RebuildSummaries(ctx, base, base.Add(59*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	daily, err := repo.DailyHistory(ctx, base.Truncate(24*time.Hour), base.Truncate(24*time.Hour).AddDate(0, 0, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(daily) != 1 {
+		t.Fatalf("daily points=%d, want 1", len(daily))
+	}
+	closeEnough(t, daily[0].EnergyWh, 11*1000.0*5/60)
+	if daily[0].ProductiveMinutes != 60 {
+		t.Fatalf("productive=%d, want 60", daily[0].ProductiveMinutes)
+	}
+
+	monthly, err := repo.MonthlyHistory(ctx, base.Truncate(24*time.Hour), base.Truncate(24*time.Hour).AddDate(0, 0, 31))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(monthly) != 1 {
+		t.Fatalf("monthly points=%d, want 1", len(monthly))
+	}
+	closeEnough(t, monthly[0].EnergyWh, daily[0].EnergyWh)
+}
+
 func TestAggregateDayCountsMissingHoursAsZeroCoverage(t *testing.T) {
 	ctx := context.Background()
 	db, repo := telemetryRepository(t, time.UTC)

@@ -144,6 +144,12 @@ func (a *API) syncSolarman(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if len(frames) > 0 {
+		if err := a.dependencies.Telemetry.RebuildSummaries(r.Context(), from, to); err != nil {
+			writeError(w, http.StatusInternalServerError, "solarman_sync_failed", "Could not rebuild history summaries after Solarman sync")
+			return
+		}
+	}
 	principal, _ := auth.PrincipalFromRequest(r)
 	if a.dependencies.SolarmanAudit != nil && principal != nil {
 		_ = a.dependencies.SolarmanAudit.RecordAudit(r.Context(), principal.UserID, "solarman.sync", map[string]any{"stationId": stored.StationID, "days": body.Days, "frames": len(frames)})
