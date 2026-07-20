@@ -34,7 +34,7 @@ func (c *Client) FetchFrames(ctx context.Context, credentials Credentials, stati
 	if from.After(to) {
 		return nil, errors.New("invalid sync range")
 	}
-	if to.Sub(from) > 29*24*time.Hour {
+	if to.Sub(from) > 30*24*time.Hour {
 		return nil, errors.New("sync range must not exceed 30 days")
 	}
 	token, err := c.token(ctx, credentials)
