@@ -231,7 +231,7 @@ func (c *Client) token(ctx context.Context, credentials Credentials) (string, er
 	if strings.TrimSpace(credentials.AppID) == "" || strings.TrimSpace(credentials.AppSecret) == "" || strings.TrimSpace(credentials.Account) == "" || credentials.Password == "" {
 		return "", errors.New("app ID, app secret, account, and password are required")
 	}
-	// codeql[go/weak-cryptographic-algorithm]: Solarman's token API explicitly
+	// codeql[go/weak-sensitive-data-hashing]: Solarman's token API explicitly
 	// requires the account password as a lowercase SHA-256 digest. This is a
 	// protocol transform for the remote API, not password storage or hashing.
 	digest := sha256.Sum256([]byte(credentials.Password))
