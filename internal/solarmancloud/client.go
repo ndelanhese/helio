@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,9 +28,14 @@ type Station struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 }
+
+const requestsPerMinute = 40
+
 type Client struct {
 	baseURL string
 	http    *http.Client
+	mu      sync.Mutex
+	next    time.Time
 }
 
 func New(baseURL string, client *http.Client) *Client {
@@ -45,6 +51,9 @@ func New(baseURL string, client *http.Client) *Client {
 func (c *Client) Test(ctx context.Context, credentials Credentials) ([]Station, error) {
 	token, err := c.token(ctx, credentials)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.waitTurn(ctx); err != nil {
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/station/v1.0/list?language=en", bytes.NewReader([]byte(`{"page":1,"size":50}`)))
@@ -98,6 +107,28 @@ func (c *Client) Test(ctx context.Context, credentials Credentials) ([]Station, 
 	return stations, nil
 }
 
+func (c *Client) waitTurn(ctx context.Context) error {
+	c.mu.Lock()
+	now := time.Now()
+	when := c.next
+	interval := time.Minute / requestsPerMinute
+	if when.Before(now) {
+		when = now
+	}
+	c.next = when.Add(interval)
+	c.mu.Unlock()
+	if delay := time.Until(when); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
+}
+
 func (c *Client) token(ctx context.Context, credentials Credentials) (string, error) {
 	if strings.TrimSpace(credentials.AppID) == "" || strings.TrimSpace(credentials.AppSecret) == "" || strings.TrimSpace(credentials.Account) == "" || credentials.Password == "" {
 		return "", errors.New("app ID, app secret, account, and password are required")
@@ -114,6 +145,9 @@ func (c *Client) token(ctx context.Context, credentials Credentials) (string, er
 		return "", err
 	}
 	endpoint := c.baseURL + "/account/v1.0/token?" + url.Values{"appId": []string{credentials.AppID}, "language": []string{"en"}}.Encode()
+	if err := c.waitTurn(ctx); err != nil {
+		return "", err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", err
