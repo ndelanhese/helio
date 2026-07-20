@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -78,7 +79,12 @@ type Dependencies struct {
 	SSEHeartbeat      time.Duration
 }
 
-type API struct{ dependencies Dependencies }
+type API struct {
+	dependencies Dependencies
+	recoveryMu   sync.Mutex
+	recovering   bool
+	lastRecovery time.Time
+}
 
 func New(d Dependencies) http.Handler {
 	if d.Now == nil {
@@ -97,6 +103,7 @@ func New(d Dependencies) http.Handler {
 		d.ShutdownContext = context.Background()
 	}
 	a := &API{dependencies: d}
+	a.startSolarmanRecovery()
 	r := chi.NewRouter()
 	r.Use(requestMetadata)
 	r.Get("/api/v1/bootstrap/status", a.bootstrapStatus)

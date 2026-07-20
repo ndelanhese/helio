@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -34,6 +35,11 @@ type solarmanSavedCredentials struct {
 }
 
 const solarmanSecretName = "solarman-cloud-v1"
+
+const (
+	automaticRecoveryDays     = 2
+	automaticRecoveryCooldown = 90 * time.Minute
+)
 
 func (a *API) solarmanStatus(w http.ResponseWriter, r *http.Request) {
 	if a.dependencies.SolarmanSecrets == nil {
@@ -123,38 +129,114 @@ func (a *API) syncSolarman(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_sync_range", "Sync range must be between 1 and 30 days")
 		return
 	}
-	var stored solarmanSavedCredentials
-	found, err := a.dependencies.SolarmanSecrets.Get(r.Context(), solarmanSecretName, &stored)
-	if err != nil || !found || stored.StationID == 0 {
+	stored, frames, err := a.recoverSolarman(r.Context(), body.Days)
+	if errors.Is(err, errSolarmanStationRequired) {
 		writeError(w, http.StatusConflict, "solarman_station_required", "Test Solarman connection to select its station before syncing")
 		return
 	}
-	location := time.Local
-	from := time.Now().In(location).AddDate(0, 0, -body.Days+1)
-	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, location)
-	to := time.Now().In(location)
-	frames, err := a.dependencies.SolarmanClient.FetchFrames(r.Context(), cloudCredentials(stored), stored.StationID, from, to)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "solarman_sync_failed", "Solarman histórico recusou consulta: "+safeSolarmanError(err))
 		return
-	}
-	for _, frame := range frames {
-		if err := a.dependencies.Telemetry.SaveMinute(r.Context(), domain.TelemetrySnapshot{ObservedAt: frame.At, ACPowerW: frame.PowerW, Status: "cloud_history"}); err != nil {
-			writeError(w, http.StatusInternalServerError, "solarman_sync_failed", "Could not save Solarman history")
-			return
-		}
-	}
-	if len(frames) > 0 {
-		if err := a.dependencies.Telemetry.RebuildSummaries(r.Context(), from, to); err != nil {
-			writeError(w, http.StatusInternalServerError, "solarman_sync_failed", "Could not rebuild history summaries after Solarman sync")
-			return
-		}
 	}
 	principal, _ := auth.PrincipalFromRequest(r)
 	if a.dependencies.SolarmanAudit != nil && principal != nil {
 		_ = a.dependencies.SolarmanAudit.RecordAudit(r.Context(), principal.UserID, "solarman.sync", map[string]any{"stationId": stored.StationID, "days": body.Days, "frames": len(frames)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stationName": stored.StationName, "days": body.Days, "frames": len(frames)})
+}
+
+var errSolarmanStationRequired = errors.New("Solarman station is required")
+
+func (a *API) recoverSolarman(ctx context.Context, days int) (solarmanSavedCredentials, []solarmancloud.Frame, error) {
+	var stored solarmanSavedCredentials
+	found, err := a.dependencies.SolarmanSecrets.Get(ctx, solarmanSecretName, &stored)
+	if err != nil {
+		return stored, nil, err
+	}
+	if !found || stored.StationID == 0 {
+		return stored, nil, errSolarmanStationRequired
+	}
+	location := time.Local
+	if a.dependencies.BillingLocation != nil {
+		if configured, locationErr := a.dependencies.BillingLocation(ctx); locationErr == nil && configured != nil {
+			location = configured
+		}
+	}
+	now := a.dependencies.Now().In(location)
+	from := now.AddDate(0, 0, -days+1)
+	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, location)
+	frames, err := a.dependencies.SolarmanClient.FetchFrames(ctx, cloudCredentials(stored), stored.StationID, from, now)
+	if err != nil {
+		return stored, nil, err
+	}
+	for _, frame := range frames {
+		if err := a.dependencies.Telemetry.SaveMinute(ctx, domain.TelemetrySnapshot{ObservedAt: frame.At, ACPowerW: frame.PowerW, Status: "cloud_history"}); err != nil {
+			return stored, nil, fmt.Errorf("save Solarman history: %w", err)
+		}
+	}
+	if len(frames) > 0 {
+		if err := a.dependencies.Telemetry.RebuildSummaries(ctx, from, now); err != nil {
+			return stored, nil, fmt.Errorf("rebuild history summaries: %w", err)
+		}
+	}
+	return stored, frames, nil
+}
+
+func (a *API) startSolarmanRecovery() {
+	if a.dependencies.Hub == nil || a.dependencies.SolarmanSecrets == nil || a.dependencies.SolarmanClient == nil || a.dependencies.Telemetry == nil {
+		return
+	}
+	events, unsubscribe := a.dependencies.Hub.Subscribe()
+	go func() {
+		defer unsubscribe()
+		offline := true
+		for {
+			select {
+			case <-a.dependencies.ShutdownContext.Done():
+				return
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
+				if event.State.Stale {
+					offline = true
+					continue
+				}
+				if event.Kind == "snapshot" && offline {
+					offline = false
+					a.scheduleSolarmanRecovery()
+				}
+			}
+		}
+	}()
+}
+
+func (a *API) scheduleSolarmanRecovery() {
+	now := a.dependencies.Now()
+	a.recoveryMu.Lock()
+	if a.recovering || now.Sub(a.lastRecovery) < automaticRecoveryCooldown {
+		a.recoveryMu.Unlock()
+		return
+	}
+	a.recovering, a.lastRecovery = true, now
+	a.recoveryMu.Unlock()
+	go func() {
+		defer func() {
+			a.recoveryMu.Lock()
+			a.recovering = false
+			a.recoveryMu.Unlock()
+		}()
+		for _, delay := range []time.Duration{2 * time.Minute, 20 * time.Minute, time.Hour} {
+			timer := time.NewTimer(delay)
+			select {
+			case <-a.dependencies.ShutdownContext.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			_, _, _ = a.recoverSolarman(a.dependencies.ShutdownContext, automaticRecoveryDays)
+		}
+	}()
 }
 
 func safeSolarmanError(err error) string {
