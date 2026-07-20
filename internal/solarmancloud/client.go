@@ -65,10 +65,12 @@ func (c *Client) Test(ctx context.Context, credentials Credentials) ([]Station, 
 		Success     bool   `json:"success"`
 		Msg         string `json:"msg"`
 		StationList []struct {
+			ID        int64  `json:"id"`
 			StationID int64  `json:"stationId"`
 			Name      string `json:"name"`
 		} `json:"stationList"`
 		Stations []struct {
+			ID        int64  `json:"id"`
 			StationID int64  `json:"stationId"`
 			Name      string `json:"name"`
 		} `json:"stations"`
@@ -85,8 +87,12 @@ func (c *Client) Test(ctx context.Context, credentials Credentials) ([]Station, 
 	}
 	stations := make([]Station, 0, len(entries))
 	for _, entry := range entries {
-		if entry.StationID != 0 {
-			stations = append(stations, Station{ID: entry.StationID, Name: entry.Name})
+		id := entry.ID
+		if id == 0 {
+			id = entry.StationID
+		}
+		if id != 0 {
+			stations = append(stations, Station{ID: id, Name: entry.Name})
 		}
 	}
 	return stations, nil
