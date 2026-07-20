@@ -206,6 +206,10 @@ func TestCollectorPollsImmediatelyPublishesAndPersistsLatestPerMinute(t *testing
 	eventually(t, func() bool { return reader.count() == 2 })
 	clock.Advance(10 * time.Second)
 	eventually(t, func() bool { return reader.count() == 3 })
+	eventually(t, func() bool {
+		state := collector.Latest()
+		return state.Snapshot != nil && state.Snapshot.ACPowerW == 3
+	})
 
 	state := collector.Latest()
 	if state.Snapshot == nil || state.Snapshot.ACPowerW != 3 || state.Stale || state.LastError != "" {
