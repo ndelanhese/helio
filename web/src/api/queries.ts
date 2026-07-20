@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiClient, api, authMemory } from './client'
-import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, ManualTariffInput, Session, Settings, TariffProposal } from './types'
+import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, ManualTariffInput, Session, Settings, SolarmanCredentials, SolarmanStatus, SolarmanTestResult, TariffProposal } from './types'
 
 const rootApi = new ApiClient('')
 
@@ -14,6 +14,7 @@ export const queryKeys = {
   live: ['live'] as const,
   session: ['auth', 'session'] as const,
   settings: ['settings'] as const,
+  solarman: ['solarman'] as const,
   finance: ['finance'] as const,
   tariffProposals: ['finance', 'tariff-proposals'] as const,
 }
@@ -41,6 +42,8 @@ export const settingsQuery = queryOptions({
   queryKey: queryKeys.settings,
   queryFn: ({ signal }) => api.request<Settings>('/settings', { signal }),
 })
+
+export const solarmanQuery = queryOptions({ queryKey: queryKeys.solarman, queryFn: ({ signal }) => api.request<SolarmanStatus>('/solarman', { signal }) })
 
 export function insightsQuery(day: string) {
   return queryOptions({
@@ -93,6 +96,9 @@ export function updateSettings(payload: Settings) {
   const { installedPowerW: _derived, ...settings } = payload
   return api.request<Settings>('/settings', { method: 'PUT', body: settings })
 }
+
+export function updateSolarman(payload: SolarmanCredentials) { return api.request<SolarmanStatus>('/solarman', { method: 'PUT', body: payload }) }
+export function testSolarman() { return api.request<SolarmanTestResult>('/solarman/test', { method: 'POST', body: {} }) }
 
 export function downloadBackup() {
   return api.download('/data/backup')

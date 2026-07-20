@@ -10,6 +10,7 @@ import { ConnectionPanel } from './ConnectionPanel'
 import { DataPanel } from './DataPanel'
 import { type SettingsErrors, type SettingsField, type SettingsValues, loggerIdentityChanged, sameSettings, sameSettingsValues, settingsServerError, settingsToValues, validateSettings, valuesToSettings } from './settings-model'
 import { SystemForm } from './SystemForm'
+import { SolarmanPanel } from './SolarmanPanel'
 
 const themeChoices = [
   { label: 'Sistema', value: 'system' }, { label: 'Claro', value: 'light' }, { label: 'Escuro', value: 'dark' },
@@ -120,6 +121,7 @@ function SettingsEditor({ health, initial }: { health: UseQueryResult<ComponentH
         <fieldset className="theme-fieldset settings-section-body"><legend className="sr-only">Tema da interface</legend>{themeChoices.map((choice) => <label key={choice.value}><input checked={theme === choice.value} name="settings-theme" onChange={() => setTheme(choice.value)} type="radio" />{choice.label}</label>)}</fieldset>
         </section>
         <DataPanel error={errors.retentionDays} retentionDays={values.retentionDays} setRetentionDays={(value) => setField('retentionDays', value)} />
+        <SolarmanPanel />
         {conflict ? <section aria-label="Configurações alteradas no servidor" aria-live="polite" className="settings-conflict" role="status">
         <div><strong>As configurações foram alteradas em outra sessão.</strong><p>{saving ? 'Aguarde o salvamento terminar para escolher quais valores devem permanecer.' : 'Escolha quais valores devem permanecer antes de continuar.'}</p></div>
         <div className="conflict-actions">

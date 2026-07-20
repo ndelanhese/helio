@@ -49,6 +49,27 @@ export interface Settings {
   installedPowerW?: number
 }
 
+export interface SolarmanStatus {
+  available: boolean
+  configured: boolean
+  account?: string
+  appIdSuffix?: string
+  reason?: string
+}
+
+export interface SolarmanCredentials {
+  appId: string
+  appSecret: string
+  account: string
+  password: string
+}
+
+export interface SolarmanTestResult {
+  connected: boolean
+  testedAt: string
+  stations: Array<{ id: number; name: string }>
+}
+
 export interface BillingCycle {
   activeConsumptionKWh: number
   creditBalanceKWh: number

@@ -12,6 +12,7 @@ import (
 	"github.com/ndelanhese/helio/internal/auth"
 	"github.com/ndelanhese/helio/internal/collector"
 	"github.com/ndelanhese/helio/internal/domain"
+	"github.com/ndelanhese/helio/internal/solarmancloud"
 	"github.com/ndelanhese/helio/internal/storage"
 )
 
@@ -57,6 +58,9 @@ type Dependencies struct {
 	Alerts            AlertStore
 	Summaries         SummaryStore
 	Finance           FinanceStore
+	SolarmanSecrets   SolarmanStore
+	SolarmanClient    *solarmancloud.Client
+	SolarmanAudit     auditor
 	Latest            func() collector.State
 	Hub               *collector.Hub
 	Reconfigure       func(context.Context, domain.Settings) error
@@ -109,6 +113,9 @@ func New(d Dependencies) http.Handler {
 		private.Get("/alerts", a.alerts)
 		private.Get("/settings", a.getSettings)
 		private.With(auth.RequireCSRF).Put("/settings", a.putSettings)
+		private.Get("/solarman", a.solarmanStatus)
+		private.With(auth.RequireCSRF).Put("/solarman", a.putSolarmanCredentials)
+		private.With(auth.RequireCSRF).Post("/solarman/test", a.testSolarman)
 		private.Get("/data/backup", a.backup)
 		private.Get("/finance/summary", a.financeSummary)
 		private.Get("/finance/cycles", a.financeCycles)
