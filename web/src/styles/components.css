@@ -519,6 +519,8 @@
 .solarman-connected { grid-template-columns: auto 1fr auto; border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .solarman-locked svg { color: var(--sun); } .solarman-connected svg { color: var(--accent); }
 .solarman-locked strong, .solarman-connected strong { font-size: .84rem; }
+.solarman-sync { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-4); margin: var(--space-5) 0; padding: var(--space-4) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.solarman-sync strong { font-size: .9rem; }.solarman-sync p { margin: var(--space-2) 0 0; color: var(--muted); font-size: .78rem; }.solarman-sync > div:last-child { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .solarman-section .form-alert, .solarman-section .save-success { margin: var(--space-4) 0 0; }
 .settings-state { display: grid; min-height: 55vh; align-content: center; justify-items: start; gap: var(--space-5); }
 .settings-state > p { max-width: 54ch; margin: 0; color: var(--muted); line-height: 1.6; }

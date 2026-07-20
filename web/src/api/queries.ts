@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiClient, api, authMemory } from './client'
-import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, ManualTariffInput, Session, Settings, SolarmanCredentials, SolarmanStatus, SolarmanTestResult, TariffProposal } from './types'
+import type { AlertsResponse, AlertState, AuthCredentials, BillingCycleInput, BootstrapPayload, BootstrapStatus, ComponentHealth, FinanceSummary, InsightsResponse, LiveState, LoginPayload, ManualTariffInput, Session, Settings, SolarmanCredentials, SolarmanStatus, SolarmanSyncResult, SolarmanTestResult, TariffProposal } from './types'
 
 const rootApi = new ApiClient('')
 
@@ -99,6 +99,7 @@ export function updateSettings(payload: Settings) {
 
 export function updateSolarman(payload: SolarmanCredentials) { return api.request<SolarmanStatus>('/solarman', { method: 'PUT', body: payload }) }
 export function testSolarman() { return api.request<SolarmanTestResult>('/solarman/test', { method: 'POST', body: {} }) }
+export function syncSolarman(days: number) { return api.request<SolarmanSyncResult>('/solarman/sync', { method: 'POST', body: { days } }) }
 
 export function downloadBackup() {
   return api.download('/data/backup')

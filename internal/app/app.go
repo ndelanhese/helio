@@ -115,7 +115,7 @@ func New(cfg config.Config) *App {
 		Alerts: alertEngine, Events: hub, Tariffs: tariffService,
 	}))
 	apiHandler := api.New(api.Dependencies{
-		Auth: manager, Store: db, History: repository, Hub: hub,
+		Auth: manager, Store: db, History: repository, Telemetry: repository, Hub: hub,
 		Insights: analysisRepository, Alerts: alertRepository, Summaries: repository, Finance: tariffRepository,
 		SolarmanSecrets: solarmanSecrets, SolarmanClient: solarmancloud.New("", nil), SolarmanAudit: db,
 		Latest: runtime.latest, Reconfigure: a.reconfigure,

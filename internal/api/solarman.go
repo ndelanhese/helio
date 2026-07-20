@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ndelanhese/helio/internal/auth"
+	"github.com/ndelanhese/helio/internal/domain"
 	"github.com/ndelanhese/helio/internal/solarmancloud"
 )
 
@@ -24,10 +25,12 @@ type solarmanCredentialsDTO struct {
 }
 
 type solarmanSavedCredentials struct {
-	AppID     string `json:"appId"`
-	AppSecret string `json:"appSecret"`
-	Account   string `json:"account"`
-	Password  string `json:"password"`
+	AppID       string `json:"appId"`
+	AppSecret   string `json:"appSecret"`
+	Account     string `json:"account"`
+	Password    string `json:"password"`
+	StationID   int64  `json:"stationId"`
+	StationName string `json:"stationName"`
 }
 
 const solarmanSecretName = "solarman-cloud-v1"
@@ -43,7 +46,7 @@ func (a *API) solarmanStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "solarman_unavailable", "Solarman encrypted storage is unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "configured": found, "account": stored.Account, "appIdSuffix": suffix(stored.AppID), "lastTestedAt": ""})
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "configured": found, "account": stored.Account, "appIdSuffix": suffix(stored.AppID), "stationId": stored.StationID, "stationName": stored.StationName})
 }
 
 func (a *API) putSolarmanCredentials(w http.ResponseWriter, r *http.Request) {
@@ -86,16 +89,66 @@ func (a *API) testSolarman(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "solarman_not_configured", "Save Solarman credentials before testing")
 		return
 	}
-	stations, err := a.dependencies.SolarmanClient.Test(r.Context(), solarmancloud.Credentials(stored))
+	stations, err := a.dependencies.SolarmanClient.Test(r.Context(), cloudCredentials(stored))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "solarman_connection_failed", "Solarman did not accept this connection. Check credentials and account access.")
 		return
+	}
+	if len(stations) == 1 {
+		stored.StationID, stored.StationName = stations[0].ID, stations[0].Name
+		_ = a.dependencies.SolarmanSecrets.Put(r.Context(), solarmanSecretName, stored)
 	}
 	principal, _ := auth.PrincipalFromRequest(r)
 	if a.dependencies.SolarmanAudit != nil && principal != nil {
 		_ = a.dependencies.SolarmanAudit.RecordAudit(r.Context(), principal.UserID, "solarman.test", map[string]any{"stations": len(stations)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "stations": stations, "testedAt": time.Now().UTC().Format(time.RFC3339)})
+}
+
+func (a *API) syncSolarman(w http.ResponseWriter, r *http.Request) {
+	if a.dependencies.SolarmanSecrets == nil || a.dependencies.SolarmanClient == nil || a.dependencies.Telemetry == nil {
+		writeError(w, http.StatusServiceUnavailable, "solarman_unavailable", "Solarman sync is unavailable")
+		return
+	}
+	var body struct {
+		Days int `json:"days"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Days == 0 {
+		body.Days = 7
+	}
+	if body.Days < 1 || body.Days > 30 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_sync_range", "Sync range must be between 1 and 30 days")
+		return
+	}
+	var stored solarmanSavedCredentials
+	found, err := a.dependencies.SolarmanSecrets.Get(r.Context(), solarmanSecretName, &stored)
+	if err != nil || !found || stored.StationID == 0 {
+		writeError(w, http.StatusConflict, "solarman_station_required", "Test Solarman connection to select its station before syncing")
+		return
+	}
+	location := time.Local
+	from := time.Now().In(location).AddDate(0, 0, -body.Days+1)
+	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, location)
+	to := time.Now().In(location)
+	frames, err := a.dependencies.SolarmanClient.FetchFrames(r.Context(), cloudCredentials(stored), stored.StationID, from, to)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "solarman_sync_failed", "Solarman historical sync failed. Try again later.")
+		return
+	}
+	for _, frame := range frames {
+		if err := a.dependencies.Telemetry.SaveMinute(r.Context(), domain.TelemetrySnapshot{ObservedAt: frame.At, ACPowerW: frame.PowerW, Status: "cloud_history"}); err != nil {
+			writeError(w, http.StatusInternalServerError, "solarman_sync_failed", "Could not save Solarman history")
+			return
+		}
+	}
+	principal, _ := auth.PrincipalFromRequest(r)
+	if a.dependencies.SolarmanAudit != nil && principal != nil {
+		_ = a.dependencies.SolarmanAudit.RecordAudit(r.Context(), principal.UserID, "solarman.sync", map[string]any{"stationId": stored.StationID, "days": body.Days, "frames": len(frames)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stationName": stored.StationName, "days": body.Days, "frames": len(frames)})
 }
 
 func normalizeSolarmanCredentials(body solarmanCredentialsDTO) solarmanSavedCredentials {
@@ -115,4 +168,7 @@ func suffix(value string) string {
 		return "••••"
 	}
 	return "••••" + value[len(value)-4:]
+}
+func cloudCredentials(value solarmanSavedCredentials) solarmancloud.Credentials {
+	return solarmancloud.Credentials{AppID: value.AppID, AppSecret: value.AppSecret, Account: value.Account, Password: value.Password}
 }

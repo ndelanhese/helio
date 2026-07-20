@@ -55,7 +55,10 @@ export interface SolarmanStatus {
   account?: string
   appIdSuffix?: string
   reason?: string
+  stationId?: number
+  stationName?: string
 }
+export interface SolarmanSyncResult { stationName: string; days: number; frames: number }
 
 export interface SolarmanCredentials {
   appId: string

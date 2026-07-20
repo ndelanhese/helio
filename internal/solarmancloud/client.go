@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,103 @@ type Credentials struct {
 	AppSecret string `json:"appSecret"`
 	Account   string `json:"account"`
 	Password  string `json:"password"`
+}
+
+// FetchFrames returns historical power frames. Solarman accepts exactly one
+// calendar day per frame query; callers should keep ranges short.
+func (c *Client) FetchFrames(ctx context.Context, credentials Credentials, stationID int64, from, to time.Time) ([]Frame, error) {
+	if stationID <= 0 {
+		return nil, errors.New("Solarman station is required")
+	}
+	if from.After(to) {
+		return nil, errors.New("invalid sync range")
+	}
+	if to.Sub(from) > 29*24*time.Hour {
+		return nil, errors.New("sync range must not exceed 30 days")
+	}
+	token, err := c.token(ctx, credentials)
+	if err != nil {
+		return nil, err
+	}
+	frames := []Frame{}
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		if err := c.waitTurn(ctx); err != nil {
+			return nil, err
+		}
+		body, _ := json.Marshal(map[string]any{"stationId": stationID, "timeType": 1, "startTime": day.Format("2006-01-02"), "endTime": day.Format("2006-01-02")})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/station/v1.0/history?language=en", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "bearer "+token)
+		response, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("Solarman history: %w", err)
+		}
+		var payload struct {
+			Success bool             `json:"success"`
+			Msg     string           `json:"msg"`
+			Items   []map[string]any `json:"stationDataItems"`
+		}
+		err = json.NewDecoder(response.Body).Decode(&payload)
+		response.Body.Close()
+		if err != nil {
+			return nil, errors.New("Solarman returned invalid historical data")
+		}
+		if !payload.Success {
+			return nil, solarmanError(payload.Msg)
+		}
+		for _, item := range payload.Items {
+			if frame, ok := decodeFrame(item, day.Location()); ok {
+				frames = append(frames, frame)
+			}
+		}
+	}
+	return frames, nil
+}
+
+type Frame struct {
+	At     time.Time
+	PowerW float64
+}
+
+func decodeFrame(value map[string]any, location *time.Location) (Frame, bool) {
+	power, ok := number(value["generationPower"])
+	if !ok {
+		return Frame{}, false
+	}
+	raw, ok := value["dateTime"]
+	if !ok {
+		return Frame{}, false
+	}
+	var at time.Time
+	switch v := raw.(type) {
+	case string:
+		for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04"} {
+			if parsed, err := time.ParseInLocation(layout, v, location); err == nil {
+				at = parsed
+				break
+			}
+		}
+	case float64:
+		at = time.Unix(int64(v), 0)
+	}
+	if at.IsZero() {
+		return Frame{}, false
+	}
+	return Frame{At: at.UTC(), PowerW: power}, true
+}
+func number(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case string:
+		parsed, err := strconv.ParseFloat(v, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 type Station struct {

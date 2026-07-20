@@ -25,6 +25,9 @@ type Store interface {
 type HistoryStore interface {
 	History(context.Context, time.Time, time.Time) ([]domain.HistoryPoint, error)
 }
+type TelemetryStore interface {
+	SaveMinute(context.Context, domain.TelemetrySnapshot) error
+}
 
 type InsightsStore interface {
 	Load(context.Context, string) (domain.DailyAnalysis, bool, error)
@@ -54,6 +57,7 @@ type Dependencies struct {
 	Auth              *auth.Manager
 	Store             Store
 	History           HistoryStore
+	Telemetry         TelemetryStore
 	Insights          InsightsStore
 	Alerts            AlertStore
 	Summaries         SummaryStore
@@ -116,6 +120,7 @@ func New(d Dependencies) http.Handler {
 		private.Get("/solarman", a.solarmanStatus)
 		private.With(auth.RequireCSRF).Put("/solarman", a.putSolarmanCredentials)
 		private.With(auth.RequireCSRF).Post("/solarman/test", a.testSolarman)
+		private.With(auth.RequireCSRF).Post("/solarman/sync", a.syncSolarman)
 		private.Get("/data/backup", a.backup)
 		private.Get("/finance/summary", a.financeSummary)
 		private.Get("/finance/cycles", a.financeCycles)

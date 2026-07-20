@@ -1,9 +1,9 @@
-import { Cloud, KeyRound, PlugZap, ShieldCheck } from 'lucide-react'
+import { Cloud, Download, KeyRound, PlugZap, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { ApiError } from '../../api/client'
-import { queryKeys, solarmanQuery, testSolarman, updateSolarman } from '../../api/queries'
+import { queryKeys, solarmanQuery, syncSolarman, testSolarman, updateSolarman } from '../../api/queries'
 import type { SolarmanCredentials } from '../../api/types'
 
 const empty: SolarmanCredentials = { appId: '', appSecret: '', account: '', password: '' }
@@ -14,6 +14,7 @@ export function SolarmanPanel() {
   const [values, setValues] = useState<SolarmanCredentials>(empty)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const ready = values.appId.trim() && values.appSecret.trim() && values.account.trim() && values.password
@@ -33,8 +34,14 @@ export function SolarmanPanel() {
     setTesting(true); setError(''); setMessage('')
     try {
       const result = await testSolarman()
+      await queryClient.invalidateQueries({ queryKey: queryKeys.solarman })
       setMessage(result.stations.length === 1 ? `Conectado. Estação encontrada: ${result.stations[0].name || result.stations[0].id}.` : `Conectado. ${result.stations.length} estações encontradas.`)
     } catch (cause) { setError(messageFor(cause, 'Solarman não aceitou conexão.')) } finally { setTesting(false) }
+  }
+  const sync = async (days: number) => {
+    if (syncing) return
+    setSyncing(true); setError(''); setMessage('')
+    try { const result = await syncSolarman(days); setMessage(`Sincronização concluída: ${result.frames} leituras importadas de ${result.stationName}.`) } catch (cause) { setError(messageFor(cause, 'Não foi possível sincronizar histórico Solarman.')) } finally { setSyncing(false) }
   }
 
   if (state.isPending) return null
@@ -42,7 +49,7 @@ export function SolarmanPanel() {
     <div className="settings-section-heading"><p className="eyebrow">04 · Recuperação</p><h2 id="solarman-title">Nuvem só quando faltar dado.</h2><p>Conexão opcional, leitura somente. Helio usa Solarman para recuperar intervalo perdido depois de ficar offline.</p></div>
     <div className="settings-section-body">
       {!state.data?.available ? <div className="solarman-locked"><KeyRound aria-hidden="true" /><div><strong>Chave local ainda não configurada.</strong><p>{state.data?.reason ?? 'Defina HELIO_SECRETS_KEY no arquivo deploy/helio.env e reinicie o Docker.'}</p></div></div> : <>
-        {state.data.configured ? <div className="solarman-connected"><ShieldCheck aria-hidden="true" /><div><strong>Conta preparada: {state.data.account}</strong><p>APP ID {state.data.appIdSuffix}. Segredos nunca voltam para tela.</p></div><button className="secondary-action" disabled={testing} onClick={() => { void test() }} type="button"><PlugZap aria-hidden="true" />{testing ? 'Testando…' : 'Testar conexão'}</button></div> : null}
+        {state.data.configured ? <><div className="solarman-connected"><ShieldCheck aria-hidden="true" /><div><strong>Conta preparada: {state.data.account}</strong><p>{state.data.stationName ? `Estação: ${state.data.stationName}. ` : ''}APP ID {state.data.appIdSuffix}. Segredos nunca voltam para tela.</p></div><button className="secondary-action" disabled={testing} onClick={() => { void test() }} type="button"><PlugZap aria-hidden="true" />{testing ? 'Testando…' : 'Testar conexão'}</button></div>{state.data.stationId ? <div className="solarman-sync"><div><strong>Recuperar lacunas</strong><p>Leitura somente. Máximo 30 dias; 40 chamadas/minuto.</p></div><div><button className="secondary-action" disabled={syncing} onClick={() => { void sync(7) }} type="button"><Download aria-hidden="true" />{syncing ? 'Sincronizando…' : 'Últimos 7 dias'}</button><button className="primary-action" disabled={syncing} onClick={() => { void sync(30) }} type="button">Últimos 30 dias</button></div></div> : null}</> : null}
         <div className="solarman-form">
           <div className="form-field"><label htmlFor="solarman-account">Email ou usuário Solarman</label><input autoComplete="username" id="solarman-account" onChange={(event) => setValues((current) => ({ ...current, account: event.target.value }))} value={values.account} /></div>
           <div className="form-field"><label htmlFor="solarman-password">Senha Solarman</label><input autoComplete="current-password" id="solarman-password" onChange={(event) => setValues((current) => ({ ...current, password: event.target.value }))} type="password" value={values.password} /></div>
