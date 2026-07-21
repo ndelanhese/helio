@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5
 
-FROM node:24.17.0-bookworm-slim@sha256:862263c612aa437e3037674b85419622a9d93bff80aa1eee5398dfe686375532 AS web
+FROM node:26.5.0-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trim
 RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/helio-healthcheck \
     && touch --date=@0 /out/healthcheck
 
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:aef9602f8710ec12bde19d593fed1f76c708531bb7aba205110f1029786ead7b
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
 COPY --chown=65532:65532 --from=data /data /data
 COPY --from=build /out/helio /usr/local/bin/helio
 COPY --from=build /out/healthcheck /usr/local/bin/helio-healthcheck
