@@ -49,7 +49,7 @@ func TestDockerfileUsesPinnedNarrowDistrolessBuild(t *testing.T) {
 
 func TestComposeUsesSafeBindAndHardenedTmpfs(t *testing.T) {
 	compose := readFile(t, "compose.yaml")
-	if !strings.Contains(compose, `"${HELIO_BIND_IP:-127.0.0.1}:8080:8080"`) {
+	if !strings.Contains(compose, `"${HELIO_BIND_IP:-127.0.0.1}:${HELIO_HOST_PORT:-8080}:8080"`) {
 		t.Fatal("Compose does not default its published port to loopback")
 	}
 	if !strings.Contains(compose, "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777") {

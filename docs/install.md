@@ -23,6 +23,14 @@ curl --fail http://127.0.0.1:8080/health/ready
 
 Compose builds the current source and binds only `127.0.0.1` by default. Docker Desktop runs Linux containers inside its VM but forwards the published localhost port to macOS. On Linux, Docker publishes directly on the selected host interface. These differences do not change the logger requirement: the container's outbound route must reach the logger.
 
+If host port `8080` is already allocated, keep the container port unchanged and set only the published host port:
+
+```sh
+printf 'HELIO_HOST_PORT=%s\n' '18080' > .env
+docker compose up -d
+curl --fail http://127.0.0.1:18080/health/ready
+```
+
 Open `http://127.0.0.1:8080`, create the administrator, and enter the logger's private address and decimal serial, active MPPT inputs, array details, location, IANA timezone, currency, and tariff. The first bootstrap is atomic and closes after the first administrator is created.
 
 ## Phone access on a private LAN
@@ -30,7 +38,7 @@ Open `http://127.0.0.1:8080`, create the administrator, and enter the logger's p
 Choose the Docker host's stable RFC1918 LAN interface address—not `0.0.0.0`, a public address, or the logger address—and set it as Compose interpolation in a project-level `.env`:
 
 ```sh
-printf 'HELIO_BIND_IP=%s\n' '<private-host-LAN-IP>' > .env
+printf 'HELIO_BIND_IP=%s\nHELIO_HOST_PORT=%s\n' '<private-host-LAN-IP>' '8080' > .env
 docker compose up -d
 ```
 

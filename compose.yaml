@@ -4,7 +4,7 @@ services:
     build:
       context: .
     ports:
-      - "${HELIO_BIND_IP:-127.0.0.1}:8080:8080"
+      - "${HELIO_BIND_IP:-127.0.0.1}:${HELIO_HOST_PORT:-8080}:8080"
     env_file:
       - path: deploy/helio.env
         required: false
