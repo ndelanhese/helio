@@ -1,0 +1,101 @@
+{
+  "type": "APL",
+  "version": "2024.3",
+  "theme": "dark",
+  "extensions": [
+    {
+      "name": "DataStore",
+      "uri": "alexaext:datastore:10"
+    }
+  ],
+  "settings": {
+    "DataStore": {
+      "dataBindings": [
+        {
+          "namespace": "helio",
+          "key": "snapshot",
+          "dataBindingName": "helioSnapshot",
+          "dataType": "OBJECT"
+        }
+      ]
+    }
+  },
+  "mainTemplate": {
+    "parameters": ["helioDefault"],
+    "item": {
+      "type": "Frame",
+      "width": "100vw",
+      "height": "100vh",
+      "backgroundColor": "#102C22",
+      "item": {
+        "type": "Container",
+        "width": "100%",
+        "height": "100%",
+        "paddingLeft": "8vw",
+        "paddingRight": "8vw",
+        "paddingTop": "6vh",
+        "paddingBottom": "6vh",
+        "items": [
+          {
+            "type": "Text",
+            "text": "HELIO",
+            "color": "#E7B84B",
+            "fontSize": "5vw",
+            "fontWeight": "700",
+            "letterSpacing": 2
+          },
+          {
+            "type": "Text",
+            "text": "Geração solar",
+            "color": "#F3F1E8",
+            "fontSize": "6vw",
+            "fontWeight": "600",
+            "spacing": "1vh"
+          },
+          {
+            "type": "Text",
+            "text": "AGORA",
+            "color": "#A6B8AF",
+            "fontSize": "4vw",
+            "spacing": "8vh"
+          },
+          {
+            "type": "Text",
+            "text": "${helioSnapshot.power ? helioSnapshot.power : helioDefault.power}",
+            "color": "#F3F1E8",
+            "fontSize": "14vw",
+            "fontWeight": "400",
+            "maxLines": 1,
+            "spacing": "1vh"
+          },
+          {
+            "type": "Text",
+            "text": "HOJE  ·  ${helioSnapshot.energyToday ? helioSnapshot.energyToday : helioDefault.energyToday}",
+            "color": "#DDF2E7",
+            "fontSize": "5vw",
+            "fontWeight": "600",
+            "spacing": "7vh"
+          },
+          {
+            "type": "Text",
+            "text": "●  ${helioSnapshot.status ? helioSnapshot.status : helioDefault.status}",
+            "color": "${helioSnapshot.statusColor ? helioSnapshot.statusColor : helioDefault.statusColor}",
+            "fontSize": "4.5vw",
+            "fontWeight": "600",
+            "spacing": "7vh"
+          },
+          {
+            "type": "Text",
+            "text": "${helioSnapshot.updated ? helioSnapshot.updated : helioDefault.updated}",
+            "color": "#7F9A8E",
+            "fontSize": "3.5vw",
+            "position": "absolute",
+            "bottom": "6vh",
+            "left": "8vw",
+            "maxLines": 1
+          }
+        ]
+      }
+    }
+  }
+}

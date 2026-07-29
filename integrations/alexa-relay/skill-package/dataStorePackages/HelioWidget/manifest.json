@@ -1,0 +1,35 @@
+{
+  "packageVersion": "1.0",
+  "packageType": "APL_PACKAGE",
+  "publishingInformation": {
+    "schemaVersion": "1.0",
+    "locales": {
+      "pt-BR": [
+        {
+          "targetViewport": "WIDGET_M",
+          "metadata": {
+            "name": "Helio Solar",
+            "description": "Potência atual, geração de hoje e estado da instalação solar.",
+            "keywords": ["solar", "energia", "helio"],
+            "iconUri": "https://helio-alexa.ndelanhese.online/assets/icon-450.png",
+            "previews": [
+              "https://helio-alexa.ndelanhese.online/assets/widget-preview-328x552.png"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "manifest": {
+    "id": "HelioWidget",
+    "version": "1.0.0",
+    "installStateChanges": "INFORM",
+    "updateStateChanges": "INFORM",
+    "presentationDefinitions": [
+      {
+        "url": "presentations/default.tpl"
+      }
+    ],
+    "appliesTo": "${viewport.mode == 'HUB' && viewport.shape == 'RECTANGLE'}"
+  }
+}

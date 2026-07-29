@@ -1,6 +1,8 @@
 .DS_Store
 .env
 .env.hardware
+node_modules/
+.ask/
 deploy/helio.env
 .superpowers/
 .worktrees/

@@ -1,0 +1,11 @@
+{
+  "helioDefault": {
+    "power": "—",
+    "energyToday": "—",
+    "status": "Aguardando dados",
+    "statusColor": "#D6A84B",
+    "updated": "Helio ainda não sincronizou",
+    "observedAt": "",
+    "stale": true
+  }
+}

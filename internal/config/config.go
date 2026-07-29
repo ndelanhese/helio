@@ -11,6 +11,8 @@ type Config struct {
 	SecureCookies     bool
 	AllowPublicLogger bool
 	SecretsKey        []byte
+	AlexaRelayURL     string
+	AlexaRelaySecret  string
 }
 
 func Load() Config {
@@ -29,5 +31,7 @@ func Load() Config {
 	return Config{HTTPAddr: addr, DatabasePath: databasePath,
 		SecureCookies:     os.Getenv("HELIO_SECURE_COOKIES") == "1",
 		AllowPublicLogger: os.Getenv("HELIO_ALLOW_NON_PRIVATE_LOGGER") == "1",
-		SecretsKey:        secretsKey}
+		SecretsKey:        secretsKey,
+		AlexaRelayURL:     os.Getenv("HELIO_ALEXA_RELAY_URL"),
+		AlexaRelaySecret:  os.Getenv("HELIO_ALEXA_SHARED_SECRET")}
 }
