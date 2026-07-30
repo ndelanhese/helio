@@ -64,6 +64,22 @@ test('ingest accepts signed snapshot and rejects replay timestamp or bad signatu
     body,
   });
   assert.equal(invalid.status, 401);
+
+  for (let request = 1; request < 10; request += 1) {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: signedHeaders(secret, timestamp, body),
+      body,
+    });
+    assert.equal(response.status, 202);
+  }
+  const limited = await fetch(endpoint, {
+    method: 'POST',
+    headers: signedHeaders(secret, timestamp, body),
+    body,
+  });
+  assert.equal(limited.status, 429);
+  assert.deepEqual(await limited.json(), { error: 'rate_limited' });
 });
 
 test('relay requires an Alexa skill ID', () => {

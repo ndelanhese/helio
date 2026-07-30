@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import Alexa from 'ask-sdk-core';
 import { ExpressAdapter } from 'ask-sdk-express-adapter';
 
@@ -17,6 +18,14 @@ export function createApp({ state, sharedSecret, skillId, dataStore, logger = co
   }
   const app = express();
   const schedulePush = pushScheduler(state, dataStore, logger);
+  const ingestLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: () => 'helio-publisher',
+    message: { error: 'rate_limited' },
+  });
 
   app.disable('x-powered-by');
   app.use((_, response, next) => {
@@ -44,19 +53,24 @@ export function createApp({ state, sharedSecret, skillId, dataStore, logger = co
     immutable: true,
     maxAge: '1d',
   }));
-  app.post('/ingest', express.raw({ type: 'application/json', limit: '8kb' }), async (request, response) => {
-    try {
-      verifySignature(request, sharedSecret, now());
-      const snapshot = parseSnapshot(request.body, now());
-      const updated = await state.updateSnapshot(snapshot);
-      if (updated) {
-        schedulePush();
+  app.post(
+    '/ingest',
+    express.raw({ type: 'application/json', limit: '8kb' }),
+    authenticateIngest(sharedSecret, now),
+    ingestLimiter,
+    async (request, response) => {
+      try {
+        const snapshot = parseSnapshot(request.body, now());
+        const updated = await state.updateSnapshot(snapshot);
+        if (updated) {
+          schedulePush();
+        }
+        response.status(202).json({ accepted: true, updated });
+      } catch (error) {
+        sendRequestError(response, error);
       }
-      response.status(202).json({ accepted: true, updated });
-    } catch (error) {
-      response.status(error.status ?? 400).json({ error: error.code ?? 'invalid_request' });
-    }
-  });
+    },
+  );
 
   const skill = Alexa.SkillBuilders.custom()
     .withSkillId(skillId)
@@ -80,6 +94,21 @@ export function createApp({ state, sharedSecret, skillId, dataStore, logger = co
     response.status(500).json({ error: 'internal_error' });
   });
   return app;
+}
+
+function authenticateIngest(secret, now) {
+  return (request, response, next) => {
+    try {
+      verifySignature(request, secret, now());
+      next();
+    } catch (error) {
+      sendRequestError(response, error);
+    }
+  };
+}
+
+function sendRequestError(response, error) {
+  response.status(error.status ?? 400).json({ error: error.code ?? 'invalid_request' });
 }
 
 function verifySignature(request, secret, currentTime) {

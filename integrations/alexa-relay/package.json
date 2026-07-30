@@ -10,7 +10,8 @@
   "dependencies": {
     "ask-sdk-core": "2.14.0",
     "ask-sdk-express-adapter": "2.14.0",
-    "express": "5.2.1"
+    "express": "5.2.1",
+    "express-rate-limit": "8.6.1"
   },
   "engines": {
     "node": ">=24"
