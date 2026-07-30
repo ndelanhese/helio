@@ -107,7 +107,7 @@ Não publique porta HTTP do Helio. Apenas relay Coolify recebe tráfego público
 
 - `/data/state.json` guarda último resumo e até 20 IDs de dispositivos Alexa; monte volume persistente.
 - Pedidos `/alexa` usam verificação oficial de certificado, assinatura, timestamp e Skill ID.
-- Pedidos `/ingest` aceitam até 8 KiB, exigem HTTPS, HMAC-SHA256 e timestamp com tolerância de cinco minutos; após autenticação, o relay aceita até dez pedidos por minuto.
+- Pedidos `/ingest` aceitam até 8 KiB, exigem HTTPS, HMAC-SHA256 e timestamp com tolerância de cinco minutos; o relay limita tentativas e aceita até dez pedidos autenticados por minuto.
 - Troca de segredo exige atualizar relay e Helio local.
 
 Referências: [web service customizado](https://developer.amazon.com/en-US/docs/alexa/custom-skills/host-a-custom-skill-as-a-web-service.html), [widgets APL](https://developer.amazon.com/en-US/docs/alexa/alexa-presentation-language/create-and-manage-widgets.html), [Data Store REST API](https://developer.amazon.com/en-US/docs/alexa/alexa-presentation-language/data-store-rest-api-reference.html).

@@ -18,7 +18,15 @@ export function createApp({ state, sharedSecret, skillId, dataStore, logger = co
   }
   const app = express();
   const schedulePush = pushScheduler(state, dataStore, logger);
-  const ingestLimiter = rateLimit({
+  const ingestAttemptLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: () => 'helio-ingest',
+    message: { error: 'rate_limited' },
+  });
+  const authenticatedIngestLimiter = rateLimit({
     windowMs: 60_000,
     limit: 10,
     standardHeaders: true,
@@ -56,8 +64,9 @@ export function createApp({ state, sharedSecret, skillId, dataStore, logger = co
   app.post(
     '/ingest',
     express.raw({ type: 'application/json', limit: '8kb' }),
+    ingestAttemptLimiter,
     authenticateIngest(sharedSecret, now),
-    ingestLimiter,
+    authenticatedIngestLimiter,
     async (request, response) => {
       try {
         const snapshot = parseSnapshot(request.body, now());
