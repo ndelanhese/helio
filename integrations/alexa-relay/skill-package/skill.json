@@ -1,0 +1,69 @@
+{
+  "manifest": {
+    "manifestVersion": "1.0",
+    "publishingInformation": {
+      "isAvailableWorldwide": false,
+      "distributionCountries": ["BR"],
+      "category": "SMART_HOME",
+      "locales": {
+        "pt-BR": {
+          "name": "Helio Solar",
+          "summary": "Produção solar do Helio no Echo Show.",
+          "description": "Mostra potência atual, energia gerada hoje e estado da instalação solar monitorada pelo Helio.",
+          "examplePhrases": [
+            "Alexa, abrir hélio solar",
+            "Alexa, perguntar ao hélio solar quanto estou gerando",
+            "Alexa, iniciar hélio solar"
+          ],
+          "keywords": ["solar", "energia", "inversor", "helio"]
+        }
+      },
+      "testingInstructions": "Skill pessoal. Testar com conta Amazon Developer vinculada ao Echo Show e relay configurado."
+    },
+    "apis": {
+      "custom": {
+        "endpoint": {
+          "uri": "https://helio-alexa.ndelanhese.online/alexa",
+          "sslCertificateType": "Trusted"
+        },
+        "interfaces": [
+          {
+            "type": "ALEXA_PRESENTATION_APL"
+          },
+          {
+            "type": "ALEXA_DATA_STORE"
+          },
+          {
+            "type": "ALEXA_DATASTORE_PACKAGEMANAGER",
+            "packages": [
+              {
+                "id": "HelioWidget"
+              }
+            ]
+          },
+          {
+            "type": "ALEXA_EXTENSION",
+            "autoInitializedExtensions": [],
+            "requestedExtensions": [
+              {
+                "uri": "alexaext:datastore:10"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "privacyAndCompliance": {
+      "allowsPurchases": false,
+      "usesPersonalInfo": false,
+      "isChildDirected": false,
+      "isExportCompliant": true,
+      "containsAds": false,
+      "locales": {
+        "pt-BR": {
+          "privacyPolicyUrl": "https://helio-alexa.ndelanhese.online/privacy"
+        }
+      }
+    }
+  }
+}

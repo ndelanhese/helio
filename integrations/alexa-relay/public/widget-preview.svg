@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="328" height="552" viewBox="0 0 328 552">
+  <rect width="328" height="552" rx="28" fill="#102C22"/>
+  <circle cx="278" cy="52" r="58" fill="#173B2D"/>
+  <circle cx="278" cy="52" r="22" fill="#E7B84B"/>
+  <text x="28" y="45" fill="#E7B84B" font-family="Arial, sans-serif" font-size="16" font-weight="700" letter-spacing="2">HELIO</text>
+  <text x="28" y="78" fill="#F3F1E8" font-family="Arial, sans-serif" font-size="19" font-weight="600">Geração solar</text>
+  <text x="28" y="148" fill="#A6B8AF" font-family="Arial, sans-serif" font-size="15">AGORA</text>
+  <text x="28" y="218" fill="#F3F1E8" font-family="Georgia, serif" font-size="56">2,84 kW</text>
+  <line x1="28" y1="253" x2="300" y2="253" stroke="#315548"/>
+  <text x="28" y="300" fill="#A6B8AF" font-family="Arial, sans-serif" font-size="15">HOJE</text>
+  <text x="28" y="350" fill="#F3F1E8" font-family="Arial, sans-serif" font-size="32" font-weight="600">14,20 kWh</text>
+  <rect x="28" y="395" width="160" height="42" rx="21" fill="#173B2D"/>
+  <circle cx="50" cy="416" r="6" fill="#56C596"/>
+  <text x="65" y="422" fill="#DDF2E7" font-family="Arial, sans-serif" font-size="15">Sistema normal</text>
+  <text x="28" y="501" fill="#7F9A8E" font-family="Arial, sans-serif" font-size="13">Atualizado 16:30</text>
+</svg>

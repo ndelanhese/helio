@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ndelanhese/helio/internal/alerts"
+	"github.com/ndelanhese/helio/internal/alexapush"
 	"github.com/ndelanhese/helio/internal/api"
 	"github.com/ndelanhese/helio/internal/auth"
 	"github.com/ndelanhese/helio/internal/collector"
@@ -47,6 +48,8 @@ type App struct {
 	stopping          bool
 	startupWait       time.Duration
 	retainResources   bool
+	alexaPublisher    *alexapush.Publisher
+	alexaWG           sync.WaitGroup
 }
 
 type settingsRuntime interface {
@@ -97,6 +100,11 @@ func New(cfg config.Config) *App {
 	shutdownContext, shutdownCancel := context.WithCancel(context.Background())
 	a := &App{db: db, runtime: runtime, settingsRuntime: runtime, shutdownContext: shutdownContext, shutdownCancel: shutdownCancel, allowPublicLogger: cfg.AllowPublicLogger, repository: repository,
 		settings: func(ctx context.Context) (domain.Settings, error) { return db.GetSettings(ctx, cfg.AllowPublicLogger) }}
+	a.alexaPublisher, err = alexapush.New(hub, alexapush.Config{Endpoint: cfg.AlexaRelayURL, Secret: cfg.AlexaRelaySecret})
+	if err != nil {
+		_ = db.Close()
+		return &App{initErr: err}
+	}
 	weatherRepository := storage.NewWeatherRepository(db)
 	weatherProvider := weather.NewOpenMeteo("https://api.open-meteo.com/v1/forecast", nil, time.Now)
 	weatherService := weather.NewService(weatherRepository, weatherProvider, time.Now)
@@ -317,6 +325,13 @@ func shutdownHTTP(ctx context.Context, server *http.Server, listener net.Listene
 
 func (a *App) initializeRuntime(ctx context.Context) error {
 	a.runtime.start(ctx)
+	if a.alexaPublisher != nil {
+		a.alexaWG.Add(1)
+		go func() {
+			defer a.alexaWG.Done()
+			a.alexaPublisher.Run(a.shutdownContext)
+		}()
+	}
 	if settings, err := a.settings(ctx); err == nil {
 		releaseCollector := a.runtime.holdCollectorStart()
 		if err := a.runtime.reconfigure(ctx, settings); err != nil {
@@ -363,6 +378,7 @@ func (a *App) stopServices() {
 		if collectorDone != nil {
 			<-collectorDone
 		}
+		a.alexaWG.Wait()
 	})
 }
 

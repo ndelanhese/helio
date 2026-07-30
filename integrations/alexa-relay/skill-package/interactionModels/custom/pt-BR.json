@@ -1,0 +1,36 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "hélio solar",
+      "intents": [
+        {
+          "name": "GetSolarIntent",
+          "samples": [
+            "quanto estou gerando",
+            "qual a geração agora",
+            "como está minha produção solar",
+            "qual a potência atual"
+          ],
+          "slots": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        }
+      ],
+      "types": []
+    }
+  }
+}

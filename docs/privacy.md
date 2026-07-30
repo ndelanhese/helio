@@ -1,6 +1,6 @@
 # Privacy and network boundary
 
-Helio is local-first: the Solarman logger is read directly over the LAN, raw telemetry and aggregates are stored in the local SQLite volume, authentication is local, and the browser talks to the same Helio origin. Helio has no vendor-cloud account integration and no analytics or crash-reporting SDK.
+Helio is local-first: the Solarman logger is read directly over the LAN, raw telemetry and aggregates are stored in the local SQLite volume, authentication is local, and the browser talks to the same Helio origin. Helio has no analytics or crash-reporting SDK. Optional outbound integrations are documented below and are disabled unless configured.
 
 ## Finance data and tariff sources
 
@@ -20,6 +20,19 @@ Coordinates can reveal an approximate installation location. Open-Meteo also obs
 Responses are cached in local SQLite. A failed refresh can use a stale cached response and marks weather health `stale`; without usable cache it marks weather `unavailable`. Logger collection, local history, backups, and non-weather UI remain available.
 
 v0.1 has no runtime weather-disable toggle. Sites requiring zero egress must deny outbound traffic from the container. That deliberately disables refreshed weather context and limits weather-dependent analysis; it does not make logger collection depend on the internet.
+
+## Optional Alexa relay
+
+The Echo Show widget is disabled unless both `HELIO_ALEXA_RELAY_URL` and `HELIO_ALEXA_SHARED_SECRET` are configured. When enabled, Helio sends an HTTPS request at most once per minute to the operator-controlled relay. The HMAC-signed payload contains only:
+
+- current AC power;
+- energy generated today;
+- system state and stale indicator;
+- observation time and payload version.
+
+It excludes logger IP/serial, fault codes, voltage/current details, coordinates, credentials, users, cookies, finance data, history, and database contents. The relay stores the latest payload plus Alexa device IDs in its private `/data` volume, then sends display-formatted values to the Alexa Data Store. Amazon observes those values and normal connection/device metadata. Removing relay variables disables this path; local collection and storage continue unchanged.
+
+Deployment and secret handling are documented in [Helio Alexa relay](../integrations/alexa-relay/README.md).
 
 ## Data the operator controls
 

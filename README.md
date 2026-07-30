@@ -55,7 +55,7 @@ One Go process serves the API, SSE live stream, embedded React app, collector, s
 
 ## Install and operate
 
-The source checkout runs with `docker compose up -d` and binds to localhost by default. Start with [Install](docs/install.md), then keep [Operations](docs/operations.md), [Privacy](docs/privacy.md), [Backup and restore](docs/backup-restore.md), [Hardware testing](docs/hardware-testing.md), and the [local API](docs/api.md) nearby.
+The source checkout runs with `docker compose up -d` and binds to localhost by default. Start with [Install](docs/install.md), then keep [Operations](docs/operations.md), [Privacy](docs/privacy.md), [Backup and restore](docs/backup-restore.md), [Hardware testing](docs/hardware-testing.md), the [optional Echo Show widget](integrations/alexa-relay/README.md), and the [local API](docs/api.md) nearby.
 
 Future release image commands are documented but clearly conditional on publication. Do not assume `ghcr.io/ndelanhese/helio:v0.1.0` exists until the matching GitHub release and immutable digest are visible.
 
